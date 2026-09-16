@@ -36,7 +36,14 @@ export class SessionService {
 
   private resolve(id: string, provider?: string): Session {
     const matches = this.repo.byProviderId(text(id, "session-id", 256), provider === undefined ? undefined : identifier(provider, "provider"));
-    if (!matches.length) throw new RelayError("SESSION_NOT_FOUND", "요청한 세션을 찾을 수 없습니다.", 3, 404);
+    if (!matches.length) {
+      const internal = this.repo.byId(id);
+      if (internal && (provider === undefined || internal.provider === identifier(provider, "provider"))) {
+        throw new RelayError("SESSION_NOT_FOUND", "Relay 내부 ID를 입력하셨습니다. Agent Session ID로 조회하세요.", 3, 404,
+          { relayId: internal.id, providerSessionId: internal.providerSessionId, provider: internal.provider });
+      }
+      throw new RelayError("SESSION_NOT_FOUND", "요청한 세션을 찾을 수 없습니다.", 3, 404);
+    }
     if (matches.length > 1) throw new RelayError("AMBIGUOUS_SESSION_ID", "동일 ID가 여러 제공자에 있습니다. provider를 지정하세요.", 4, 409,
       { providers: matches.map(s => s.provider) });
     return matches[0];
@@ -176,13 +183,14 @@ export class SessionService {
   latest(alias: string, cwd?: string) {
     if (!Object.hasOwn(PROVIDERS, alias)) invalid("사용법: relay latest codex|claude|grok [--cwd <절대경로>] --json");
     const mapping = PROVIDERS[alias as keyof typeof PROVIDERS];
+    const scope = { cwd: cwd === undefined ? null : directory(cwd, false) };
     return this.transaction(false, () => {
       const args: string[] = [mapping.provider, mapping.agent];
       let where = "WHERE provider = ? AND agent = ?";
-      if (cwd !== undefined) { where += ` AND working_directory = ?${process.platform === "win32" ? " COLLATE NOCASE" : ""}`; args.push(directory(cwd, false)); }
+      if (scope.cwd !== null) { where += ` AND working_directory = ?${process.platform === "win32" ? " COLLATE NOCASE" : ""}`; args.push(scope.cwd); }
       const session = this.repo.rows(where, args, 1, 0)[0];
-      if (!session) throw new RelayError("SESSION_NOT_FOUND", `${alias}의 Relay 기록이 없습니다. 다른 제공자로 대체하지 않습니다.`, 3, 404);
-      return this.detail(session);
+      if (!session) throw new RelayError("SESSION_NOT_FOUND", `${alias}의 Relay 기록이 없습니다. 조회 범위: ${scope.cwd ?? "전체 프로젝트"}. 다른 제공자로 대체하지 않습니다.`, 3, 404, { scope });
+      return { ...this.detail(session), scope };
     });
   }
 

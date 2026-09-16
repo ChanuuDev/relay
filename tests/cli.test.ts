@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { age, cleanup, cli, cliAsync, root, temporary } from "./helpers";
+import { quote } from "../src/web/lib/format";
 
 describe("CLI processes", () => {
   let dir: string;
@@ -22,6 +23,37 @@ describe("CLI processes", () => {
     const invalid = cli(dir, ["latest"]); expect(invalid.code).toBe(2); expect(invalid.stdout).toBe("");
     const unknown = cli(dir, ["list", "--nope"]); expect(unknown.code).toBe(2); expect(unknown.data.error.code).toBe("INVALID_ARGUMENT");
     expect(cli(dir, ["web"]).code).toBe(2);
+  });
+
+  test("an internal ID suggests an executable lookup in the same store without mutating records", () => {
+    const store = path.join(dir, "한글's store"); mkdirSync(store);
+    const id = "agent's id; echo unexpected";
+    const created = cli(store, record(id)).data.session;
+    const before = cli(store, ["show", id, "--history"]).data;
+    const result = cli(store, ["show", created.id, "--provider", "openai"]);
+    expect(result.code).toBe(3); expect(result.stdout).toBe("");
+    expect(result.data.error.code).toBe("SESSION_NOT_FOUND");
+    expect(result.data.error.message).toContain("Relay 내부 ID");
+    const { command, shell, providerSessionId, provider } = result.data.error.details;
+    expect(providerSessionId).toBe(id); expect(provider).toBe("openai");
+    expect(command).toStartWith("relay show ");
+    expect(command).toContain("--data-dir"); expect(command).not.toMatch(/[\r\n]/);
+    expect(shell).toBe(process.platform === "win32" ? "powershell" : "bash");
+    // Execute the suggested arguments against this checkout, not the installed relay binary.
+    const script = `${shell === "powershell" ? "& " : ""}${quote(process.execPath, shell)} ${quote(path.join(root, "src/index.ts"), shell)} ${command.slice("relay ".length)}`;
+    const executed = Bun.spawnSync(shell === "powershell" ? ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script] : ["bash", "-c", script],
+      { stdout: "pipe", stderr: "pipe", env: { ...process.env, RELAY_DATA_DIR: dir } });
+    expect(executed.exitCode).toBe(0); expect(executed.stderr.toString()).toBe("");
+    expect(JSON.parse(executed.stdout.toString()).session.id).toBe(created.id);
+    const human = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "show", created.id, "--data-dir", store],
+      { stdout: "pipe", stderr: "pipe" });
+    expect(human.exitCode).toBe(3); expect(human.stdout.toString()).toBe("");
+    expect(human.stderr.toString()).toContain(command);
+    expect(cli(store, ["show", id, "--history"]).data).toEqual(before);
+    expect(cli(store, ["show", created.id, "--provider", "anthropic"]).data.error).not.toHaveProperty("details");
+    expect(cli(store, ["show", "missing"]).data.error).not.toHaveProperty("details");
+    cli(store, record(created.id));
+    expect(cli(store, ["show", created.id]).data.session.providerSessionId).toBe(created.id);
   });
 
   test("state-management commands and status options are removed", () => {
@@ -68,6 +100,7 @@ describe("CLI processes", () => {
       const before = cli(dir, ["show", alias, "--provider", provider, "--history"]).data;
       const shortcut = cli(dir, [`--${alias}`]);
       expect(shortcut.code).toBe(0); expect(shortcut.stderr).toBe("");
+      expect(shortcut.data.scope).toEqual({ cwd: null });
       expect(shortcut.data).toEqual(cli(dir, ["latest", alias]).data);
       expect(cli(dir, [`--${alias}`]).data).toEqual(shortcut.data);
       expect(cli(dir, ["show", alias, "--provider", provider, "--history"]).data).toEqual(before);
@@ -75,9 +108,23 @@ describe("CLI processes", () => {
     const human = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "--codex", "--data-dir", dir]);
     expect(human.exitCode).toBe(0); expect(human.stderr.toString()).toBe("");
     expect(human.stdout.toString()).toContain("codex 요약");
+    expect(human.stdout.toString()).toContain("조회 범위: 전체 프로젝트");
     const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "--data-dir", dir, "--json", "--codex"],
       { env: { ...process.env, RELAY_DATA_DIR: path.join(dir, "other") } });
     expect(result.exitCode).toBe(0); expect(JSON.parse(result.stdout.toString()).session.providerSessionId).toBe("codex");
+  });
+
+  test("latest reports the requested project scope even when no record matches", () => {
+    const session = cli(dir, record("scoped")).data.session;
+    const scoped = cli(dir, ["latest", "codex", "--cwd", root]);
+    expect(scoped.code).toBe(0);
+    expect(scoped.data.scope).toEqual({ cwd: session.workingDirectory });
+    const missing = cli(dir, ["latest", "codex", "--cwd", dir]);
+    expect(missing.code).toBe(3);
+    expect(missing.data.error.details.scope).toEqual({ cwd: dir.replaceAll("\\", "/") });
+    expect(missing.data.error.message).toContain(dir.replaceAll("\\", "/"));
+    expect(cli(dir, ["latest", "codex"]).data.session.id).toBe(session.id);
+    expect(cli(dir, ["latest", "grok"]).data.error.details.scope).toEqual({ cwd: null });
   });
 
   test("conflicting shortcuts and mixed commands fail before changing data", () => {

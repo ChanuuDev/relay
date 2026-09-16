@@ -12,6 +12,7 @@ import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
 import { terminalWidth } from "./output/terminal";
+import { sessionCommand } from "./web/lib/session-context";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
 
@@ -42,6 +43,16 @@ async function run(command: Command, write: boolean, action: (service: SessionSe
   const db = openDatabase(config, !write);
   let result: unknown;
   try { result = action(new SessionService(new SessionRepository(db), config.retentionDays)); }
+  catch (error) {
+    if (error instanceof RelayError && error.code === "SESSION_NOT_FOUND" && error.details?.relayId &&
+      typeof error.details.providerSessionId === "string" && typeof error.details.provider === "string") {
+      const shell = process.platform === "win32" ? "powershell" : "bash";
+      const command = sessionCommand({ providerSessionId: error.details.providerSessionId, provider: error.details.provider }, config.dataDirectory, shell);
+      error.message += ` 다음 명령으로 조회하세요:\n${command}`;
+      error.details = { ...error.details, command, shell };
+    }
+    throw error;
+  }
   finally { db.close(); }
   if (options.json) return void process.stdout.write(JSON.stringify(result) + "\n");
   const space = terminalWidth();
@@ -57,7 +68,7 @@ async function run(command: Command, write: boolean, action: (service: SessionSe
 function creation(command: Command) {
   return command.requiredOption("--provider <provider>", "제공자 회사 식별자: openai/anthropic/xai 등")
     .requiredOption("--agent <agent>", "도구 식별자: codex/claude-code/grok 등")
-    .requiredOption("--session-id <id>", "새 세션의 실제 Provider Session ID")
+    .requiredOption("--session-id <id>", "새 세션의 실제 Agent Session ID")
     .requiredOption("--summary <text>", "첫 기록 요약 (1~4000자)")
     .option("--session-name <name>", "세션 이름 (최대 200자)")
     .option("--model <model>", "모델 (미지정 시 null)")
@@ -71,10 +82,10 @@ creation(program.command("continue <session-id>").description("이전 세션 기
   .action((id: string, options: NewSession & { parentProvider?: string }, command: Command) => run(command, true, s => s.record(options, id, options.parentProvider)));
 
 program.command("update").description("진행 요약과 이력 추가")
-  .requiredOption("--session-id <id>", "Provider Session ID").requiredOption("--summary <text>", "진행 요약")
+  .requiredOption("--session-id <id>", "Agent Session ID").requiredOption("--summary <text>", "진행 요약")
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
   .action((o, c: Command) => run(c, true, s => s.update(o.sessionId, o.summary, o.provider)));
-program.command("show <session-id>").description("세션 상세 조회")
+program.command("show <session-id>").description("Agent Session ID로 세션 상세 조회 (Relay 내부 ID 아님)")
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)").option("--history", "진행 이력 포함")
   .option("--limit <number>", "이력 페이지 크기 (1~100, 기본 50)").option("--offset <number>", "이력 offset (기본 0)")
   .action((id: string, o, c: Command) => run(c, false, s => s.show(id, o.provider, o.history, o)));

@@ -4,7 +4,7 @@ import { quote } from "./format";
 type CopyOptions = { shell: "powershell" | "bash"; storeDirectory?: string };
 
 // 저장소를 확인하지 못했으면 --data-dir 없이 기본 저장소를 보게 둔다. 명령 자체는 그대로 실행된다.
-export function sessionCommand(session: Session, storeDirectory: string | undefined, shell: CopyOptions["shell"]) {
+export function sessionCommand(session: Pick<Session, "providerSessionId" | "provider">, storeDirectory: string | undefined, shell: CopyOptions["shell"]) {
   const store = storeDirectory ? ` --data-dir ${quote(storeDirectory, shell)}` : "";
   return `relay show ${quote(session.providerSessionId, shell)} --provider ${quote(session.provider, shell)}${store} --json`;
 }

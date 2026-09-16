@@ -146,7 +146,7 @@ test("context copy is one shell-safe line handing over the lookup command, never
   await contextCopy.click();
   expect(await clipboardText(page)).toBe(listContext);
   await page.getByText("세션 식별자", { exact: true }).click();
-  await page.getByRole("button", { name: "Session ID만 복사", exact: true }).click();
+  await page.getByRole("button", { name: "Agent Session ID만 복사", exact: true }).click();
   expect(await clipboardText(page)).toBe(id);
   const command = `relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${dir.replaceAll("\\", "/")}' --json`;
   await page.getByLabel("조회 명령 셸").selectOption("powershell");

@@ -56,6 +56,7 @@ describe("Terminal output", () => {
         { id: "upd", sessionId: "ses", sequence: 1, summary: "시작", createdAt: at }],
       updatesPage: { total: 2 } }, 80);
     const lines = view.split("\n");
+    expect(view).toContain("Agent Session ID"); expect(view).toContain("Relay 내부 ID");
     for (const line of lines) expect(width(line)).toBeLessThanOrEqual(80);
     expect(view).toContain("f47ac10b-58cc-4372-a567-0e02b2c3d40001");
     expect(view).toContain("parent-id"); expect(view).toContain("child-id");
@@ -63,6 +64,16 @@ describe("Terminal output", () => {
     expect(lines.findIndex(l => l.includes("#2"))).toBeLessThan(lines.findIndex(l => l.includes("#1")));
     expect(view).toContain("최초 기록");
     for (const forbidden of ["상태", "종료", "START", "PROGRESS", "END"]) expect(view).not.toContain(forbidden);
+  });
+
+  test("latest scope remains distinct from the selected session project and fits narrow output", () => {
+    for (const cwd of [null, "C:/" + "긴 프로젝트/".repeat(15)]) {
+      const view = human({ session: session(1), scope: { cwd } }, 70);
+      expect(view).toStartWith("조회 범위: ");
+      expect(view.replace(/\s/g, "")).toContain((cwd ?? "전체 프로젝트").replace(/\s/g, ""));
+      for (const line of view.split("\n")) expect(width(line)).toBeLessThanOrEqual(70);
+    }
+    expect(human({ session: session(1) }, 70)).not.toContain("조회 범위:");
   });
 
   test("redirected output carries no escape sequences and empty results say so", () => {

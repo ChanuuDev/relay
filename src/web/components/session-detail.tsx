@@ -59,5 +59,5 @@ function SessionMetadata({ session: s, copy }: { session: Session; copy: (value:
   return <div className="detail-section"><h3>세션 정보</h3><div className="identity-grid"><div><span>Provider / Agent</span><strong>{s.provider} / {s.agent}</strong></div><div><span>모델</span><strong>{s.model ?? "미기록"}</strong></div></div>
     <div className="path-block"><span><Folder />작업 경로</span><code>{s.workingDirectory}</code></div>
     <div className="time-grid"><div><CalendarDays /><span>최초 기록</span><time title={s.createdAt}>{timestamp(s.createdAt)}</time></div><div><Clock3 /><span>마지막 갱신</span><time title={s.updatedAt}>{timestamp(s.updatedAt)}</time></div></div>
-    <details className="technical-details"><summary><Hash />세션 식별자</summary><dl><dt>Provider Session ID</dt><dd>{s.providerSessionId}</dd></dl><CopyButton value={s.providerSessionId} copy={copy} label="Session ID만 복사" /><dl><dt>Relay 내부 ID</dt><dd>{s.id}</dd></dl></details></div>;
+    <details className="technical-details"><summary><Hash />세션 식별자</summary><dl><dt>Agent Session ID</dt><dd>{s.providerSessionId}</dd></dl><CopyButton value={s.providerSessionId} copy={copy} label="Agent Session ID만 복사" /><dl><dt>Relay 내부 ID</dt><dd>{s.id}</dd></dl></details></div>;
 }

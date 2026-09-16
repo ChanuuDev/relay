@@ -17,7 +17,7 @@ interface Column {
 const COLUMNS: Column[] = [
   { title: "이름", value: s => s.sessionName ?? "(이름 없음)", flex: 10, color: () => "1;36" },
   { title: "Provider/Agent", value: s => `${s.provider}/${s.agent}`, drop: 3, color: providerColor },
-  { title: "Session ID", value: s => s.providerSessionId, color: () => "94" },
+  { title: "Agent Session ID", value: s => s.providerSessionId, color: () => "94" },
   { title: "생성", value: s => localTime(s.createdAt), drop: 2, color: () => "90" },
   { title: "갱신", value: s => localTime(s.updatedAt), drop: 2, color: () => "90" },
   { title: "요약", value: s => s.summary, flex: 20, drop: 1 },
@@ -62,8 +62,8 @@ function table(items: Session[], space: number): Line[] {
 function card(session: Session, extra: [string, string][], space: number): Line[] {
   const title = clip(session.sessionName ?? "(이름 없음)", space);
   const fields: [string, string, string?][] = [
-    ["Session ID", session.providerSessionId, "94"],
-    ["Relay ID", session.id, "90"],
+    ["Agent Session ID", session.providerSessionId, "94"],
+    ["Relay 내부 ID", session.id, "90"],
     ["Provider", `${session.provider} / ${session.agent}`, providerColor(session)],
     ["Model", session.model ?? "미기록"],
     ["Project", session.workingDirectory, "94"],
@@ -95,6 +95,7 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
     session?: Session; items?: Session[]; page?: { total: number; offset: number };
     parentSession?: { providerSessionId: string }; children?: { providerSessionId: string }[];
     childrenPage?: { total: number }; updates?: SessionUpdate[]; updatesPage?: { total: number };
+    scope?: { cwd: string | null };
   };
   if (data.items) {
     if (data.items.some(item => typeof item?.providerSessionId !== "string")) return plain([JSON.stringify(value, null, 2)]);
@@ -105,6 +106,7 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
   if (data.session) {
     const children = data.children ?? [];
     return [
+      ...(data.scope ? plain(wrap(`조회 범위: ${data.scope.cwd ?? "전체 프로젝트"}`, space)) : []),
       ...card(data.session, [
         ...(data.parentSession ? [["Parent", data.parentSession.providerSessionId] as [string, string]] : []),
         ...(children.length ? [[`Children`, `${data.childrenPage?.total ?? children.length}건 · ` +
