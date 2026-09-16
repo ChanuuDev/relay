@@ -2,8 +2,6 @@
 
 AI Agent의 최소 세션 정보를 로컬 SQLite에 기록하고, CLI와 브라우저에서 조회하는 도구입니다. 전체 대화 복원이나 원본 Agent 로그 자동 수집은 하지 않습니다.
 
-현재 Windows x64에서 검증한 MVP입니다. Linux/macOS, ARM64, 서명 배포는 검증하지 않았습니다.
-
 ## 설치와 실행 · Windows
 
 ### 준비물
@@ -252,6 +250,26 @@ Codex의 공식 호출 방식은 `$` 또는 `/skills`이며 모든 호스트에�
 - 같은 세션에서 다시 실행돼도(resume·compact) 같은 입력이라 이력이 늘지 않습니다.
 
 기록을 원하지 않는 세션은 해당 항목을 `settings.json`에서 빼면 됩니다. 프로젝트별로만 쓰려면 전역 대신 프로젝트 `.claude/settings.json`에 넣으세요.
+
+### 다른 프로젝트에 적용하기
+
+훅은 세션 **시작**만 기록합니다. 진행·종료까지 남기려면 해당 프로젝트의 지침 파일에 아래를 넣으세요. 이 저장소의 [AGENTS.md](AGENTS.md)가 같은 내용입니다.
+
+```markdown
+## 세션 기록 지침
+
+Agent 세션은 Relay에 기록한다. `relay`가 없거나 실패하면 알리고 작업을 계속한다.
+
+- 세션 ID는 Claude Code `$CLAUDE_CODE_SESSION_ID`, Codex `$CODEX_THREAD_ID`를 그대로 전달한다. 임의로 만들지 않는다.
+- 첫 작업 전 `relay show <ID> --json`으로 확인하고, 기록이 없을 때만
+  `relay start --provider <anthropic|openai> --agent <claude-code|codex> --session-id <ID> --session-name <작업 주제> --summary <첫 요청 요약>`
+- 작업 단위가 끝날 때마다 `relay update --session-id <ID> --summary <진행 요약>`
+- 사용자가 마쳤다고 하면 `relay finish --session-id <ID> --status completed|interrupted --summary <결과>`
+```
+
+Codex와 Grok은 `AGENTS.md`, Claude Code는 `CLAUDE.md`를 읽습니다. 내용을 한 곳에만 두려면 `CLAUDE.md`에 `@AGENTS.md` 한 줄만 넣어 가져오면 됩니다.
+
+지침은 강제가 아니라 모델이 건너뛸 수 있습니다. 시작 기록만큼은 확실히 남기려면 위 훅을 함께 쓰세요.
 
 ## 브라우저와 API
 
