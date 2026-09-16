@@ -47,34 +47,28 @@ function creation(command: Command) {
   return command.requiredOption("--provider <provider>", "제공자 회사 식별자: openai/anthropic/xai 등")
     .requiredOption("--agent <agent>", "도구 식별자: codex/claude-code/grok 등")
     .requiredOption("--session-id <id>", "새 세션의 실제 Provider Session ID")
-    .requiredOption("--summary <text>", "시작 요약 (1~4000자)")
+    .requiredOption("--summary <text>", "첫 기록 요약 (1~4000자)")
     .option("--session-name <name>", "세션 이름 (최대 200자)")
     .option("--model <model>", "모델 (미지정 시 null)")
     .option("--cwd <path>", "존재하는 작업 디렉터리 절대경로");
 }
 
-creation(program.command("start").description("세션 시작 기록"))
-  .action((options: NewSession, command: Command) => run(command, true, s => s.start(options)));
-creation(program.command("continue <session-id>").description("종료된 부모 세션에 새 세션 연결"))
+creation(program.command("record").description("세션 정보 첫 기록"))
+  .action((options: NewSession, command: Command) => run(command, true, s => s.record(options)));
+creation(program.command("continue <session-id>").description("이전 세션 기록에 새 세션 연결"))
   .option("--parent-provider <provider>", "부모 세션의 제공자")
-  .action((id: string, options: NewSession & { parentProvider?: string }, command: Command) => run(command, true, s => s.start(options, id, options.parentProvider)));
+  .action((id: string, options: NewSession & { parentProvider?: string }, command: Command) => run(command, true, s => s.record(options, id, options.parentProvider)));
 
 program.command("update").description("진행 요약과 이력 추가")
   .requiredOption("--session-id <id>", "Provider Session ID").requiredOption("--summary <text>", "진행 요약")
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
   .action((o, c: Command) => run(c, true, s => s.update(o.sessionId, o.summary, o.provider)));
-program.command("finish").description("세션 종료 기록")
-  .requiredOption("--session-id <id>", "Provider Session ID").requiredOption("--summary <text>", "종료 요약")
-  .requiredOption("--status <status>", "completed / interrupted / abandoned")
-  .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
-  .action((o, c: Command) => run(c, true, s => s.finish(o.sessionId, o.summary, o.status, o.provider)));
-
 program.command("show <session-id>").description("세션 상세 조회")
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)").option("--history", "진행 이력 포함")
   .option("--limit <number>", "이력 페이지 크기 (1~100, 기본 50)").option("--offset <number>", "이력 offset (기본 0)")
   .action((id: string, o, c: Command) => run(c, false, s => s.show(id, o.provider, o.history, o)));
 program.command("list").description("세션 테이블 조회")
-  .option("--status <status>", "상태").option("--provider <provider>", "제공자").option("--agent <agent>", "도구")
+  .option("--provider <provider>", "제공자").option("--agent <agent>", "도구")
   .option("--cwd <path>", "작업 경로 정확히 일치").option("--query <text>", "이름·ID·요약·경로 부분 검색")
   .option("--limit <number>", "페이지 크기 (1~100, 기본 50)").option("--offset <number>", "offset (기본 0)")
   .action((o, c: Command) => run(c, false, s => s.list({ ...o, q: o.query })));
@@ -82,7 +76,7 @@ program.command("latest <provider>").description("codex / claude / grok 중 명�
   .option("--cwd <path>", "명시한 작업 경로 내에서만 조회")
   .action((alias: string, o, c: Command) => run(c, false, s => s.latest(alias, o.cwd)));
 
-program.command("hook <agent>").description("Agent 세션 시작 훅의 JSON을 stdin으로 받아 기록 (codex/claude/grok)")
+program.command("hook <agent>").description("Agent 세션 첫 기록 훅의 JSON을 stdin으로 받아 기록 (codex/claude/grok)")
   .action(async (alias: string, _options, command: Command) => {
     // A session hook must never block or fail the host session: answer first, record second, stay silent on failure.
     process.stdout.write("{}\n");
@@ -101,7 +95,7 @@ program.command("hook <agent>").description("Agent 세션 시작 훅의 JSON을 
       const db = openDatabase(config);
       try {
         new SessionService(new SessionRepository(db), config.retentionDays)
-          .start({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: "세션 시작 (훅 자동 기록)" });
+          .record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: "세션 첫 기록 (훅 자동 기록)" });
       } finally { db.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
   });

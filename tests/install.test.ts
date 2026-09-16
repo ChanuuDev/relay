@@ -16,6 +16,11 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   const target = path.join(dir, ".agents/skills/relay-session/SKILL.md");
   const original = readFileSync(target, "utf8");
   expect(original).toBe(readFileSync(path.join(root, "skills/relay-session/SKILL.md"), "utf8"));
+  expect(original).toContain("relay record");
+  expect(original).toContain("relay continue");
+  expect(original).not.toMatch(/\brelay start\b/);
+  expect(original).not.toMatch(/\brelay finish\b/);
+  expect(original).not.toContain("--status");
   expect(install("codex").exitCode).toBe(0);
   writeFileSync(target, original + "\nUser customization\n");
   expect(install("codex").exitCode).not.toBe(0);

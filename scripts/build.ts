@@ -1,5 +1,7 @@
 import { mkdirSync } from "node:fs";
+import { buildWeb } from "./build-web";
 
+await buildWeb();
 mkdirSync("dist", { recursive: true });
 const outfile = process.platform === "win32" ? "dist/relay.exe" : "dist/relay";
 const result = await Bun.build({ entrypoints: ["src/index.ts"], compile: { outfile }, minify: true, target: "bun" });

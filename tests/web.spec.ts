@@ -18,8 +18,8 @@ function cli(args: string[]) {
   if (result.status !== 0) throw new Error(`CLI failed: ${result.stderr} ${result.error ?? ""}`);
   return JSON.parse(result.stdout);
 }
-function start(id: string, name: string, provider = "openai", agent = "codex", summary = "첫 기록") {
-  return cli(["start", "--provider", provider, "--agent", agent, "--session-id", id, "--session-name", name, "--cwd", dir, "--summary", summary]);
+function record(id: string, name: string, provider = "openai", agent = "codex", summary = "첫 기록") {
+  return cli(["record", "--provider", provider, "--agent", agent, "--session-id", id, "--session-name", name, "--cwd", dir, "--summary", summary]);
 }
 async function launch() {
   server = spawn(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, windowsHide: true, stdio: "pipe" });
@@ -38,6 +38,11 @@ async function stop() {
 async function ready(page: Page) {
   await page.goto(url);
   await expect(page.locator("#connection-state")).toContainText("연결됨");
+}
+
+async function clipboardText(page: Page) {
+  // Windows' native clipboard converts LF to CRLF; compare text using LF on every OS.
+  return (await page.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n");
 }
 
 test.beforeEach(async () => {
@@ -63,31 +68,33 @@ test("standalone binary outside source: CLI → table → detail/history → rec
   const occupied = spawnSync(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, encoding: "utf8", timeout: 5000 });
   expect(occupied.status).toBe(6); expect(occupied.stdout).toBe(""); expect(occupied.stderr).toContain("PORT_IN_USE");
   await ready(page); await expect(page.getByText("저장된 세션이 없습니다.", { exact: false })).toBeVisible();
-  const created = start("external-session", "CLI에서 시작한 한국어 작업");
+  const created = record("external-session", "CLI에서 시작한 한국어 작업");
   await expect(page.getByRole("link", { name: "CLI에서 시작한 한국어 작업" })).toBeVisible({ timeout: 5000 });
-  await page.locator("#list-content tbody tr td").nth(2).click();
+  await page.locator("#list-content .row-summary").first().click();
   await expect(page).toHaveURL(new RegExp(`/sessions/${created.session.id}`));
   cli(["update", "--session-id", "external-session", "--summary", "브라우저 연결 확인\n진행 기록 두 번째 줄"]);
   await expect(page.locator(".summary")).toHaveText("브라우저 연결 확인\n진행 기록 두 번째 줄", { timeout: 5000 });
-  await expect(page.locator("#updates-content tbody tr")).toHaveCount(2);
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(2);
   await page.reload(); await expect(page.locator(".summary")).toContainText("브라우저 연결 확인");
   await stop();
   await expect(page.locator("#connection-state")).toContainText("연결 끊김", { timeout: 10000 });
   await expect(page.locator(".summary")).toContainText("브라우저 연결 확인");
-  cli(["finish", "--session-id", "external-session", "--status", "interrupted", "--summary", "서버 종료 중에도 저장됨"]);
+  cli(["update", "--session-id", "external-session", "--summary", "서버 종료 중에도 저장됨"]);
   await launch();
   await expect(page.locator(".summary")).toHaveText("서버 종료 중에도 저장됨", { timeout: 10000 });
   await expect(page.locator("#connection-state")).toContainText("연결됨");
-  await expect(page.locator("#updates-content tbody tr")).toHaveCount(3);
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(3);
   await expect(page.locator("#database-path")).toContainText("relay.db");
   await page.screenshot({ path: test.info().outputPath("detail.png"), fullPage: true });
   expect(errors).toEqual([]);
 });
 
 test("filters, >100 records, pagination, keyboard navigation, parent/child and back state", async ({ page }) => {
-  for (let i = 0; i < 105; i++) start(`session-${i}`, `테이블 작업 ${i}`);
-  const parent = start("claude-parent", "Claude 이전 작업", "anthropic", "claude-code");
-  cli(["finish", "--session-id", "claude-parent", "--status", "interrupted", "--summary", "작업 인계"]);
+  for (let i = 0; i < 105; i++) record(`session-${i}`, `테이블 작업 ${i}`);
+  const parent = record("claude-parent", "Claude 이전 작업", "anthropic", "claude-code");
+  cli(["update", "--session-id", "claude-parent", "--summary", "작업 인계"]);
   const child = cli(["continue", "claude-parent", "--parent-provider", "anthropic", "--provider", "openai", "--agent", "codex", "--session-id", "child", "--session-name", "Codex 후속 작업", "--summary", "재개"]);
   await ready(page); await expect(page.locator("#list-content tbody tr")).toHaveCount(50);
   await page.screenshot({ path: test.info().outputPath("table.png") });
@@ -101,8 +108,10 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
   const a = page.getByRole("link", { name: "Claude 이전 작업" }); await a.focus(); await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(parent.session.id));
-  await page.getByRole("link", { name: "Codex 후속 작업" }).click(); await expect(page).toHaveURL(new RegExp(child.session.id));
-  await page.getByRole("link", { name: "Claude 이전 작업" }).click();
+  await page.getByRole("tab", { name: /세션 연결/ }).click();
+  await page.locator("#children-content").getByRole("link", { name: "Codex 후속 작업" }).click(); await expect(page).toHaveURL(new RegExp(child.session.id));
+  await page.getByRole("tab", { name: /세션 연결/ }).click();
+  await page.getByRole("complementary", { name: "세션 상세" }).getByRole("link", { name: "Claude 이전 작업" }).click();
   await page.getByRole("link", { name: "목록으로 돌아가기", exact: false }).click();
   await expect(page.getByLabel("Provider", { exact: true })).toHaveValue("anthropic");
   await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
@@ -110,30 +119,54 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await expect(page.getByText("검색 결과가 없습니다.", { exact: true })).toBeVisible();
 });
 
-test("untrusted HTML stays text; ID/quoted command copy and fallback never execute", async ({ page, context }) => {
+test("context copy identifies the exact session, keeps note text, supports raw ID and shell-safe commands", async ({ page, context }) => {
   const id = "literal'id; echo untrusted";
   const payload = '<img src=x onerror="window.pwned=1">\n<script>window.pwned=1</script>';
-  start(id, "안전한 텍스트 검사", "openai", "codex", payload);
+  const created = record(id, "안전한 텍스트 검사", "openai", "codex", payload);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
   await ready(page);
-  await page.getByRole("button", { name: "복사", exact: true }).click();
+  await page.getByRole("button", { name: "세션 컨텍스트 복사", exact: true }).click();
   await expect(page).toHaveURL(url + "/");
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
+  const listContext = await clipboardText(page);
+  for (const value of ["# Relay 세션 컨텍스트", "Agent: codex", "Provider: openai", "모델: 미기록", "작업명: 안전한 텍스트 검사", id, created.session.id, created.session.workingDirectory, created.session.createdAt, created.session.updatedAt, payload, `${url}/sessions/${created.session.id}`, "relay show", "--data-dir"]) expect(listContext).toContain(value);
+  expect(listContext).not.toMatch(/상태:|종료 시각:|ACTIVE|COMPLETED/);
+  expect(listContext).toMatch(/최초 기록: \d{4}-\d{2}-\d{2}.*GMT/);
   await page.getByRole("link", { name: "안전한 텍스트 검사" }).click();
   await expect(page.locator(".summary")).toHaveText(payload);
   expect(await page.evaluate(() => (window as unknown as { pwned?: number }).pwned)).toBeUndefined();
   await expect(page.locator(".summary img, .summary script")).toHaveCount(0);
+  const detailPanel = page.getByRole("complementary", { name: "세션 상세" });
+  const contextCopy = detailPanel.getByRole("button", { name: "세션 컨텍스트 복사", exact: true });
+  await contextCopy.click();
+  expect(await clipboardText(page)).toBe(listContext);
+  await page.getByText("세션 식별자", { exact: true }).click();
+  await page.getByRole("button", { name: "Session ID만 복사", exact: true }).click();
+  expect(await clipboardText(page)).toBe(id);
   await page.getByLabel("조회 명령 셸").selectOption("powershell");
   await page.getByRole("button", { name: "조회 명령 복사" }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${dir.replaceAll("\\", "/")}' --json`);
+  expect(await clipboardText(page)).toBe(`relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${dir.replaceAll("\\", "/")}' --json`);
+  await page.getByLabel("조회 명령 셸").selectOption("bash");
+  await contextCopy.click();
+  const bashContext = await clipboardText(page);
+  expect(bashContext).toContain("## 이 세션 조회 (Bash)");
+  expect(bashContext).toContain("'literal'\"'\"'id; echo untrusted'");
+  const latest = "새 진행 기록\n```bash\necho note\n```\n한글 요약 끝";
+  const updated = cli(["update", "--session-id", id, "--summary", latest]);
+  await expect(page.locator(".summary")).toHaveText(latest);
+  await contextCopy.click();
+  const latestContext = await clipboardText(page);
+  expect(latestContext).toContain(latest);
+  expect(latestContext).toContain(updated.session.updatedAt);
+  expect(latestContext).toContain("````text\n" + latest + "\n````");
+  expect(latestContext).not.toContain(payload);
   await page.evaluate(() => Object.defineProperty(navigator.clipboard, "writeText", { value: async () => { throw new Error("denied"); } }));
-  await page.getByRole("button", { name: "Session ID 복사" }).click();
-  await expect(page.locator("#copy-text")).toHaveValue(id);
+  await contextCopy.click();
+  await expect(page.locator("#copy-text")).toHaveValue(latestContext);
   await expect(page.locator("#copy-text")).toBeFocused();
 });
 
 test("polling preserves unsaved filter text, focus and scroll; hidden tabs pause and resume", async ({ page }) => {
-  start("a", "필터 유지 작업"); await ready(page);
+  record("a", "필터 유지 작업"); await ready(page);
   const search = page.getByLabel("검색", { exact: true }); await search.fill("아직 검색하지 않은 입력");
   cli(["update", "--session-id", "a", "--summary", "자동 갱신"]);
   await expect(page.locator("#list-content")).toContainText("자동 갱신", { timeout: 5000 });
@@ -147,15 +180,33 @@ test("polling preserves unsaved filter text, focus and scroll; hidden tabs pause
   await expect(page.locator("#list-content")).toContainText("다시 보이면 즉시 조회", { timeout: 5000 });
 });
 
+test("context retains provider, model and record dates when storage lookup is unavailable", async ({ page, context }) => {
+  record("same-id", "다른 제공자 작업");
+  const created = cli(["record", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "same-id",
+    "--session-name", "완료된 Claude 작업", "--model", "recorded-model", "--cwd", dir, "--summary", "이전 요약"]);
+  const updated = cli(["update", "--session-id", "same-id", "--provider", "anthropic", "--summary", "검증까지 마친 작업"]);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
+  await page.route("**/api/v1/health", route => route.fulfill({ status: 503, contentType: "application/json",
+    body: JSON.stringify({ schemaVersion: 1, error: { message: "저장소 정보 조회 실패" } }) }));
+  await page.goto(url);
+  const row = page.locator(".session-row").filter({ has: page.getByRole("link", { name: "완료된 Claude 작업" }) });
+  await row.getByRole("button", { name: "세션 컨텍스트 복사" }).click();
+  const copied = await clipboardText(page);
+  for (const value of ["Agent: claude-code", "Provider: anthropic", "모델: recorded-model",
+    created.session.id, updated.session.updatedAt, "검증까지 마친 작업", "Relay 저장소: 확인 불가"]) expect(copied).toContain(value);
+  expect(copied).not.toContain("relay show");
+  expect(copied).not.toContain("Provider: openai");
+});
+
 test("partial section failure keeps detail; missing ID and invalid input are not empty state", async ({ page }) => {
-  const s = start("a", "부분 실패 검사");
+  const s = record("a", "부분 실패 검사");
   await page.goto(`${url}/sessions/${s.session.id}`);
   await expect(page.locator(".summary")).toHaveText("첫 기록");
   await page.route("**/api/v1/sessions/*/updates?*", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ schemaVersion: 1, error: { code: "DB_BUSY", message: "이력 잠금" } }) }));
-  await page.getByRole("button", { name: "새로고침" }).click();
-  await expect(page.locator("#updates-error")).toContainText("이력 잠금");
   await expect(page.locator(".summary")).toHaveText("첫 기록");
-  await expect(page.locator("#updates-content tbody tr")).toHaveCount(1);
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.locator("#updates-error")).toContainText("이력 잠금");
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(1);
   await page.goto(`${url}/sessions/absent`); await expect(page.locator("#detail-error")).toContainText("세션을 찾을 수 없습니다");
   await expect(page.getByRole("link", { name: "목록으로 돌아가기", exact: false })).toBeVisible();
   await page.goto(`${url}/?status=bad`); await expect(page.locator("#list-error")).toContainText("status");
@@ -163,7 +214,7 @@ test("partial section failure keeps detail; missing ID and invalid input are not
 });
 
 test("narrow layout keeps full detail readable without page overflow", async ({ page }) => {
-  const s = start("mobile", "좁은 화면 확인", "openai", "codex", "긴 한국어 요약 ".repeat(80));
+  const s = record("mobile", "좁은 화면 확인", "openai", "codex", "긴 한국어 요약 ".repeat(80));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${url}/sessions/${s.session.id}`);
   await expect(page.locator(".summary")).toContainText("긴 한국어 요약");
@@ -172,32 +223,37 @@ test("narrow layout keeps full detail readable without page overflow", async ({ 
 });
 
 test("history and child pages beyond 50 remain navigable; detail polling preserves scroll and focus", async ({ page }) => {
-  const parent = start("parent", "이력 많은 부모");
+  const parent = record("parent", "이력 많은 부모");
   for (let i = 0; i < 52; i++) cli(["update", "--session-id", "parent", "--summary", `진행 ${i}`]);
-  cli(["finish", "--session-id", "parent", "--status", "completed", "--summary", "부모 종료"]);
+  cli(["update", "--session-id", "parent", "--summary", "부모 종료"]);
   for (let i = 0; i < 52; i++) cli(["continue", "parent", "--provider", "openai", "--agent", "codex", "--session-id", `child-${i}`, "--session-name", `자식 ${i}`, "--summary", "자식 시작"]);
   await page.goto(`${url}/sessions/${parent.session.id}`);
-  await expect(page.locator("#updates-content tbody tr")).toHaveCount(50);
-  await expect(page.locator("#children-content li")).toHaveCount(50);
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(50);
   await page.locator("#updates-content").getByRole("button", { name: "다음", exact: true }).click();
-  await expect(page.locator("#updates-content tbody tr")).toHaveCount(4);
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(4);
+  await page.getByRole("tab", { name: /세션 연결/ }).click();
+  await expect(page.locator("#children-content li")).toHaveCount(50);
   await page.locator("#children-content").getByRole("button", { name: "다음", exact: true }).click();
   await expect(page.locator("#children-content li")).toHaveCount(2);
-  await expect(page.locator("#updates-content tbody tr")).toHaveCount(4);
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(4);
+  await page.getByRole("tab", { name: /세션 연결/ }).click();
   const childLink = page.locator("#children-content li a").first(); await childLink.click();
+  await page.getByText("세션 식별자", { exact: true }).click();
   const id = await page.locator("dd").first().textContent();
-  const copy = page.getByRole("button", { name: "Session ID 복사" }); await copy.focus();
+  const copy = page.getByRole("complementary", { name: "세션 상세" }).getByRole("button", { name: "세션 컨텍스트 복사", exact: true }); await copy.focus();
   await page.evaluate(() => window.scrollTo(0, 450));
   const before = await page.evaluate(() => window.scrollY);
   cli(["update", "--session-id", id!, "--summary", "스크롤 유지 갱신"]);
   await expect(page.locator(".summary")).toHaveText("스크롤 유지 갱신", { timeout: 5000 });
-  await expect(page.getByRole("button", { name: "Session ID 복사" })).toBeFocused();
+  await expect(page.getByRole("complementary", { name: "세션 상세" }).getByRole("button", { name: "세션 컨텍스트 복사", exact: true })).toBeFocused();
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
 });
 
 test("slow older filter responses cannot replace newer results", async ({ page }) => {
-  start("a", "이전 검색 대상", "openai", "codex");
-  start("b", "새 검색 대상", "anthropic", "claude-code");
+  record("a", "이전 검색 대상", "openai", "codex");
+  record("b", "새 검색 대상", "anthropic", "claude-code");
   await ready(page);
   let oldStarted!: () => void; const started = new Promise<void>(resolve => { oldStarted = resolve; });
   let releaseOld!: () => void; const released = new Promise<void>(resolve => { releaseOld = resolve; });
@@ -215,4 +271,116 @@ test("slow older filter responses cannot replace newer results", async ({ page }
   releaseOld(); await page.waitForTimeout(300);
   await expect(page.getByRole("link", { name: "새 검색 대상" })).toBeVisible();
   await expect(page.getByRole("link", { name: "이전 검색 대상" })).toHaveCount(0);
+});
+
+test("record filters, filter chips and browser history keep their scopes without lifecycle controls", async ({ page }) => {
+  record("first", "검색할 설계 작업");
+  record("second", "검색할 다른 작업", "anthropic", "claude-code");
+  await ready(page);
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: /진행 중|중단됨|완료.*필터|상태 안내/ })).toHaveCount(0);
+  await expect(page.locator(".stats-grid, .status-badge")).toHaveCount(0);
+  await page.getByRole("button", { name: "상세 필터", exact: true }).click();
+  await page.getByLabel("Agent", { exact: true }).fill("codex");
+  await page.getByLabel("프로젝트 경로", { exact: true }).fill(dir);
+  await page.getByLabel("표시 개수", { exact: true }).selectOption("20");
+  await page.getByRole("button", { name: "검색", exact: true }).click();
+  await expect(page).toHaveURL(/limit=20/);
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await page.getByRole("link", { name: "검색할 설계 작업" }).click();
+  await expect(page.getByRole("complementary", { name: "세션 상세" })).toBeVisible();
+  await expect(page.locator(".selected-row")).toContainText("검색할 설계 작업");
+  await page.goBack();
+  await expect(page.getByLabel("Agent", { exact: true })).toHaveValue("codex");
+  await expect(page.getByLabel("표시 개수", { exact: true })).toHaveValue("20");
+  await page.getByRole("button", { name: "agent 필터 해제" }).click();
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(2);
+  await page.getByRole("button", { name: "전체 초기화", exact: true }).click();
+  await expect(page.getByLabel("Agent", { exact: true })).toHaveValue("");
+});
+
+test("mobile list, detail tabs and return preserve a searched session without horizontal overflow", async ({ page }) => {
+  record("mobile", "모바일 작업 " + "긴이름".repeat(30), "openai", "codex", "공백없는요약".repeat(150));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready(page);
+  await page.getByLabel("검색", { exact: true }).fill("모바일 작업");
+  await page.getByRole("button", { name: "검색", exact: true }).click();
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole("link", { name: /^모바일 작업/ }).click();
+  await expect(page.getByRole("complementary", { name: "세션 상세" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "세션 목록" })).toBeHidden();
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.getByTestId("history-entry")).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole("link", { name: "목록으로 돌아가기" }).click();
+  await expect(page.getByLabel("검색", { exact: true })).toHaveValue("모바일 작업");
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+});
+
+test("search shortcut and keyboard detail navigation preserve focus and drafts", async ({ page }) => {
+  record("keyboard", "키보드로 이어갈 작업");
+  await ready(page);
+  await page.keyboard.press("/");
+  const search = page.getByLabel("검색", { exact: true });
+  await expect(search).toBeFocused();
+  await search.fill("키보드");
+  await page.keyboard.press("/");
+  await expect(search).toHaveValue("키보드/");
+  await search.fill("키보드");
+  await page.keyboard.press("Enter");
+  const link = page.getByRole("link", { name: "키보드로 이어갈 작업" });
+  await link.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("complementary", { name: "세션 상세" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "목록으로 돌아가기" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(link).toBeFocused();
+  await expect(search).toHaveValue("키보드");
+  await page.keyboard.press("/");
+  await expect(search).toBeFocused();
+});
+
+test("record discovery and warm responsive workspace stay usable at narrow widths", async ({ page }) => {
+  record("resume", "이전 디자인 작업");
+  cli(["update", "--session-id", "resume", "--summary", "재개할 작업"]);
+  record("active", "다른 작업");
+  await ready(page);
+  await page.getByRole("button", { name: "이전 기록 찾기" }).click();
+  await expect(page.getByLabel("검색", { exact: true })).toBeFocused();
+  await page.getByLabel("검색", { exact: true }).fill("이전 디자인");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "이전 디자인 작업" })).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const width of [1920, 1280, 1024, 760, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByLabel("검색", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole("link", { name: "이전 디자인 작업" }).click();
+    await expect(page.locator(".summary")).toHaveText("재개할 작업");
+    const copy = page.getByRole("complementary", { name: "세션 상세" }).getByRole("button", { name: "세션 컨텍스트 복사", exact: true });
+    await expect(copy).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath(`cursor-detail-${width}.png`), fullPage: true });
+    await page.getByRole("link", { name: "목록으로 돌아가기" }).click();
+    await expect(page.getByRole("link", { name: "이전 디자인 작업" })).toBeFocused();
+  }
+});
+
+test("connection indicator stays neutral until loaded and reflects offline recovery", async ({ page }) => {
+  record("connection", "연결 상태 확인");
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/v1/health", async route => { await pending; await route.continue(); });
+  await page.goto(url);
+  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "pending");
+  release();
+  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "online");
+  await stop();
+  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "offline", { timeout: 10000 });
+  await expect(page.getByRole("link", { name: "연결 상태 확인" })).toBeVisible();
+  await launch();
+  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "online", { timeout: 10000 });
 });

@@ -66,16 +66,12 @@ export function wrap(text: string, max: number): string[] {
 }
 
 // Colour follows the NO_COLOR convention and stays off when the output is redirected.
-const colored = !process.env.NO_COLOR && (Boolean(process.stdout.isTTY) || Boolean(process.env.FORCE_COLOR));
+const colored = !process.env.NO_COLOR && process.env.FORCE_COLOR !== "0" &&
+  (Boolean(process.stdout.isTTY) || Boolean(process.env.FORCE_COLOR));
 export function paint(text: string, code: string): string {
   return colored && code ? `\x1b[${code}m${text}\x1b[0m` : text;
 }
-export const bold = (text: string) => paint(text, "1");
 export const dim = (text: string) => paint(text, "2");
-export const STATUS_COLOR: Record<string, string> = {
-  ACTIVE: "32", INTERRUPTED: "33", COMPLETED: "36", ABANDONED: "90",
-};
-
 /** Stored timestamps are ISO 8601 UTC; people read them in local time, so detail views also state the offset. */
 export function localTime(iso: string, exact = false): string {
   const at = new Date(iso);

@@ -1,7 +1,6 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { invalid } from "./errors";
-import type { SessionStatus } from "./session/session.types";
 
 export function text(value: unknown, field: string, max: number, multiline = false): string {
   if (typeof value !== "string" || !value.trim() || Array.from(value).length > max ||
@@ -19,13 +18,6 @@ export function identifier(value: unknown, field: string): string {
 
 export function optionalText(value: unknown, field: string, max: number): string | null {
   return value === undefined || value === null ? null : text(value, field, max);
-}
-
-export function status(value: unknown, terminal = false): SessionStatus {
-  const normalized = text(value, "status", 20).toUpperCase() as SessionStatus;
-  if (!["ACTIVE", "INTERRUPTED", "COMPLETED", "ABANDONED"].includes(normalized) ||
-    (terminal && normalized === "ACTIVE")) invalid("허용하지 않는 status입니다.");
-  return normalized;
 }
 
 export function directory(value: unknown, mustExist: boolean): string {

@@ -2,6 +2,11 @@ node_modules/
 dist/
 test-results/
 playwright-report/
+src/web/generated/
+output/playwright/
+.playwright-cli/
+.playwright-mcp/
+.serena/
 *.db
 *.db-wal
 *.db-shm

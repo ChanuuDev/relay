@@ -1,7 +1,9 @@
 import type { Session, SessionUpdate } from "../session/session.types";
-import { bold, clip, dim, localTime, pad, paint, STATUS_COLOR, terminalWidth, width, wrap } from "./terminal";
+import { clip, dim, localTime, pad, paint, terminalWidth, width, wrap } from "./terminal";
 
 const GAP = 2;
+const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35" };
+const providerColor = (s: Session) => Object.hasOwn(PROVIDER_COLORS, s.provider) ? PROVIDER_COLORS[s.provider]! : "36";
 
 interface Column {
   title: string;
@@ -13,13 +15,19 @@ interface Column {
 
 // Identity columns always stay; the rest leave in `drop` order when the terminal is narrow.
 const COLUMNS: Column[] = [
-  { title: "상태", value: s => s.status, color: s => STATUS_COLOR[s.status] ?? "" },
-  { title: "이름", value: s => s.sessionName ?? "(이름 없음)", flex: 10 },
-  { title: "Provider/Agent", value: s => `${s.provider}/${s.agent}`, drop: 3 },
-  { title: "Session ID", value: s => s.providerSessionId },
-  { title: "갱신", value: s => localTime(s.updatedAt), drop: 2 },
+  { title: "이름", value: s => s.sessionName ?? "(이름 없음)", flex: 10, color: () => "1;36" },
+  { title: "Provider/Agent", value: s => `${s.provider}/${s.agent}`, drop: 3, color: providerColor },
+  { title: "Session ID", value: s => s.providerSessionId, color: () => "94" },
+  { title: "생성", value: s => localTime(s.createdAt), drop: 2, color: () => "90" },
+  { title: "갱신", value: s => localTime(s.updatedAt), drop: 2, color: () => "90" },
   { title: "요약", value: s => s.summary, flex: 20, drop: 1 },
 ];
+
+// Measure and clip plain text first; leave padding outside ANSI spans for trimEnd.
+function cell(text: string, size: number, color: string) {
+  const value = clip(text, size);
+  return paint(value, color) + " ".repeat(Math.max(0, size - width(value)));
+}
 
 function table(items: Session[], space: number): string[] {
   const columns = [...COLUMNS];
@@ -42,43 +50,38 @@ function table(items: Session[], space: number): string[] {
   const line = (cells: string[]) => cells.join(" ".repeat(GAP)).trimEnd();
   const rule = columns.reduce((sum, c) => sum + size.get(c)!, 0) + (columns.length - 1) * GAP;
   return [
-    line(columns.map(c => bold(pad(c.title, size.get(c)!)))),
+    line(columns.map(c => cell(c.title, size.get(c)!, "1;36"))),
     dim("-".repeat(Math.min(rule, space))),
-    ...items.map(item => line(columns.map(column => {
-      const cell = pad(clip(column.value(item), size.get(column)!), size.get(column)!);
-      return column.color ? paint(cell, column.color(item)) : cell;
-    }))),
+    ...items.map(item => line(columns.map(column => cell(column.value(item), size.get(column)!, column.color?.(item) ?? "")))),
   ];
 }
 
 function card(session: Session, extra: [string, string][], space: number): string[] {
-  const badge = paint(session.status, STATUS_COLOR[session.status] ?? "");
-  const title = clip(session.sessionName ?? "(이름 없음)", Math.max(10, space - width(session.status) - GAP));
-  const fields: [string, string][] = [
-    ["Session ID", session.providerSessionId],
-    ["Relay ID", session.id],
-    ["Provider", `${session.provider} / ${session.agent}`],
+  const title = clip(session.sessionName ?? "(이름 없음)", space);
+  const fields: [string, string, string?][] = [
+    ["Session ID", session.providerSessionId, "94"],
+    ["Relay ID", session.id, "90"],
+    ["Provider", `${session.provider} / ${session.agent}`, providerColor(session)],
     ["Model", session.model ?? "미기록"],
-    ["Project", session.workingDirectory],
-    ["시작", localTime(session.startedAt, true)],
-    ["갱신", localTime(session.updatedAt, true)],
-    ...(session.endedAt ? [["종료", localTime(session.endedAt, true)] as [string, string]] : []),
+    ["Project", session.workingDirectory, "94"],
+    ["최초 기록", localTime(session.createdAt, true), "90"],
+    ["갱신", localTime(session.updatedAt, true), "90"],
     ...extra,
   ];
   const label = Math.max(...fields.map(([name]) => width(name)));
   return [
-    `${bold(title)}  ${badge}`,
+    paint(title, "1;36"),
     dim("-".repeat(space)),
-    ...fields.map(([name, value]) => `${dim(pad(name, label))}  ${clip(value, space - label - GAP)}`),
+    ...fields.map(([name, value, color]) => `${dim(pad(name, label))}  ${paint(clip(value, space - label - GAP), color ?? "")}`),
     "",
-    bold("요약"),
+    paint("요약", "1;36"),
     ...wrap(session.summary, space - 2).map(text => `  ${text}`),
   ];
 }
 
 function history(updates: SessionUpdate[], total: number, space: number): string[] {
-  return ["", bold(`진행 이력 (${total}건)`), ...updates.flatMap(update => [
-    `  ${dim(`#${update.sequence}`)} ${pad(update.type, 8)} ${dim(localTime(update.createdAt))}`,
+  return ["", paint(`기록 이력 (${total}건)`, "1;36"), ...updates.flatMap(update => [
+    `  ${paint(`#${update.sequence}`, "36")} ${paint(localTime(update.createdAt), "90")}`,
     ...wrap(update.summary, space - 6).map(text => `      ${text}`),
   ])];
 }
@@ -91,7 +94,7 @@ export function human(value: unknown, space = terminalWidth()): string {
   };
   if (data.items) {
     if (data.items.some(item => typeof item?.providerSessionId !== "string")) return JSON.stringify(value, null, 2);
-    const footer = dim(`총 ${data.page?.total ?? data.items.length}건 · offset ${data.page?.offset ?? 0}`);
+    const footer = `${paint(`총 ${data.page?.total ?? data.items.length}건`, "36")} ${dim(`· offset ${data.page?.offset ?? 0}`)}`;
     if (!data.items.length) return [dim("조회된 세션이 없습니다."), footer].join("\n");
     return [...table(data.items, space), footer].join("\n");
   }

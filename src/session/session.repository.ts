@@ -3,8 +3,8 @@ import type { Session, SessionUpdate } from "./session.types";
 
 const columns = `id, provider, agent, provider_session_id AS providerSessionId,
   session_name AS sessionName, model, working_directory AS workingDirectory,
-  status, summary, parent_session_id AS parentSessionId,
-  started_at AS startedAt, updated_at AS updatedAt, ended_at AS endedAt`;
+  summary, parent_session_id AS parentSessionId,
+  created_at AS createdAt, updated_at AS updatedAt`;
 
 export class SessionRepository {
   constructor(public db: Database) {}
@@ -18,7 +18,7 @@ export class SessionRepository {
 
   rows(where: string, args: SQLQueryBindings[], limit: number, offset: number, children = false) {
     return this.db.query<Session, SQLQueryBindings[]>(`SELECT ${columns} FROM sessions ${where}
-      ORDER BY ${children ? "started_at" : "updated_at"} DESC, id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset);
+      ORDER BY ${children ? "created_at" : "updated_at"} DESC, id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset);
   }
 
   count(where: string, args: SQLQueryBindings[]) {
@@ -27,20 +27,21 @@ export class SessionRepository {
 
   insert(s: Session) {
     this.db.query(`INSERT INTO sessions (id, provider, agent, provider_session_id, session_name, model,
-      working_directory, status, summary, parent_session_id, started_at, updated_at, ended_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(s.id, s.provider, s.agent, s.providerSessionId,
-      s.sessionName, s.model, s.workingDirectory, s.status, s.summary, s.parentSessionId, s.startedAt, s.updatedAt, s.endedAt);
+      working_directory, summary, parent_session_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(s.id, s.provider, s.agent, s.providerSessionId, s.sessionName, s.model,
+        s.workingDirectory, s.summary, s.parentSessionId, s.createdAt, s.updatedAt);
   }
 
   change(s: Session) {
-    this.db.query("UPDATE sessions SET summary = ?, status = ?, updated_at = ?, ended_at = ? WHERE id = ?")
-      .run(s.summary, s.status, s.updatedAt, s.endedAt, s.id);
+    this.db.query("UPDATE sessions SET summary = ?, updated_at = ? WHERE id = ?")
+      .run(s.summary, s.updatedAt, s.id);
   }
 
-  append(s: Session, type: SessionUpdate["type"]) {
-    this.db.query(`INSERT INTO session_updates (id, session_id, sequence, type, summary, created_at)
-      SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ? FROM session_updates WHERE session_id = ?`)
-      .run(`upd_${crypto.randomUUID()}`, s.id, type, s.summary, s.updatedAt, s.id);
+  append(s: Session) {
+    this.db.query(`INSERT INTO session_updates (id, session_id, sequence, summary, created_at)
+      SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ? FROM session_updates WHERE session_id = ?`)
+      .run(`upd_${crypto.randomUUID()}`, s.id, s.summary, s.updatedAt, s.id);
   }
 
   deleteExpired(cutoff: string, keepId: string) {
@@ -54,7 +55,7 @@ export class SessionRepository {
 
   updates(id: string, limit: number, offset: number) {
     return this.db.query<SessionUpdate, [string, number, number]>(`SELECT id, session_id AS sessionId,
-      sequence, type, summary, created_at AS createdAt FROM session_updates WHERE session_id = ?
+      sequence, summary, created_at AS createdAt FROM session_updates WHERE session_id = ?
       ORDER BY sequence DESC LIMIT ? OFFSET ?`).all(id, limit, offset);
   }
 

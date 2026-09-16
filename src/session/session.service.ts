@@ -1,7 +1,7 @@
 import type { SQLQueryBindings } from "bun:sqlite";
 import { checkVersion } from "../db/database";
 import { invalid, RelayError, storageError } from "../errors";
-import { directory, identifier, optionalText, pagination, status, text } from "../validation";
+import { directory, identifier, optionalText, pagination, text } from "../validation";
 import { SessionRepository } from "./session.repository";
 import { brief, type Filters, type NewSession, type Session } from "./session.types";
 
@@ -48,7 +48,7 @@ export class SessionService {
     return session;
   }
 
-  start(input: NewSession, parentId?: string, parentProvider?: string) {
+  record(input: NewSession, parentId?: string, parentProvider?: string) {
     const provider = identifier(input.provider, "provider");
     const agent = identifier(input.agent, "agent");
     const providerSessionId = text(input.sessionId, "session-id", 256);
@@ -69,13 +69,12 @@ export class SessionService {
         }
         return { schemaVersion: 1, session: existing, ...(parent ? { parentSession: brief(parent) } : {}) };
       }
-      if (parent?.status === "ACTIVE") throw new RelayError("INVALID_STATE", "ACTIVE 부모는 먼저 종료 기록을 남겨야 합니다.", 4, 409);
       const now = new Date().toISOString();
       const session: Session = { id: `ses_${crypto.randomUUID()}`, provider, agent, providerSessionId,
-        sessionName, model, workingDirectory: cwd, status: "ACTIVE", summary,
-        parentSessionId: parent?.id ?? null, startedAt: now, updatedAt: now, endedAt: null };
+        sessionName, model, workingDirectory: cwd, summary,
+        parentSessionId: parent?.id ?? null, createdAt: now, updatedAt: now };
       this.repo.insert(session);
-      this.repo.append(session, "START");
+      this.repo.append(session);
       return { schemaVersion: 1, session, ...(parent ? { parentSession: brief(parent) } : {}) };
     });
   }
@@ -84,23 +83,14 @@ export class SessionService {
     return this.change(id, summaryInput, provider);
   }
 
-  finish(id: string, summaryInput: string, statusInput: string, provider?: string) {
-    return this.change(id, summaryInput, provider, status(statusInput, true));
-  }
-
-  private change(id: string, summaryInput: string, provider?: string, endStatus?: Session["status"]) {
+  private change(id: string, summaryInput: string, provider?: string) {
     const summary = text(summaryInput, "summary", 4000, true);
     return this.write(() => {
       const session = this.resolve(id, provider);
-      if (session.status !== "ACTIVE") {
-        if (endStatus && session.status === endStatus && session.summary === summary) return { schemaVersion: 1, session };
-        throw new RelayError("INVALID_STATE", "종료된 세션은 변경할 수 없습니다. 새 세션으로 이어받으세요.", 4, 409);
-      }
       session.summary = summary;
       session.updatedAt = new Date().toISOString();
-      if (endStatus) { session.status = endStatus; session.endedAt = session.updatedAt; }
       this.repo.change(session);
-      this.repo.append(session, endStatus ? "END" : "PROGRESS");
+      this.repo.append(session);
       return { schemaVersion: 1, session };
     });
   }
@@ -130,7 +120,6 @@ export class SessionService {
     const args: SQLQueryBindings[] = [];
     if (filters.provider !== undefined) { clauses.push("provider = ?"); args.push(identifier(filters.provider, "provider")); }
     if (filters.agent !== undefined) { clauses.push("agent = ?"); args.push(identifier(filters.agent, "agent")); }
-    if (filters.status !== undefined) { clauses.push("status = ?"); args.push(status(filters.status)); }
     if (filters.cwd !== undefined) { clauses.push(`working_directory = ?${process.platform === "win32" ? " COLLATE NOCASE" : ""}`); args.push(directory(filters.cwd, false)); }
     if (filters.q !== undefined) {
       const q = text(filters.q, "query", 4000).replace(/[\\%_]/g, "\\$&");

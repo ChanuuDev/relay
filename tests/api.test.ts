@@ -16,14 +16,22 @@ describe("Local read-only HTTP API", () => {
 
   test("health, DTO contract, internal IDs, parent, children and history", async () => {
     const health = await request("/api/v1/health").json(); expect(health.databasePath).toBe(f.config.databasePath);
-    const a = f.service.start(input("provider-a")).session;
-    f.service.finish("provider-a", "완료", "completed");
-    const child = f.service.start(input("provider-b", { provider: "anthropic", agent: "claude-code" }), "provider-a").session;
+    const a = f.service.record(input("provider-a")).session;
+    f.service.update("provider-a", "다음 대화에 필요한 맥락");
+    const child = f.service.record(input("provider-b", { provider: "anthropic", agent: "claude-code" }), "provider-a").session;
     const list = await request("/api/v1/sessions?provider=anthropic").json();
     expect(list.schemaVersion).toBe(1); expect(list.items[0].id).toBe(child.id); expect(list.page.total).toBe(1);
     const detail = await request(`/api/v1/sessions/${child.id}`).json(); expect(detail.parentSession.id).toBe(a.id);
+    expect(detail.session.createdAt).toBeString();
+    for (const field of ["status", "startedAt", "endedAt"]) {
+      expect(detail.session).not.toHaveProperty(field);
+      expect(list.items[0]).not.toHaveProperty(field);
+    }
     expect((await request(`/api/v1/sessions/${a.id}/children?limit=1`).json()).items[0].id).toBe(child.id);
-    expect((await request(`/api/v1/sessions/${a.id}/updates?offset=1`).json()).items[0].type).toBe("START");
+    const history = await request(`/api/v1/sessions/${a.id}/updates?offset=1`).json();
+    expect(history.items[0].sequence).toBe(1);
+    expect(history.items[0].summary).toBe(a.summary);
+    expect(history.items[0]).not.toHaveProperty("type");
     expect(request("/api/v1/sessions/provider-a").status).toBe(404);
     expect(request(`/api/v1/sessions/${a.id}`).headers.get("Cache-Control")).toBe("no-store");
   });
@@ -82,7 +90,7 @@ describe("Local read-only HTTP API", () => {
       let duplicate: ReturnType<typeof startServer> | undefined;
       try { expect(() => { duplicate = startServer(config); }).toThrow("포트가 사용 중"); }
       finally { await duplicate?.stop(); }
-      const s = f.service.start(input("live")).session;
+      const s = f.service.record(input("live")).session;
       const response = await fetch(`http://127.0.0.1:${port}/api/v1/sessions/${s.id}`);
       expect((await response.json()).session.providerSessionId).toBe("live");
       f.service.update("live", "실시간 갱신");

@@ -21,7 +21,7 @@ export function api(url: URL, service: SessionService, config: Config): unknown 
     return { schemaVersion: 1, status: "ok", appVersion: version,
       dataDirectory: config.dataDirectory, databasePath: config.databasePath };
   }
-  if (url.pathname === "/api/v1/sessions") return service.list(params(url, ["status", "provider", "agent", "cwd", "q", "limit", "offset"]));
+  if (url.pathname === "/api/v1/sessions") return service.list(params(url, ["provider", "agent", "cwd", "q", "limit", "offset"]));
   const match = /^\/api\/v1\/sessions\/([^/]+)(?:\/(updates|children))?$/.exec(url.pathname);
   if (match) {
     let id: string;

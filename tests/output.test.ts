@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { stripVTControlCharacters } from "node:util";
 import { human } from "../src/output/human";
 import { clip, localTime, wrap, width } from "../src/output/terminal";
 import type { Session } from "../src/session/session.types";
@@ -7,8 +8,8 @@ const at = "2026-09-16T04:02:09.792Z";
 function session(index: number, extra: Partial<Session> = {}): Session {
   return { id: `ses_00000000-0000-0000-0000-00000000000${index}`, provider: "anthropic", agent: "claude-code",
     providerSessionId: `f47ac10b-58cc-4372-a567-0e02b2c3d4000${index}`, sessionName: `세션 이름 ${index}`,
-    model: "claude-opus-5", workingDirectory: "C:/workspace/agent-session-chain", status: "ACTIVE",
-    summary: "요약 텍스트", parentSessionId: null, startedAt: at, updatedAt: at, endedAt: null, ...extra };
+    model: "claude-opus-5", workingDirectory: "C:/workspace/agent-session-chain",
+    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, ...extra };
 }
 
 describe("Terminal output", () => {
@@ -35,7 +36,7 @@ describe("Terminal output", () => {
   });
 
   test("table columns align across Korean and ASCII rows and fit the terminal", () => {
-    const items = [session(1), session(2, { sessionName: "ascii name", status: "INTERRUPTED" }),
+    const items = [session(1), session(2, { sessionName: "ascii name" }),
       session(3, { sessionName: "아주 긴 한글 세션 이름이 들어가는 경우", summary: "긴 ".repeat(60) })];
     for (const space of [70, 100, 160]) {
       const lines = human({ items, page: { total: 3, offset: 0 } }, space).split("\n");
@@ -51,15 +52,17 @@ describe("Terminal output", () => {
     const view = human({ session: session(1, { summary: "요약 ".repeat(40) }),
       parentSession: { providerSessionId: "parent-id" }, children: [{ providerSessionId: "child-id" }],
       childrenPage: { total: 1 },
-      updates: [{ id: "upd", sessionId: "ses", sequence: 2, type: "PROGRESS", summary: "진행 ".repeat(30), createdAt: at },
-        { id: "upd", sessionId: "ses", sequence: 1, type: "START", summary: "시작", createdAt: at }],
+      updates: [{ id: "upd", sessionId: "ses", sequence: 2, summary: "진행 ".repeat(30), createdAt: at },
+        { id: "upd", sessionId: "ses", sequence: 1, summary: "시작", createdAt: at }],
       updatesPage: { total: 2 } }, 80);
     const lines = view.split("\n");
     for (const line of lines) expect(width(line)).toBeLessThanOrEqual(80);
     expect(view).toContain("f47ac10b-58cc-4372-a567-0e02b2c3d40001");
     expect(view).toContain("parent-id"); expect(view).toContain("child-id");
-    expect(view).toContain("진행 이력 (2건)");
+    expect(view).toContain("기록 이력 (2건)");
     expect(lines.findIndex(l => l.includes("#2"))).toBeLessThan(lines.findIndex(l => l.includes("#1")));
+    expect(view).toContain("최초 기록");
+    for (const forbidden of ["상태", "종료", "START", "PROGRESS", "END"]) expect(view).not.toContain(forbidden);
   });
 
   test("redirected output carries no escape sequences and empty results say so", () => {
@@ -67,6 +70,39 @@ describe("Terminal output", () => {
     expect(listed).not.toContain("\u001b");
     expect(human({ items: [], page: { total: 0, offset: 0 } }, 100)).toContain("조회된 세션이 없습니다.");
     expect(human({ items: [{ sequence: 1 }] }, 100)).toContain("\"sequence\": 1");
+  });
+
+  test("TTY colors preserve plain text and alignment; environment overrides do not leak ANSI", () => {
+    const items = [session(1), session(2, { provider: "openai", agent: "codex" }),
+      session(3, { provider: "xai", agent: "grok" }), session(4, { provider: "custom", agent: "agent" })];
+    const inputs = [70, 100, 160, 200].map(space => ({ value: { items, page: { total: 4, offset: 0 } }, space }));
+    const detail = { session: items[0], updates: [{ id: "upd", sessionId: items[0]!.id, sequence: 1,
+      summary: "여러 줄\n요약 그대로", createdAt: at }], updatesPage: { total: 1 } };
+    const render = (tty: boolean, overrides: Record<string, string | undefined> = {}) => {
+      const script = `Object.defineProperty(process.stdout, "isTTY", { value: ${tty} });
+        const { human } = await import(${JSON.stringify(new URL("../src/output/human.ts", import.meta.url).href)});
+        const inputs = ${JSON.stringify([...inputs, { value: detail, space: 80 }])};
+        process.stdout.write(JSON.stringify(inputs.map(({ value, space }) => human(value, space))));`;
+      const result = Bun.spawnSync([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe",
+        env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined, ...overrides } });
+      expect(result.exitCode).toBe(0);
+      return JSON.parse(result.stdout.toString()) as string[];
+    };
+    const plain = render(false);
+    const colored = render(true);
+    expect(colored).toEqual(render(false, { FORCE_COLOR: "1" }));
+    expect(colored.map(stripVTControlCharacters)).toEqual(plain);
+    for (const text of colored) expect(text).toMatch(/\x1b\[[\d;]+m/);
+    for (const text of plain) expect(text).not.toContain("\x1b");
+    expect(render(true, { NO_COLOR: "1", FORCE_COLOR: "1" })).toEqual(plain);
+    expect(render(true, { FORCE_COLOR: "0" })).toEqual(plain);
+    for (const [index, space] of [70, 100, 160, 200, 80].entries()) {
+      for (const line of stripVTControlCharacters(colored[index]!).split("\n")) expect(width(line)).toBeLessThanOrEqual(space);
+    }
+    const providerCodes = ["openai/codex", "anthropic/claude-code", "xai/grok"]
+      .map(label => colored[3]!.match(new RegExp(`\\x1b\\[([\\d;]+)m${label}\\x1b`))?.[1]);
+    expect(providerCodes.every(Boolean)).toBe(true);
+    expect(new Set(providerCodes).size).toBe(3);
   });
 
   test("timestamps render in local time and keep unparsable values", () => {
