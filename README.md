@@ -259,3 +259,7 @@ npm run check
 개별 검사: `npm run typecheck`, `npm test`, `npm run build`, `npm run test:web`. Playwright는 빌드된 실행 파일을 소스 밖 임시 폴더에서 실행하므로 코드 변경 후에는 먼저 빌드하세요. 각 테스트는 자체 임시 DB·포트를 사용하고 종료 시 정리합니다. 빌드 스크립트는 실행 중인 웹 서버를 자동으로 종료하지 않으므로 같은 `dist/relay.exe`를 사용 중이면 해당 서버를 먼저 종료하세요.
 
 Linux/macOS 소스 실행·빌드 경로는 준비되어 있으나 해당 OS에서 검증하지 않았으므로 지원 확정 대상으로 표기하지 않습니다. 배포는 `dist/relay.exe`와 필요한 경우 스킬 원본을 전달하면 됩니다.
+
+## 라이선스
+
+MIT 라이선스입니다. 전문은 [LICENSE](LICENSE)를 참고하세요.

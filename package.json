@@ -2,6 +2,7 @@
   "name": "relay-session-continuity",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "relay": "bun run src/index.ts",
