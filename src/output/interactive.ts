@@ -13,7 +13,16 @@ const MOUSE_OFF = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
 const MOUSE_EVENT = /^\x1b\[<(\d+);\d+;(\d+)([Mm])/;
 const STYLE = /\x1b\[[0-9;]*m/g;
 const REVERSE = "\x1b[7m", RESET = "\x1b[0m";
-const HELP = "클릭 또는 Enter: 세션 컨텍스트 복사 · ↑↓ 이동 · q 종료";
+const HELP = "클릭 또는 Enter: 세션 컨텍스트를 복사하고 닫기 · ↑↓ 이동 · q 또는 Esc: 닫기";
+
+/** What the reader picked before the view closed; the result is reported on the restored screen. */
+export interface Copied { session: Session; result: CopyResult }
+
+export function copyNotice({ session, result }: Copied): string {
+  if (result === "copied") return `복사됨 · ${session.providerSessionId} · 다음 대화에 붙여넣으세요`;
+  if (result === "requested") return `터미널에 복사를 요청했습니다 · ${session.providerSessionId} · 붙여넣기가 안 되면 브라우저 화면에서 복사하세요`;
+  return `클립보드 도구를 찾지 못해 복사하지 못했습니다 · ${session.providerSessionId}`;
+}
 
 type Action = "up" | "down" | "pageup" | "pagedown" | "home" | "end" | "copy" | "quit" | "none";
 
@@ -63,15 +72,16 @@ export interface Keys {
   setRawMode?(mode: boolean): unknown;
 }
 
-/** Draws the rendered lines until the reader closes the view; resolves once the terminal is restored. */
+/** Draws the rendered lines until a copy or a close key ends the view; resolves once the terminal is restored. */
 export function browse(lines: Line[], space: number, copyRow: (session: Session) => Promise<CopyResult>,
-  screen: Screen = process.stdout, input: Keys = process.stdin): Promise<void> {
+  screen: Screen = process.stdout, input: Keys = process.stdin): Promise<Copied | undefined> {
   const rows = lines.flatMap((line, index) => line.owner ? [index] : []);
   let cursor = rows[0] ?? -1;
   let top = 0;
   let note = "";
   let busy = false;
   let closed = false;
+  let picked: Copied | undefined;
 
   const body = () => Math.max(1, (screen.rows || 24) - 1);
   const anchor = () => Math.max(0, Math.min(top, Math.max(0, lines.length - body())));
@@ -110,19 +120,7 @@ export function browse(lines: Line[], space: number, copyRow: (session: Session)
     cursor = rows[Math.max(0, Math.min(rows.length - 1, current + step))]!;
   };
 
-  const copy = async () => {
-    const session = cursor >= 0 ? lines[cursor]?.owner : undefined;
-    if (!session || busy) return;
-    busy = true; note = "복사 중…"; draw();
-    const result = await copyRow(session);
-    busy = false;
-    note = result === "copied" ? `복사됨 · ${session.providerSessionId} · 다음 대화에 붙여넣으세요` :
-      result === "requested" ? `터미널에 복사를 요청했습니다 · ${session.providerSessionId}` :
-        "클립보드 도구를 찾지 못해 복사하지 못했습니다.";
-    if (!closed) draw();
-  };
-
-  return new Promise<void>(resolve => {
+  return new Promise<Copied | undefined>(resolve => {
     const close = () => {
       if (closed) return;
       closed = true;
@@ -131,7 +129,18 @@ export function browse(lines: Line[], space: number, copyRow: (session: Session)
       input.setRawMode?.(false);
       input.pause();
       screen.write(`${MOUSE_OFF}${CURSOR_SHOW}${ALT_OFF}`);
-      resolve();
+      resolve(picked);
+    };
+
+    // Picking a session is the whole point of the view, so a copy ends it the same way q does.
+    const copy = async () => {
+      const session = cursor >= 0 ? lines[cursor]?.owner : undefined;
+      if (!session || busy || closed) return;
+      busy = true; note = "복사 중…"; draw();
+      const result = await copyRow(session);
+      busy = false;
+      picked = { session, result };
+      close();
     };
 
     const perform = (action: Action) => {

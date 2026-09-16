@@ -10,7 +10,7 @@ import { PROVIDERS, SessionService } from "./session/session.service";
 import type { NewSession } from "./session/session.types";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
-import { browse, interactiveTerminal, terminalContext } from "./output/interactive";
+import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
 import { terminalWidth } from "./output/terminal";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
@@ -47,10 +47,12 @@ async function run(command: Command, write: boolean, action: (service: SessionSe
   const space = terminalWidth();
   const lines = render(result, space);
   // The reader browses the same rows in the terminal, then keeps the plain table in the scrollback.
-  if (interactiveTerminal() && lines.some(line => line.owner)) {
-    await browse(lines, space, session => copyToClipboard(terminalContext(session, config)));
-  }
+  const picked = interactiveTerminal() && lines.some(line => line.owner)
+    ? await browse(lines, space, session => copyToClipboard(terminalContext(session, config)))
+    : undefined;
   process.stdout.write(lines.map(line => line.text).join("\n") + "\n");
+  // stdout stays the table alone; what the reader picked is status, so it goes to stderr.
+  if (picked) process.stderr.write(copyNotice(picked) + "\n");
 }
 
 function creation(command: Command) {

@@ -3,7 +3,7 @@ import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { loadConfig } from "../src/config";
 import { human, render } from "../src/output/human";
-import { browse, terminalContext, type Keys, type Screen } from "../src/output/interactive";
+import { browse, copyNotice, terminalContext, type Keys, type Screen } from "../src/output/interactive";
 import type { Session } from "../src/session/session.types";
 import { sessionContext } from "../src/web/lib/session-context";
 import { cleanup, root, temporary } from "./helpers";
@@ -41,6 +41,8 @@ function keyboard() {
 
 /** SGR mouse report: 0 is a left press, 35 plain motion, 64/65 the wheel; rows and columns are 1-based. */
 const report = (button: number, row: number, press = true) => `\x1b[<${button};12;${row}${press ? "M" : "m"}`;
+/** Mouse reporting off, cursor back, alternate screen released. */
+const RESTORE = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l";
 const selectedRow = (lines: string[]) => lines.findIndex(line => line.startsWith("\x1b[7m"));
 const tick = () => Bun.sleep(5);
 
@@ -66,7 +68,7 @@ describe("Interactive terminal", () => {
     expect(render({ items: [{ sequence: 1 }] }, SPACE).every(line => !line.owner)).toBe(true);
   });
 
-  test("hovering selects the row under the pointer and clicking copies that session", async () => {
+  test("hovering selects the row under the pointer and clicking copies it and closes", async () => {
     const items = [session(1), session(2), session(3)];
     const { view, keys, copied, done } = start(items);
     // Screen rows 1 and 2 are the header and rule; the first session sits on row 3.
@@ -76,16 +78,17 @@ describe("Interactive terminal", () => {
     expect(selectedRow(view.last())).toBe(4);
     expect(stripVTControlCharacters(view.last()[4]!)).toContain(items[2]!.providerSessionId);
     keys.send(report(0, 5));
-    await tick();
+    // A copy ends the view the same way q does, so the reader is back at the prompt with the text ready.
+    expect(await done).toEqual({ session: items[2]!, result: "copied" });
     expect(copied).toEqual([items[2]!]);
-    expect(stripVTControlCharacters(view.last().at(-1)!)).toContain("복사됨");
-    keys.send("q");
-    await done;
+    expect(view.all()).toEndWith(RESTORE);
+    expect(copyNotice({ session: items[2]!, result: "copied" })).toContain("복사됨");
+    expect(copyNotice({ session: items[2]!, result: "failed" })).toContain("복사하지 못했습니다");
   });
 
   test("clicks outside a row and wheel scrolling never copy", async () => {
     const items = [session(1), session(2)];
-    const { view, keys, copied, done } = start(items, 8);
+    const { keys, copied, done } = start(items, 8);
     keys.send(report(0, 1));            // header
     keys.send(report(0, 8));            // empty space below the rows
     keys.send(report(65, 4));           // wheel down
@@ -93,18 +96,13 @@ describe("Interactive terminal", () => {
     keys.send(report(0, 3, false));     // button release, not a press
     await tick();
     expect(copied).toEqual([]);
-    expect(view.all()).not.toContain("복사됨");
     keys.send("q");
-    await done;
+    expect(await done).toBeUndefined();
   });
 
-  test("keyboard moves, copies and closes; an unknown report is not read as quit", async () => {
+  test("keyboard moves, then Enter copies the selected row and closes", async () => {
     const items = [session(1), session(2), session(3)];
     const { view, keys, copied, done } = start(items);
-    keys.send("\x1b[B");
-    keys.send("\r");
-    await tick();
-    expect(copied).toEqual([items[1]!]);
     keys.send("\x1b[2;3R");             // cursor position report: ignored, must not close the view
     keys.send("G");
     await tick();
@@ -112,9 +110,19 @@ describe("Interactive terminal", () => {
     keys.send("g");
     await tick();
     expect(selectedRow(view.last())).toBe(2);
-    keys.send("q");
-    await done;
+    keys.send("\x1b[B");
+    keys.send("\r");
+    expect(await done).toEqual({ session: items[1]!, result: "copied" });
     expect(copied).toEqual([items[1]!]);
+  });
+
+  test("q, Esc and Ctrl+C each close without copying", async () => {
+    for (const key of ["q", "\x1b", "\x03"]) {
+      const { keys, copied, done } = start([session(1)]);
+      keys.send(key);
+      expect(await done).toBeUndefined();
+      expect(copied).toEqual([]);
+    }
   });
 
   test("closing restores the terminal it took over", async () => {
@@ -122,11 +130,11 @@ describe("Interactive terminal", () => {
     expect(view.all()).toStartWith("\x1b[?1049h");
     expect(view.all()).toContain("\x1b[?1003h");
     expect(keys.state.raw).toEqual([true]);
-    keys.send("\x03");
+    keys.send("\x1b");
     await done;
     expect(keys.state.raw).toEqual([true, false]);
     expect(keys.state.paused).toBe(true);
-    expect(view.all()).toEndWith("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l");
+    expect(view.all()).toEndWith(RESTORE);
   });
 
   test("the copied text is the browser view's session context for the local store", () => {

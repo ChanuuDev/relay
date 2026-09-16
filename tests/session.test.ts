@@ -50,6 +50,56 @@ describe("Session Service", () => {
     expect(f.service.update("parent", "후속 맥락").session.summary).toBe("후속 맥락");
   });
 
+  test("continuation links a session an automatic first record already created", () => {
+    f.service.record(input("parent", { provider: "anthropic", agent: "claude-code", sessionName: "부모 이름", model: "parent-model" }));
+    const parent = f.service.show("parent").session;
+    // A session hook records the child first, with only the folder name and a placeholder note.
+    f.service.record(input("child", { sessionName: "agent-session-chain", summary: "세션 첫 기록 (훅 자동 기록)" }));
+    const hooked = f.service.show("child", undefined, true).session;
+    expect(hooked.parentSessionId).toBeNull();
+
+    const takeover = { provider: "openai", agent: "codex", sessionId: "child", summary: "이어받아 진행",
+      sessionName: "이어받은 주제", model: "claude-opus-5" };
+    const linked = f.service.record(takeover, "parent", "anthropic");
+    expect(linked.session.id).toBe(hooked.id);
+    expect(linked.session.createdAt).toBe(hooked.createdAt);
+    expect(linked.session.workingDirectory).toBe(hooked.workingDirectory);
+    expect(linked.session.parentSessionId).toBe(parent.id);
+    expect(linked.session.sessionName).toBe("이어받은 주제");
+    expect(linked.session.model).toBe("claude-opus-5");
+    expect(linked.parentSession?.providerSessionId).toBe("parent");
+    // The placeholder note stays in the history and the takeover is appended after it.
+    const history = f.service.show("child", undefined, true);
+    expect(history.updatesPage?.total).toBe(2);
+    expect(history.updates?.map(u => u.summary)).toEqual(["이어받아 진행", "세션 첫 기록 (훅 자동 기록)"]);
+    expect(f.service.show("parent").childrenPage.total).toBe(1);
+
+    // A retry changes nothing; a second origin and a cycle are refused.
+    const after = f.service.show("child", undefined, true);
+    expect(f.service.record(takeover, "parent", "anthropic").session).toEqual(linked.session);
+    expect(f.service.show("child", undefined, true)).toEqual(after);
+    f.service.record(input("other", { provider: "anthropic", agent: "claude-code" }));
+    expect(() => f.service.record(takeover, "other", "anthropic")).toThrow("이미 다른 세션에 연결");
+    expect(() => f.service.record({ ...takeover, agent: "other-tool" }, "parent", "anthropic")).toThrow("다른 도구");
+    expect(() => f.service.record({ provider: "anthropic", agent: "claude-code", sessionId: "parent", summary: "역방향" }, "child", "openai"))
+      .toThrow("자기 자손");
+    expect(f.service.show("child").session.parentSessionId).toBe(parent.id);
+  });
+
+  test("linking keeps labels the agent did not supply and refuses a self link", () => {
+    f.service.record(input("root", { provider: "anthropic", agent: "claude-code", sessionName: "부모 이름" }));
+    f.service.record(input("kid", { sessionName: "폴더 이름" }));
+    const linked = f.service.record({ provider: "openai", agent: "codex", sessionId: "kid", summary: "이어받음" }, "root", "anthropic");
+    // Without --session-name/--model the hook's label stays; the parent's name does not overwrite it.
+    expect(linked.session.sessionName).toBe("폴더 이름");
+    expect(linked.session.model).toBeNull();
+    expect(linked.session.summary).toBe("이어받음");
+    f.service.record(input("solo"));
+    expect(() => f.service.record({ provider: "openai", agent: "codex", sessionId: "solo", summary: "자기 연결" }, "solo", "openai"))
+      .toThrow("자기 자신");
+    expect(f.service.show("solo").session.parentSessionId).toBeNull();
+  });
+
   test("ambiguous provider IDs fail closed; parent provider is independent", () => {
     f.service.record(input("same"));
     f.service.record(input("same", { provider: "anthropic", agent: "claude-code" }));

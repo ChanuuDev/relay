@@ -58,9 +58,22 @@ export class SessionService {
     const givenCwd = input.cwd === undefined ? undefined : directory(input.cwd, true);
     return this.write(() => {
       const parent = parentId === undefined ? null : this.resolve(parentId, parentProvider);
+      const existing = this.repo.byProviderId(providerSessionId, provider)[0];
+      // A session hook may have recorded this session before the agent ran; `continue` links that
+      // record instead of failing, so taking work over does not depend on the hook being off.
+      if (existing && parent) {
+        if (existing.parentSessionId === null) return this.adopt(existing, parent, { agent, summary, name: givenName, model, input });
+        if (existing.parentSessionId !== parent.id) {
+          throw new RelayError("PARENT_CONFLICT", "이 세션은 이미 다른 세션에 연결되어 있습니다.", 4, 409, { parentSessionId: existing.parentSessionId });
+        }
+        if (existing.agent !== agent) {
+          throw new RelayError("SESSION_EXISTS", "같은 제공자·ID가 다른 도구로 저장되어 있습니다.", 4, 409, { agent: existing.agent });
+        }
+        // Already linked to this parent, so a retry has nothing to do; further context belongs in `update`.
+        return { schemaVersion: 1, session: existing, parentSession: brief(parent) };
+      }
       const cwd = givenCwd ?? directory(parent?.workingDirectory ?? process.cwd(), true);
       const sessionName = input.sessionName === undefined ? parent?.sessionName ?? null : givenName;
-      const existing = this.repo.byProviderId(providerSessionId, provider)[0];
       if (existing) {
         if (existing.agent !== agent || existing.sessionName !== sessionName || existing.model !== model ||
           existing.workingDirectory !== cwd || existing.parentSessionId !== (parent?.id ?? null) ||
@@ -77,6 +90,34 @@ export class SessionService {
       this.repo.append(session);
       return { schemaVersion: 1, session, ...(parent ? { parentSession: brief(parent) } : {}) };
     });
+  }
+
+  /** Ancestor ids, nearest first. Links are kept acyclic, so the depth cap only guards a damaged store. */
+  private ancestors(session: Session): string[] {
+    const chain: string[] = [];
+    let current = session.parentSessionId;
+    while (current && chain.length < 1000) { chain.push(current); current = this.repo.byId(current)?.parentSessionId ?? null; }
+    return chain;
+  }
+
+  // Identity and origin stay fixed: the tool, the project and the creation time never move. Only the
+  // parent and the labels an automatic first record could not know are written, and the takeover note
+  // lands in the history like any other update.
+  private adopt(existing: Session, parent: Session, incoming: { agent: string; summary: string; name: string | null; model: string | null; input: NewSession }) {
+    if (existing.agent !== incoming.agent) {
+      throw new RelayError("SESSION_EXISTS", "같은 제공자·ID가 다른 도구로 저장되어 있습니다.", 4, 409, { agent: existing.agent });
+    }
+    if (parent.id === existing.id || this.ancestors(parent).includes(existing.id)) {
+      throw new RelayError("PARENT_CONFLICT", "세션을 자기 자신이나 자기 자손에 연결할 수 없습니다.", 4, 409);
+    }
+    const session: Session = { ...existing, parentSessionId: parent.id,
+      sessionName: incoming.input.sessionName === undefined ? existing.sessionName : incoming.name,
+      model: incoming.input.model === undefined ? existing.model : incoming.model,
+      summary: incoming.summary, updatedAt: new Date().toISOString() };
+    this.repo.link(session);
+    this.repo.change(session);
+    this.repo.append(session);
+    return { schemaVersion: 1, session, parentSession: brief(parent) };
   }
 
   update(id: string, summaryInput: string, provider?: string) {

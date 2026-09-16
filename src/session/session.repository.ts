@@ -33,6 +33,12 @@ export class SessionRepository {
         s.workingDirectory, s.summary, s.parentSessionId, s.createdAt, s.updatedAt);
   }
 
+  /** Attaches an origin and fills the labels an automatic first record could not know. */
+  link(s: Session) {
+    this.db.query("UPDATE sessions SET parent_session_id = ?, session_name = ?, model = ? WHERE id = ?")
+      .run(s.parentSessionId, s.sessionName, s.model, s.id);
+  }
+
   change(s: Session) {
     this.db.query("UPDATE sessions SET summary = ?, updated_at = ? WHERE id = ?")
       .run(s.summary, s.updatedAt, s.id);
