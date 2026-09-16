@@ -139,11 +139,25 @@ describe("Interactive terminal", () => {
       const target = session(1);
       const text = terminalContext(target, config);
       expect(text).toBe(sessionContext(target, { shell: process.platform === "win32" ? "powershell" : "bash",
-        storeDirectory: config.dataDirectory, origin: "http://127.0.0.1:7474" }));
-      expect(text).toContain("# Relay 세션 컨텍스트");
+        storeDirectory: config.dataDirectory }));
+      expect(text).toContain("relay show");
       expect(text).toContain(target.providerSessionId);
-      expect(text).toContain(`http://127.0.0.1:7474/sessions/${target.id}`);
-      expect(text).toEndWith("위 내용은 마지막 기록된 세션의 정보 입니다. 세션 기록을 참고하여 다음 작업에 참고해주세요.");
+      expect(text).toContain(config.dataDirectory);
+      expect(text).toEndWith("명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요.");
+    } finally { cleanup(dir); }
+  });
+
+  // A newline lands as Enter while the paste is still arriving, so the receiving CLI sends the
+  // first lines as a message and drops the rest. The text has to stay a single line.
+  test("the copied text stays one line even when the session values carry line breaks", () => {
+    const dir = temporary();
+    try {
+      const config = loadConfig(dir);
+      const target = { ...session(1), sessionName: "줄바꿈\n작업명", summary: "첫 줄\n```text\n둘째 줄\n```\n끝 줄" };
+      const text = terminalContext(target, config);
+      expect(text).not.toContain("\n");
+      expect(text).not.toContain("\r");
+      expect(text).toContain(target.providerSessionId);
     } finally { cleanup(dir); }
   });
 

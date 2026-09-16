@@ -26,9 +26,9 @@ export function SessionDetail({ detail, updates, children, storeDirectory, copy 
     {detail.isPending ? <Loading /> : s ? <>
       <header className="detail-header"><div className="flex items-center gap-2"><span className="muted">{s.agent}</span></div>
         <h2>{s.sessionName ?? "이름 없는 세션"}</h2><p className="detail-project"><Folder />{projectName(s.workingDirectory)}</p></header>
-      <div className="detail-actions"><Button onClick={() => copy(sessionContext(s, { shell, storeDirectory, origin: location.origin }))}><Copy data-icon="inline-start" />세션 컨텍스트 복사</Button>
-        <Button variant="outline" disabled={!storeDirectory} onClick={() => copy(sessionCommand(s, storeDirectory!, shell))}><Terminal data-icon="inline-start" />조회 명령 복사</Button></div>
-      <p className="context-copy-hint">에이전트·경로·작업 시각·최근 요약을 함께 복사합니다.</p>
+      <div className="detail-actions"><Button onClick={() => copy(sessionContext(s, { shell, storeDirectory }))}><Copy data-icon="inline-start" />세션 컨텍스트 복사</Button>
+        <Button variant="outline" onClick={() => copy(sessionCommand(s, storeDirectory, shell))}><Terminal data-icon="inline-start" />조회 명령 복사</Button></div>
+      <p className="context-copy-hint">붙여넣는 순간 대화가 먼저 전송되지 않도록, 이 기록을 읽는 조회 명령만 줄바꿈 없이 한 줄로 복사합니다.</p>
       <div className="shell-select"><label htmlFor="command-shell">조회 명령 셸</label><NativeSelect id="command-shell" size="sm" value={shell} onChange={(event) => setShell(event.target.value as typeof shell)}>
         <NativeSelectOption value="powershell">PowerShell</NativeSelectOption><NativeSelectOption value="bash">Bash</NativeSelectOption></NativeSelect></div>
       <Tabs value={tab} onValueChange={(value) => setTab(value as DetailTab)}>

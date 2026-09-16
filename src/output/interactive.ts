@@ -40,12 +40,11 @@ function single(character: string): Action {
   return "none";
 }
 
-/** The terminal copies what the browser view copies: one shared builder, addressed at the local server. */
+/** The terminal copies what the browser view copies: one shared builder, addressed at the local store. */
 export function terminalContext(session: Session, config: Config): string {
   return sessionContext(session, {
     shell: process.platform === "win32" ? "powershell" : "bash",
     storeDirectory: config.dataDirectory,
-    origin: `http://${config.webHost}:${config.webPort}`,
   });
 }
 

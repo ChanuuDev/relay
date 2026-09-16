@@ -119,18 +119,24 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await expect(page.getByText("검색 결과가 없습니다.", { exact: true })).toBeVisible();
 });
 
-test("context copy identifies the exact session, keeps note text, supports raw ID and shell-safe commands", async ({ page, context }) => {
+test("context copy is one shell-safe line handing over the lookup command, never the note itself", async ({ page, context }) => {
   const id = "literal'id; echo untrusted";
   const payload = '<img src=x onerror="window.pwned=1">\n<script>window.pwned=1</script>';
-  const created = record(id, "안전한 텍스트 검사", "openai", "codex", payload);
+  record(id, "안전한 텍스트 검사", "openai", "codex", payload);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
   await ready(page);
   await page.getByRole("button", { name: "세션 컨텍스트 복사", exact: true }).click();
   await expect(page).toHaveURL(url + "/");
   const listContext = await clipboardText(page);
-  for (const value of ["# Relay 세션 컨텍스트", "Agent: codex", "Provider: openai", "모델: 미기록", "작업명: 안전한 텍스트 검사", id, created.session.id, created.session.workingDirectory, created.session.createdAt, created.session.updatedAt, payload, `${url}/sessions/${created.session.id}`, "relay show", "--data-dir"]) expect(listContext).toContain(value);
-  expect(listContext).not.toMatch(/상태:|종료 시각:|ACTIVE|COMPLETED/);
-  expect(listContext).toMatch(/최초 기록: \d{4}-\d{2}-\d{2}.*GMT/);
+  // A line break arrives as Enter while the paste is still coming in: the receiving CLI would send
+  // the first lines as a message and drop the rest.
+  expect(listContext).not.toMatch(/[\r\n]/);
+  for (const value of ["relay show", "--provider 'openai'", "--data-dir", dir.replaceAll("\\", "/")]) expect(listContext).toContain(value);
+  // The ID reaches the command quoted for whichever shell the platform defaults to.
+  expect(listContext).toMatch(/literal(''|'"'"')id; echo untrusted/);
+  expect(listContext).toMatch(/명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요\.$/);
+  // The note stays in the store; the receiving agent reads it with the command.
+  expect(listContext).not.toContain(payload);
   await page.getByRole("link", { name: "안전한 텍스트 검사" }).click();
   await expect(page.locator(".summary")).toHaveText(payload);
   expect(await page.evaluate(() => (window as unknown as { pwned?: number }).pwned)).toBeUndefined();
@@ -142,26 +148,26 @@ test("context copy identifies the exact session, keeps note text, supports raw I
   await page.getByText("세션 식별자", { exact: true }).click();
   await page.getByRole("button", { name: "Session ID만 복사", exact: true }).click();
   expect(await clipboardText(page)).toBe(id);
+  const command = `relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${dir.replaceAll("\\", "/")}' --json`;
   await page.getByLabel("조회 명령 셸").selectOption("powershell");
   await page.getByRole("button", { name: "조회 명령 복사" }).click();
-  expect(await clipboardText(page)).toBe(`relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${dir.replaceAll("\\", "/")}' --json`);
+  expect(await clipboardText(page)).toBe(command);
+  await contextCopy.click();
+  expect(await clipboardText(page)).toBe(`이전 세션 맥락은 \`${command}\` 명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요.`);
   await page.getByLabel("조회 명령 셸").selectOption("bash");
   await contextCopy.click();
   const bashContext = await clipboardText(page);
-  expect(bashContext).toContain("## 이 세션 조회 (Bash)");
   expect(bashContext).toContain("'literal'\"'\"'id; echo untrusted'");
+  expect(bashContext).not.toMatch(/[\r\n]/);
   const latest = "새 진행 기록\n```bash\necho note\n```\n한글 요약 끝";
-  const updated = cli(["update", "--session-id", id, "--summary", latest]);
+  cli(["update", "--session-id", id, "--summary", latest]);
   await expect(page.locator(".summary")).toHaveText(latest);
   await contextCopy.click();
-  const latestContext = await clipboardText(page);
-  expect(latestContext).toContain(latest);
-  expect(latestContext).toContain(updated.session.updatedAt);
-  expect(latestContext).toContain("````text\n" + latest + "\n````");
-  expect(latestContext).not.toContain(payload);
+  // A multiline note leaves the copy untouched: same command, still one line.
+  expect(await clipboardText(page)).toBe(bashContext);
   await page.evaluate(() => Object.defineProperty(navigator.clipboard, "writeText", { value: async () => { throw new Error("denied"); } }));
   await contextCopy.click();
-  await expect(page.locator("#copy-text")).toHaveValue(latestContext);
+  await expect(page.locator("#copy-text")).toHaveValue(bashContext);
   await expect(page.locator("#copy-text")).toBeFocused();
 });
 
@@ -180,11 +186,11 @@ test("polling preserves unsaved filter text, focus and scroll; hidden tabs pause
   await expect(page.locator("#list-content")).toContainText("다시 보이면 즉시 조회", { timeout: 5000 });
 });
 
-test("context retains provider, model and record dates when storage lookup is unavailable", async ({ page, context }) => {
+test("context falls back to the default store command when storage lookup is unavailable", async ({ page, context }) => {
   record("same-id", "다른 제공자 작업");
-  const created = cli(["record", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "same-id",
+  cli(["record", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "same-id",
     "--session-name", "완료된 Claude 작업", "--model", "recorded-model", "--cwd", dir, "--summary", "이전 요약"]);
-  const updated = cli(["update", "--session-id", "same-id", "--provider", "anthropic", "--summary", "검증까지 마친 작업"]);
+  cli(["update", "--session-id", "same-id", "--provider", "anthropic", "--summary", "검증까지 마친 작업"]);
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
   await page.route("**/api/v1/health", route => route.fulfill({ status: 503, contentType: "application/json",
     body: JSON.stringify({ schemaVersion: 1, error: { message: "저장소 정보 조회 실패" } }) }));
@@ -192,10 +198,11 @@ test("context retains provider, model and record dates when storage lookup is un
   const row = page.locator(".session-row").filter({ has: page.getByRole("link", { name: "완료된 Claude 작업" }) });
   await row.getByRole("button", { name: "세션 컨텍스트 복사" }).click();
   const copied = await clipboardText(page);
-  for (const value of ["Agent: claude-code", "Provider: anthropic", "모델: recorded-model",
-    created.session.id, updated.session.updatedAt, "검증까지 마친 작업", "Relay 저장소: 확인 불가"]) expect(copied).toContain(value);
-  expect(copied).not.toContain("relay show");
-  expect(copied).not.toContain("Provider: openai");
+  // Without a known store the command still runs, against the reader's default store.
+  for (const value of ["relay show 'same-id'", "--provider 'anthropic'", "--json"]) expect(copied).toContain(value);
+  expect(copied).not.toContain("--data-dir");
+  expect(copied).not.toContain("'openai'");
+  expect(copied).not.toMatch(/[\r\n]/);
 });
 
 test("partial section failure keeps detail; missing ID and invalid input are not empty state", async ({ page }) => {
