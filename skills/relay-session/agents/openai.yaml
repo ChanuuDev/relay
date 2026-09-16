@@ -1,0 +1,6 @@
+interface:
+  display_name: "Relay Session"
+  short_description: "명시한 AI 제공자의 최근 Relay 세션을 현재 Agent에 전달"
+  default_prompt: "$relay-session claude로 최근 Claude 기록을 알려주세요."
+policy:
+  allow_implicit_invocation: false

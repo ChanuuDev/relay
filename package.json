@@ -1,0 +1,21 @@
+{
+  "name": "relay-session-continuity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "relay": "bun run src/index.ts",
+    "build": "bun run scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/session.test.ts tests/cli.test.ts tests/api.test.ts tests/output.test.ts tests/install.test.ts",
+    "test:web": "playwright test",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:web"
+  },
+  "dependencies": { "commander": "15.0.0" },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/bun": "1.4.2",
+    "bun": "1.4.2",
+    "typescript": "5.9.3"
+  }
+}

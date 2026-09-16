@@ -1,0 +1,13 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# 로컬 작업 기록과 설계 초안은 공개하지 않습니다
+Tasks/
+relay-agent-session-continuity-final-draft.md
+git profile.png
