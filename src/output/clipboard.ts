@@ -9,10 +9,24 @@ export type CopyResult = "copied" | "requested" | "failed";
 const POWERSHELL_READ = "$reader = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), " +
   "[Text.Encoding]::UTF8); Set-Clipboard -Value $reader.ReadToEnd()";
 
+// clip.exe returns in ~15ms where starting PowerShell costs about a second, and it reads UTF-8
+// correctly even under a legacy console code page. Set RELAY_CLIPBOARD=powershell if a machine
+// pastes the text mangled; a UTF-16 byte order mark is not an option because clip.exe keeps it.
+const TOOLS: Record<string, string[]> = {
+  clip: ["clip.exe"],
+  powershell: ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_READ],
+  pbcopy: ["pbcopy"],
+  "wl-copy": ["wl-copy"],
+  xclip: ["xclip", "-selection", "clipboard"],
+  xsel: ["xsel", "--clipboard", "--input"],
+};
+
 function tools(): string[][] {
-  if (process.platform === "win32") return [["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_READ]];
-  if (process.platform === "darwin") return [["pbcopy"]];
-  return [["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]];
+  const chosen = process.env.RELAY_CLIPBOARD;
+  if (chosen && Object.hasOwn(TOOLS, chosen)) return [TOOLS[chosen]!];
+  const order = process.platform === "win32" ? ["clip", "powershell"] :
+    process.platform === "darwin" ? ["pbcopy"] : ["wl-copy", "xclip", "xsel"];
+  return order.map(name => TOOLS[name]!);
 }
 
 async function pipe(command: string[], text: string): Promise<boolean> {

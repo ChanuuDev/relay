@@ -15,10 +15,7 @@ const STYLE = /\x1b\[[0-9;]*m/g;
 const REVERSE = "\x1b[7m", RESET = "\x1b[0m";
 const HELP = "클릭 또는 Enter: 세션 컨텍스트를 복사하고 닫기 · ↑↓ 이동 · q 또는 Esc: 닫기";
 
-/** What the reader picked before the view closed; the result is reported on the restored screen. */
-export interface Copied { session: Session; result: CopyResult }
-
-export function copyNotice({ session, result }: Copied): string {
+export function copyNotice(session: Session, result: CopyResult): string {
   if (result === "copied") return `복사됨 · ${session.providerSessionId} · 다음 대화에 붙여넣으세요`;
   if (result === "requested") return `터미널에 복사를 요청했습니다 · ${session.providerSessionId} · 붙여넣기가 안 되면 브라우저 화면에서 복사하세요`;
   return `클립보드 도구를 찾지 못해 복사하지 못했습니다 · ${session.providerSessionId}`;
@@ -72,16 +69,16 @@ export interface Keys {
   setRawMode?(mode: boolean): unknown;
 }
 
-/** Draws the rendered lines until a copy or a close key ends the view; resolves once the terminal is restored. */
-export function browse(lines: Line[], space: number, copyRow: (session: Session) => Promise<CopyResult>,
-  screen: Screen = process.stdout, input: Keys = process.stdin): Promise<Copied | undefined> {
+/** Draws the rendered lines until a row is picked or a close key ends the view, and resolves with the
+ *  pick once the terminal is restored. Writing to the clipboard is the caller's job, so a slow
+ *  clipboard tool cannot hold the view open after the click. */
+export function browse(lines: Line[], space: number,
+  screen: Screen = process.stdout, input: Keys = process.stdin): Promise<Session | undefined> {
   const rows = lines.flatMap((line, index) => line.owner ? [index] : []);
   let cursor = rows[0] ?? -1;
   let top = 0;
-  let note = "";
-  let busy = false;
   let closed = false;
-  let picked: Copied | undefined;
+  let picked: Session | undefined;
 
   const body = () => Math.max(1, (screen.rows || 24) - 1);
   const anchor = () => Math.max(0, Math.min(top, Math.max(0, lines.length - body())));
@@ -94,7 +91,7 @@ export function browse(lines: Line[], space: number, copyRow: (session: Session)
 
   const bar = () => {
     const room = Math.max(1, (screen.columns || space) - 1);
-    const shown = clip(note || HELP, room - 1);
+    const shown = clip(HELP, room - 1);
     return `${REVERSE} ${shown}${" ".repeat(Math.max(0, room - width(shown) - 1))}${RESET}`;
   };
 
@@ -120,7 +117,7 @@ export function browse(lines: Line[], space: number, copyRow: (session: Session)
     cursor = rows[Math.max(0, Math.min(rows.length - 1, current + step))]!;
   };
 
-  return new Promise<Copied | undefined>(resolve => {
+  return new Promise<Session | undefined>(resolve => {
     const close = () => {
       if (closed) return;
       closed = true;
@@ -132,22 +129,18 @@ export function browse(lines: Line[], space: number, copyRow: (session: Session)
       resolve(picked);
     };
 
-    // Picking a session is the whole point of the view, so a copy ends it the same way q does.
-    const copy = async () => {
+    // Picking a session is the whole point of the view, so it ends the same way q does.
+    const pick = () => {
       const session = cursor >= 0 ? lines[cursor]?.owner : undefined;
-      if (!session || busy || closed) return;
-      busy = true; note = "복사 중…"; draw();
-      const result = await copyRow(session);
-      busy = false;
-      picked = { session, result };
+      if (!session || closed) return;
+      picked = session;
       close();
     };
 
     const perform = (action: Action) => {
       if (action === "quit") return close();
-      if (action === "copy") return void copy();
+      if (action === "copy") return pick();
       if (action === "none") return;
-      note = "";
       if (action === "up") move(-1);
       else if (action === "down") move(1);
       else if (action === "pageup") move(-body());
@@ -166,9 +159,9 @@ export function browse(lines: Line[], space: number, copyRow: (session: Session)
       }
       const index = row >= 1 && row <= body() ? top + row - 1 : -1;
       const over = index >= 0 && Boolean(lines[index]?.owner) ? index : -1;
-      if (over >= 0 && over !== cursor) { cursor = over; note = ""; draw(); }
+      if (over >= 0 && over !== cursor) { cursor = over; draw(); }
       // Motion carries bit 32; only a plain left press is a click.
-      if (press && (button & 32) === 0 && (button & 3) === 0 && over >= 0) void copy();
+      if (press && (button & 32) === 0 && (button & 3) === 0 && over >= 0) pick();
     };
 
     const onData = (chunk: Buffer) => {

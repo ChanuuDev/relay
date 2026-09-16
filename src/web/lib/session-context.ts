@@ -40,6 +40,6 @@ export function sessionContext(session: Session, { shell, storeDirectory, origin
     "", "## 최근 작업 요약 (기록 원문)", fenced(session.summary, "text"),
     "", `## 이 세션 조회 (${shell === "powershell" ? "PowerShell" : "Bash"})`,
     storeDirectory ? fenced(sessionCommand(session, storeDirectory, shell), shell) : "저장소 경로를 확인할 수 없어 조회 명령을 생략했습니다.",
-    "", "이 세션의 마지막 기록입니다. 세션 기록을 참고하여 다음 작업을 이어서 진행해주세요.",
+    "", "위 내용은 마지막 기록된 세션의 정보 입니다. 세션 기록을 참고하여 다음 작업에 참고해주세요.",
   ].join("\n");
 }

@@ -49,9 +49,7 @@ const tick = () => Bun.sleep(5);
 function start(items: Session[], rows = 10) {
   const lines = render({ items, page: { total: items.length, offset: 0 } }, SPACE);
   const view = screen(rows); const keys = keyboard();
-  const copied: Session[] = [];
-  const done = browse(lines, SPACE, async s => { copied.push(s); return "copied"; }, view, keys);
-  return { lines, view, keys, copied, done };
+  return { lines, view, keys, done: browse(lines, SPACE, view, keys) };
 }
 
 describe("Interactive terminal", () => {
@@ -68,9 +66,9 @@ describe("Interactive terminal", () => {
     expect(render({ items: [{ sequence: 1 }] }, SPACE).every(line => !line.owner)).toBe(true);
   });
 
-  test("hovering selects the row under the pointer and clicking copies it and closes", async () => {
+  test("hovering selects the row under the pointer and clicking picks it and closes", async () => {
     const items = [session(1), session(2), session(3)];
-    const { view, keys, copied, done } = start(items);
+    const { view, keys, done } = start(items);
     // Screen rows 1 and 2 are the header and rule; the first session sits on row 3.
     expect(selectedRow(view.last())).toBe(2);
     keys.send(report(35, 5, true));
@@ -78,31 +76,30 @@ describe("Interactive terminal", () => {
     expect(selectedRow(view.last())).toBe(4);
     expect(stripVTControlCharacters(view.last()[4]!)).toContain(items[2]!.providerSessionId);
     keys.send(report(0, 5));
-    // A copy ends the view the same way q does, so the reader is back at the prompt with the text ready.
-    expect(await done).toEqual({ session: items[2]!, result: "copied" });
-    expect(copied).toEqual([items[2]!]);
+    // The view ends the same way q does; the clipboard write happens after the terminal is restored,
+    // so a slow clipboard tool cannot leave the screen hanging.
+    expect(await done).toBe(items[2]!);
     expect(view.all()).toEndWith(RESTORE);
-    expect(copyNotice({ session: items[2]!, result: "copied" })).toContain("복사됨");
-    expect(copyNotice({ session: items[2]!, result: "failed" })).toContain("복사하지 못했습니다");
+    expect(copyNotice(items[2]!, "copied")).toContain("복사됨");
+    expect(copyNotice(items[2]!, "failed")).toContain("복사하지 못했습니다");
   });
 
-  test("clicks outside a row and wheel scrolling never copy", async () => {
+  test("clicks outside a row and wheel scrolling never pick", async () => {
     const items = [session(1), session(2)];
-    const { keys, copied, done } = start(items, 8);
+    const { keys, done } = start(items, 8);
     keys.send(report(0, 1));            // header
     keys.send(report(0, 8));            // empty space below the rows
     keys.send(report(65, 4));           // wheel down
     keys.send(report(64, 4));           // wheel up
     keys.send(report(0, 3, false));     // button release, not a press
     await tick();
-    expect(copied).toEqual([]);
     keys.send("q");
     expect(await done).toBeUndefined();
   });
 
-  test("keyboard moves, then Enter copies the selected row and closes", async () => {
+  test("keyboard moves, then Enter picks the selected row and closes", async () => {
     const items = [session(1), session(2), session(3)];
-    const { view, keys, copied, done } = start(items);
+    const { view, keys, done } = start(items);
     keys.send("\x1b[2;3R");             // cursor position report: ignored, must not close the view
     keys.send("G");
     await tick();
@@ -112,16 +109,14 @@ describe("Interactive terminal", () => {
     expect(selectedRow(view.last())).toBe(2);
     keys.send("\x1b[B");
     keys.send("\r");
-    expect(await done).toEqual({ session: items[1]!, result: "copied" });
-    expect(copied).toEqual([items[1]!]);
+    expect(await done).toBe(items[1]!);
   });
 
-  test("q, Esc and Ctrl+C each close without copying", async () => {
+  test("q, Esc and Ctrl+C each close without picking", async () => {
     for (const key of ["q", "\x1b", "\x03"]) {
-      const { keys, copied, done } = start([session(1)]);
+      const { keys, done } = start([session(1)]);
       keys.send(key);
       expect(await done).toBeUndefined();
-      expect(copied).toEqual([]);
     }
   });
 
@@ -148,7 +143,7 @@ describe("Interactive terminal", () => {
       expect(text).toContain("# Relay 세션 컨텍스트");
       expect(text).toContain(target.providerSessionId);
       expect(text).toContain(`http://127.0.0.1:7474/sessions/${target.id}`);
-      expect(text).toContain("이 세션의 마지막 기록입니다.");
+      expect(text).toEndWith("위 내용은 마지막 기록된 세션의 정보 입니다. 세션 기록을 참고하여 다음 작업에 참고해주세요.");
     } finally { cleanup(dir); }
   });
 

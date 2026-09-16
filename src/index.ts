@@ -47,12 +47,11 @@ async function run(command: Command, write: boolean, action: (service: SessionSe
   const space = terminalWidth();
   const lines = render(result, space);
   // The reader browses the same rows in the terminal, then keeps the plain table in the scrollback.
-  const picked = interactiveTerminal() && lines.some(line => line.owner)
-    ? await browse(lines, space, session => copyToClipboard(terminalContext(session, config)))
-    : undefined;
+  const picked = interactiveTerminal() && lines.some(line => line.owner) ? await browse(lines, space) : undefined;
   process.stdout.write(lines.map(line => line.text).join("\n") + "\n");
+  // The clipboard runs after the view is gone, so a slow tool never delays closing it.
   // stdout stays the table alone; what the reader picked is status, so it goes to stderr.
-  if (picked) process.stderr.write(copyNotice(picked) + "\n");
+  if (picked) process.stderr.write(copyNotice(picked, await copyToClipboard(terminalContext(picked, config))) + "\n");
 }
 
 function creation(command: Command) {
