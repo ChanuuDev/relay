@@ -198,6 +198,24 @@ Relay Windows MVP 구현·검증   openai/codex           9b2d4c7e-1f60-4a83-b5d
 - 시각은 읽기 쉽게 로컬 시각으로 보여 주고, `show`의 상세 화면에는 `+09:00` 같은 오프셋도 함께 표시합니다. 최초 기록은 `createdAt`, 최근 맥락 갱신은 `updatedAt`으로 `--json`에 ISO 8601 UTC 그대로 담깁니다.
 - 스크립트나 Agent에서 쓸 때는 이 모양에 의존하지 말고 `--json`을 사용하세요.
 
+### 터미널에서 골라 복사하기
+
+터미널에서 바로 실행하면 표가 그대로 남지 않고 화면을 잠시 넘겨받아 행을 고를 수 있습니다. 마우스를 올린 행이 반전되고, 그 행을 클릭하면 **다음 대화에 붙여넣을 세션 컨텍스트**가 클립보드에 들어갑니다. 브라우저 화면의 `세션 컨텍스트 복사` 버튼과 같은 텍스트입니다.
+
+| 조작 | 동작 |
+|---|---|
+| 마우스 이동 | 커서 아래 행을 선택 |
+| 클릭 · `Enter` · `Space` | 선택한 세션의 컨텍스트를 클립보드로 복사 |
+| `↑` `↓` · `k` `j` · `PgUp` `PgDn` · `g` `G` | 행 이동 |
+| 휠 | 화면 스크롤 |
+| `q` · `Esc` · `Ctrl+C` | 화면을 닫고 종료 |
+
+`show`와 `relay --codex` 같은 단일 세션 화면에서도 같은 방식으로 복사합니다. 닫으면 원래 화면으로 돌아오고, 조회한 표를 터미널에 그대로 다시 출력하므로 스크롤백에 기록이 남습니다.
+
+복사는 Windows `Set-Clipboard`, macOS `pbcopy`, Linux `wl-copy`/`xclip`/`xsel`을 차례로 시도하고, 모두 없으면 터미널 자체에 OSC 52로 요청합니다. 원격 접속처럼 터미널이 이를 무시할 수 있는 경우에는 상태 줄에 요청만 보냈다고 표시합니다. 복사하는 내용은 로컬 저장소의 세션 기록뿐이며 디스크에 임시 파일을 만들거나 네트워크로 보내지 않습니다.
+
+파일이나 다른 명령으로 넘길 때, 터미널이 아닐 때는 이 화면을 쓰지 않고 예전처럼 표만 출력하고 끝납니다. 터미널에서도 끄고 싶으면 `RELAY_NO_TUI=1`을 설정하세요.
+
 ## Agent 스킬 설치와 호출
 
 배포 원본은 [skills/relay-session](skills/relay-session/SKILL.md)입니다. 프로젝트 단위 설치 스크립트는 기존 파일이 다르면 덮어쓰지 않고 중단합니다.
@@ -212,9 +230,11 @@ Relay Windows MVP 구현·검증   openai/codex           9b2d4c7e-1f60-4a83-b5d
 | 현재 Agent 환경 | 설치 위치 | 명시적 호출 |
 |---|---|---|
 | Codex | `.agents/skills/relay-session` | `$relay-session claude` 또는 `/skills`에서 선택 |
-| Claude Code | `.claude/skills/relay-session` | `/relay-session codex` |
+| Claude Code | `.claude/skills/relay-session` | `/relay-session codex`, 또는 프로젝트 지침에 따라 모델이 직접 호출 |
 | Grok 1.0.24 (로컬 확인) | 기존 `.agents/skills/relay-session`을 인식 | `/relay-session codex` 등록 확인, 모델 실행은 미검증 |
 | 그 밖의 호스트 | 호스트별 등록 방식 확인 필요 | `relay latest <별칭> --json` 결과를 현재 Agent에 전달 |
+
+Claude Code에 설치하는 스킬은 모델 호출을 막지 않습니다. 사용자가 `/relay-session`으로 직접 부를 수도 있고, 프로젝트 지침이 세션 기록을 요구할 때 Agent가 스스로 스킬을 열 수도 있습니다. 이미 설치된 스킬이 있다면 설치 스크립트가 덮어쓰지 않으므로, `disable-model-invocation: true` 줄이 남아 있으면 직접 지우고 Agent 세션을 다시 여세요.
 
 Codex의 공식 호출 방식은 `$` 또는 `/skills`이며 모든 호스트에서 `/relay-session`이 직접 등록된다고 보증하지 않습니다. 설치 경로·호출 방식은 [OpenAI 공식 스킬 문서](https://learn.chatgpt.com/docs/build-skills), [Claude Code 공식 스킬 문서](https://code.claude.com/docs/en/skills)를 따릅니다. 설치 후 목록에 보이지 않으면 Agent 세션을 다시 열어 확인하세요.
 
@@ -307,6 +327,8 @@ npm run check
 ```
 
 개별 검사: `npm run typecheck`, `npm test`, `npm run build`, `npm run test:web`. `npm ci`의 prepare 단계와 `npm run build:web`는 React 및 Tailwind 자산을 `src/web/generated/`에 생성합니다. 웹 소스는 `src/web/client.tsx`, `components/`, `lib/`, `styles.css`에 있으며 생성 자산은 Git에 저장하지 않습니다. `npm run build`는 웹 자산을 먼저 빌드한 뒤 실행 파일에 포함하므로 배포 시 별도 Node 서버나 CDN이 필요 없습니다. `npm run relay`도 실행 전에 웹 자산을 갱신합니다.
+
+`tests/interactive.test.ts`는 대화형 화면을 가짜 입출력으로 구동하므로 실제 터미널이나 클립보드를 건드리지 않습니다. 호버·클릭·키 입력과 화면 복원까지는 이 테스트가 확인하고, 실제 클립보드 기록은 `relay list`를 터미널에서 직접 실행해 확인하세요.
 
 Playwright는 빌드된 실행 파일을 소스 밖 임시 폴더에서 실행하므로 코드 변경 후에는 먼저 빌드하세요. 각 테스트는 자체 임시 DB·포트를 사용하고 종료 시 정리합니다. 빌드 스크립트는 실행 중인 웹 서버를 자동으로 종료하지 않으므로 같은 `dist/relay.exe`를 사용 중이면 해당 서버를 먼저 종료하세요.
 

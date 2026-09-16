@@ -8,7 +8,10 @@ import { errorBody, invalid, RelayError, storageError } from "./errors";
 import { SessionRepository } from "./session/session.repository";
 import { PROVIDERS, SessionService } from "./session/session.service";
 import type { NewSession } from "./session/session.types";
-import { human } from "./output/human";
+import { copyToClipboard } from "./output/clipboard";
+import { render } from "./output/human";
+import { browse, interactiveTerminal, terminalContext } from "./output/interactive";
+import { terminalWidth } from "./output/terminal";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
 
@@ -29,18 +32,25 @@ program.hook("preAction", (_command, actionCommand) => {
 });
 program.action((options, command: Command) => {
   const alias = shortcuts.find(alias => options[alias]);
-  if (alias) run(command, false, s => s.latest(alias));
-  else program.outputHelp();
+  if (alias) return run(command, false, s => s.latest(alias));
+  program.outputHelp();
 });
 
-function run(command: Command, write: boolean, action: (service: SessionService) => unknown) {
+async function run(command: Command, write: boolean, action: (service: SessionService) => unknown) {
   const options = command.optsWithGlobals();
   const config = loadConfig(options.dataDir);
   const db = openDatabase(config, !write);
-  try {
-    const result = action(new SessionService(new SessionRepository(db), config.retentionDays));
-    process.stdout.write((options.json ? JSON.stringify(result) : human(result)) + "\n");
-  } finally { db.close(); }
+  let result: unknown;
+  try { result = action(new SessionService(new SessionRepository(db), config.retentionDays)); }
+  finally { db.close(); }
+  if (options.json) return void process.stdout.write(JSON.stringify(result) + "\n");
+  const space = terminalWidth();
+  const lines = render(result, space);
+  // The reader browses the same rows in the terminal, then keeps the plain table in the scrollback.
+  if (interactiveTerminal() && lines.some(line => line.owner)) {
+    await browse(lines, space, session => copyToClipboard(terminalContext(session, config)));
+  }
+  process.stdout.write(lines.map(line => line.text).join("\n") + "\n");
 }
 
 function creation(command: Command) {

@@ -8,7 +8,7 @@
     "relay": "bun run src/index.ts",
     "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test tests/database.test.ts tests/session.test.ts tests/cli.test.ts tests/api.test.ts tests/output.test.ts tests/install.test.ts",
+    "test": "bun test tests/database.test.ts tests/session.test.ts tests/cli.test.ts tests/api.test.ts tests/output.test.ts tests/interactive.test.ts tests/install.test.ts",
     "test:web": "playwright test",
     "check": "npm run typecheck && npm test && npm run build && npm run test:web",
     "build:web": "bun run scripts/build-web.ts",

@@ -29,7 +29,11 @@ function cell(text: string, size: number, color: string) {
   return paint(value, color) + " ".repeat(Math.max(0, size - width(value)));
 }
 
-function table(items: Session[], space: number): string[] {
+/** A rendered line and the session it belongs to, so the interactive view can point at a row. */
+export interface Line { text: string; owner?: Session }
+const plain = (texts: string[]): Line[] => texts.map(text => ({ text }));
+
+function table(items: Session[], space: number): Line[] {
   const columns = [...COLUMNS];
   const natural = new Map(columns.map(c => [c, Math.max(width(c.title), ...items.map(i => width(clip(c.value(i), 200))))]));
   const least = (c: Column) => Math.min(c.flex ?? Number.MAX_SAFE_INTEGER, natural.get(c)!, 44);
@@ -50,13 +54,12 @@ function table(items: Session[], space: number): string[] {
   const line = (cells: string[]) => cells.join(" ".repeat(GAP)).trimEnd();
   const rule = columns.reduce((sum, c) => sum + size.get(c)!, 0) + (columns.length - 1) * GAP;
   return [
-    line(columns.map(c => cell(c.title, size.get(c)!, "1;36"))),
-    dim("-".repeat(Math.min(rule, space))),
-    ...items.map(item => line(columns.map(column => cell(column.value(item), size.get(column)!, column.color?.(item) ?? "")))),
+    ...plain([line(columns.map(c => cell(c.title, size.get(c)!, "1;36"))), dim("-".repeat(Math.min(rule, space)))]),
+    ...items.map(item => ({ owner: item, text: line(columns.map(column => cell(column.value(item), size.get(column)!, column.color?.(item) ?? ""))) })),
   ];
 }
 
-function card(session: Session, extra: [string, string][], space: number): string[] {
+function card(session: Session, extra: [string, string][], space: number): Line[] {
   const title = clip(session.sessionName ?? "(이름 없음)", space);
   const fields: [string, string, string?][] = [
     ["Session ID", session.providerSessionId, "94"],
@@ -76,27 +79,28 @@ function card(session: Session, extra: [string, string][], space: number): strin
     "",
     paint("요약", "1;36"),
     ...wrap(session.summary, space - 2).map(text => `  ${text}`),
-  ];
+  ].map(text => ({ text, owner: session }));
 }
 
-function history(updates: SessionUpdate[], total: number, space: number): string[] {
+function history(session: Session, updates: SessionUpdate[], total: number, space: number): Line[] {
   return ["", paint(`기록 이력 (${total}건)`, "1;36"), ...updates.flatMap(update => [
     `  ${paint(`#${update.sequence}`, "36")} ${paint(localTime(update.createdAt), "90")}`,
     ...wrap(update.summary, space - 6).map(text => `      ${text}`),
-  ])];
+  ])].map(text => ({ text, owner: session }));
 }
 
-export function human(value: unknown, space = terminalWidth()): string {
+/** Lines plus their owning session; `human` is the same output flattened for a non-interactive terminal. */
+export function render(value: unknown, space = terminalWidth()): Line[] {
   const data = value as {
     session?: Session; items?: Session[]; page?: { total: number; offset: number };
     parentSession?: { providerSessionId: string }; children?: { providerSessionId: string }[];
     childrenPage?: { total: number }; updates?: SessionUpdate[]; updatesPage?: { total: number };
   };
   if (data.items) {
-    if (data.items.some(item => typeof item?.providerSessionId !== "string")) return JSON.stringify(value, null, 2);
+    if (data.items.some(item => typeof item?.providerSessionId !== "string")) return plain([JSON.stringify(value, null, 2)]);
     const footer = `${paint(`총 ${data.page?.total ?? data.items.length}건`, "36")} ${dim(`· offset ${data.page?.offset ?? 0}`)}`;
-    if (!data.items.length) return [dim("조회된 세션이 없습니다."), footer].join("\n");
-    return [...table(data.items, space), footer].join("\n");
+    if (!data.items.length) return plain([dim("조회된 세션이 없습니다."), footer]);
+    return [...table(data.items, space), ...plain([footer])];
   }
   if (data.session) {
     const children = data.children ?? [];
@@ -106,8 +110,12 @@ export function human(value: unknown, space = terminalWidth()): string {
         ...(children.length ? [[`Children`, `${data.childrenPage?.total ?? children.length}건 · ` +
           children.map(child => child.providerSessionId).join(", ")] as [string, string]] : []),
       ], space),
-      ...(data.updates ? history(data.updates, data.updatesPage?.total ?? data.updates.length, space) : []),
-    ].join("\n");
+      ...(data.updates ? history(data.session, data.updates, data.updatesPage?.total ?? data.updates.length, space) : []),
+    ];
   }
-  return JSON.stringify(value, null, 2);
+  return plain([JSON.stringify(value, null, 2)]);
+}
+
+export function human(value: unknown, space = terminalWidth()): string {
+  return render(value, space).map(line => line.text).join("\n");
 }

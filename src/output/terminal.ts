@@ -19,7 +19,8 @@ export function width(text: string): number {
   return total;
 }
 
-function head(text: string, max: number): string {
+/** Cuts to a display-column budget without touching the spacing that keeps table columns aligned. */
+export function head(text: string, max: number): string {
   let result = "";
   let used = 0;
   for (const character of text) {

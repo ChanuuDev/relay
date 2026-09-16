@@ -26,7 +26,12 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   expect(install("codex").exitCode).not.toBe(0);
   expect(readFileSync(target, "utf8")).toBe(original + "\nUser customization\n");
   expect(install("claude").exitCode).toBe(0);
-  expect(existsSync(path.join(dir, ".claude/skills/relay-session/SKILL.md"))).toBe(true);
+  const claudeSkill = path.join(dir, ".claude/skills/relay-session/SKILL.md");
+  expect(existsSync(claudeSkill)).toBe(true);
+  const installed = readFileSync(claudeSkill, "utf8");
+  expect(installed).toContain("argument-hint: codex|claude|grok");
+  // The agent must be able to invoke the skill itself; /relay-session stays available either way.
+  expect(installed).not.toContain("disable-model-invocation");
   expect(install("codex", "relative").exitCode).not.toBe(0);
 }, 15000);
 

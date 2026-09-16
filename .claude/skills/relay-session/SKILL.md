@@ -1,5 +1,4 @@
 ---
-disable-model-invocation: true
 argument-hint: codex|claude|grok
 name: relay-session
 description: Relay에 현재 Agent의 세션 맥락을 기록하고, codex/claude/grok 중 명시한 출처의 최근 기록을 다음 대화에 전달합니다. /relay-session provider, $relay-session provider 같은 명시적 조회 요청과 프로젝트 지침이나 사용자가 세션 기록을 요구할 때 사용합니다.
