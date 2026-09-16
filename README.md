@@ -227,6 +227,32 @@ Codex의 공식 호출 방식은 `$` 또는 `/skills`이며 모든 호스트에�
 
 실제 Session ID는 호스트가 제공한 값이나 사용자가 도구에서 확인한 값을 사용합니다. 현재 Codex 환경의 `CODEX_THREAD_ID` 제공과 실제 ID의 Relay 부모 연결을 임시 저장소에서 확인했지만 모든 설치·호스트에서 보장하지 않습니다. Codex 0.154.0의 `skills/list`, Claude Code 2.1.272의 SDK 초기화, Grok 1.0.24의 `inspect --json`으로 스킬 등록을 확인했습니다. 스킬 등록 확인과 모델이 실제로 스킬을 수행하는 검증은 구분합니다. Claude/Grok의 ID 자동 취득·원본 로그 import·기존 대화 재개·Agent 자동 전환은 구현하지 않았습니다. Relay CLI 설치만으로 모든 작업이 자동 기록되지도 않습니다. 수동 CLI 또는 명시적으로 적용한 기록 절차가 필요합니다.
 
+## 세션 시작 자동 기록 (Claude Code 훅)
+
+지침만으로는 모델이 기록을 건너뛸 수 있습니다. Claude Code의 `SessionStart` 훅에 등록하면 모델 판단과 무관하게 세션이 기록됩니다.
+
+`~/.claude/settings.json`의 `hooks.SessionStart` 배열에 추가합니다. 기존 항목이 있으면 지우지 말고 이어서 넣으세요.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "\"C:/Users/<사용자>/.local/bin/relay.exe\" hook claude || echo {}", "timeout": 10 }] }
+    ]
+  }
+}
+```
+
+`relay hook <codex|claude|grok>`은 훅 JSON을 stdin으로 받아 세션 시작을 기록합니다. 동작 규칙은 이렇습니다.
+
+- **세션을 절대 막지 않습니다.** 먼저 `{}`를 출력하고 기록을 시도하며, 어떤 실패에도 종료 코드 0으로 끝납니다. 저장소 오류·잘못된 JSON·`relay` 부재 모두 조용히 넘어갑니다.
+- 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID` 환경변수를 씁니다. **임의 ID를 만들지 않습니다.**
+- 세션 이름은 작업 폴더 이름, 요약은 `세션 시작 (훅 자동 기록)`으로 기록합니다. 실제 내용은 이후 Agent가 `relay update`로 채웁니다.
+- 페이로드에 `agent_id`가 있으면 서브에이전트이므로 기록하지 않습니다.
+- 같은 세션에서 다시 실행돼도(resume·compact) 같은 입력이라 이력이 늘지 않습니다.
+
+기록을 원하지 않는 세션은 해당 항목을 `settings.json`에서 빼면 됩니다. 프로젝트별로만 쓰려면 전역 대신 프로젝트 `.claude/settings.json`에 넣으세요.
+
 ## 브라우저와 API
 
 목록에서 검색·필터·페이지 이동, 행 또는 이름 클릭으로 상세 조회를 지원합니다. 상세에서 전체 요약, START/PROGRESS/END 이력, 부모·자식 연결을 확인할 수 있습니다. ID 복사와 PowerShell/Bash용 조회 명령 복사는 명령을 실행하지 않으며, 현재 조회한 저장소 경로도 포함합니다.

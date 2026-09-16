@@ -118,6 +118,34 @@ describe("CLI processes", () => {
     }
   });
 
+  test("session start hook records from stdin and never fails the host session", () => {
+    const hook = (payload: string, extra: Record<string, string> = {}) => {
+      // The host session of this test run must not leak into the payload fallback.
+      const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, ...extra };
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", "claude", "--data-dir", dir],
+        { cwd: root, env, stdin: Buffer.from(payload), stdout: "pipe", stderr: "pipe" });
+      return { code: result.exitCode, stdout: result.stdout.toString().trim() };
+    };
+    const started = hook(JSON.stringify({ session_id: "hook-session", cwd: root, hook_event_name: "SessionStart", session_source: "startup" }));
+    expect(started.code).toBe(0); expect(started.stdout).toBe("{}");
+    const stored = cli(dir, ["show", "hook-session"]).data.session;
+    expect(stored.provider).toBe("anthropic"); expect(stored.agent).toBe("claude-code");
+    expect(stored.sessionName).toBe(path.basename(root)); expect(stored.status).toBe("ACTIVE");
+    // Resume fires the hook again with the same payload and must not duplicate history or fail.
+    expect(hook(JSON.stringify({ session_id: "hook-session", cwd: root, session_source: "resume" })).code).toBe(0);
+    expect(cli(dir, ["show", "hook-session", "--history"]).data.updates.length).toBe(1);
+    // Subagents and unusable payloads stay silent instead of breaking the session.
+    expect(hook(JSON.stringify({ session_id: "sub", cwd: root, agent_id: "agent-1" })).code).toBe(0);
+    for (const payload of ["", "not json", "[]", JSON.stringify({ cwd: root })]) {
+      const result = hook(payload);
+      expect(result.code).toBe(0); expect(result.stdout).toBe("{}");
+    }
+    expect(cli(dir, ["list"]).data.page.total).toBe(1);
+    // A host that omits the id from the payload is still recorded from its session environment variable.
+    expect(hook("{}", { CLAUDE_CODE_SESSION_ID: "env-session" }).code).toBe(0);
+    expect(cli(dir, ["show", "env-session"]).data.session.providerSessionId).toBe("env-session");
+  }, 15000);
+
   test("failed history writes roll back through CLI and error stream", () => {
     cli(dir, start("a")); const db = new Database(path.join(dir, "relay.db"));
     db.exec("CREATE TRIGGER fail BEFORE INSERT ON session_updates BEGIN SELECT RAISE(ABORT, 'injected'); END;"); db.close();

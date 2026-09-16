@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { Command, CommanderError } from "commander";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { loadConfig } from "./config";
 import { openDatabase } from "./db/database";
 import { errorBody, invalid, RelayError, storageError } from "./errors";
 import { SessionRepository } from "./session/session.repository";
-import { SessionService } from "./session/session.service";
+import { PROVIDERS, SessionService } from "./session/session.service";
 import type { NewSession } from "./session/session.types";
 import { human } from "./output/human";
 import { startServer } from "./web/server";
@@ -79,6 +81,30 @@ program.command("list").description("세션 테이블 조회")
 program.command("latest <provider>").description("codex / claude / grok 중 명시한 출처의 최근 Relay 기록")
   .option("--cwd <path>", "명시한 작업 경로 내에서만 조회")
   .action((alias: string, o, c: Command) => run(c, false, s => s.latest(alias, o.cwd)));
+
+program.command("hook <agent>").description("Agent 세션 시작 훅의 JSON을 stdin으로 받아 기록 (codex/claude/grok)")
+  .action(async (alias: string, _options, command: Command) => {
+    // A session hook must never block or fail the host session: answer first, record second, stay silent on failure.
+    process.stdout.write("{}\n");
+    try {
+      const raw = process.stdin.isTTY ? "" : await Bun.stdin.text();
+      const payload = (raw.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>;
+      // A subagent shares the host session; only the session itself is recorded.
+      if (payload.agent_id || !Object.hasOwn(PROVIDERS, alias)) return;
+      const sessionId = [payload.session_id, payload.sessionId, payload.thread_id,
+        process.env.CLAUDE_CODE_SESSION_ID, process.env.CODEX_THREAD_ID]
+        .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (!sessionId) return;
+      const cwd = typeof payload.cwd === "string" && existsSync(payload.cwd) ? payload.cwd : process.cwd();
+      const { provider, agent } = PROVIDERS[alias as keyof typeof PROVIDERS];
+      const config = loadConfig(command.optsWithGlobals().dataDir);
+      const db = openDatabase(config);
+      try {
+        new SessionService(new SessionRepository(db), config.retentionDays)
+          .start({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: "세션 시작 (훅 자동 기록)" });
+      } finally { db.close(); }
+    } catch { /* 기록 실패가 세션을 막지 않는다 */ }
+  });
 
 program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C로 종료)")
   .option("--port <number>", "HTTP 포트 (기본 7474)").option("--open", "기본 브라우저 열기")
