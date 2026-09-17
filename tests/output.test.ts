@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { human } from "../src/output/human";
-import { clip, localTime, wrap, width } from "../src/output/terminal";
+import { clip, localTime, shortTime, wrap, width } from "../src/output/terminal";
 import type { Session } from "../src/session/session.types";
 
 const at = "2026-09-16T04:02:09.792Z";
@@ -137,8 +137,22 @@ describe("Terminal output", () => {
 
   test("timestamps render in local time and keep unparsable values", () => {
     const local = new Date(at);
-    expect(localTime(at)).toBe(`${local.getFullYear()}-09-16 ${String(local.getHours()).padStart(2, "0")}:02`);
+    const hour = String(local.getHours()).padStart(2, "0");
+    expect(localTime(at)).toBe(`${local.getFullYear()}-09-16 ${hour}:02`);
     expect(localTime(at, true)).toMatch(/:09 [+-]\d{2}:\d{2}$/);
     expect(localTime("nonsense")).toBe("nonsense");
+    expect(shortTime(at)).toBe(`${String(local.getFullYear() % 100).padStart(2, "0")}.09.16 ${hour}:02`);
+    expect(shortTime("nonsense")).toBe("nonsense");
+  });
+
+  test("table shows the compact timestamp while the detail keeps the exact one", () => {
+    const local = new Date(at);
+    const short = `${String(local.getFullYear() % 100).padStart(2, "0")}.09.16 ${String(local.getHours()).padStart(2, "0")}:02`;
+    const listed = human({ items: [session(1)], page: { total: 1, offset: 0 } }, 160);
+    expect(listed).toContain(short);
+    expect(listed).not.toContain(`${local.getFullYear()}-09-16`);
+    const detail = human({ session: session(1) }, 80);
+    expect(detail).toContain(`${local.getFullYear()}-09-16`);
+    expect(detail).not.toContain(short);
   });
 });

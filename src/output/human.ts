@@ -1,6 +1,6 @@
 import type { Session, SessionUpdate } from "../session/session.types";
 import { projectName } from "../web/lib/format";
-import { clip, dim, localTime, pad, paint, terminalWidth, width, wrap } from "./terminal";
+import { clip, dim, localTime, pad, paint, shortTime, terminalWidth, width, wrap } from "./terminal";
 
 const GAP = 2;
 const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35" };
@@ -22,8 +22,8 @@ const COLUMNS: Column[] = [
   { title: "프로젝트", value: s => projectName(s.workingDirectory), drop: 4 },
   { title: "Provider/Agent", value: s => `${s.provider}/${s.agent}`, drop: 3, color: providerColor },
   { title: "Agent Session ID", value: s => s.providerSessionId, color: () => "94" },
-  { title: "생성", value: s => localTime(s.createdAt), drop: 2, color: () => "90" },
-  { title: "갱신", value: s => localTime(s.updatedAt), drop: 2, color: () => "90" },
+  { title: "생성", value: s => shortTime(s.createdAt), drop: 2, color: () => "90" },
+  { title: "갱신", value: s => shortTime(s.updatedAt), drop: 2, color: () => "90" },
   { title: "요약", value: s => s.summary, flex: 20, drop: 1 },
 ];
 

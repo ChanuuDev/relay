@@ -73,13 +73,21 @@ export function paint(text: string, code: string): string {
   return colored && code ? `\x1b[${code}m${text}\x1b[0m` : text;
 }
 export const dim = (text: string) => paint(text, "2");
+const two = (value: number) => String(value).padStart(2, "0");
+const clock = (at: Date) => `${two(at.getHours())}:${two(at.getMinutes())}`;
+
+/** Table cells read `26.09.17 18:00`: a two-digit year and dots keep both timestamp columns on a narrow terminal. */
+export function shortTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return `${two(at.getFullYear() % 100)}.${two(at.getMonth() + 1)}.${two(at.getDate())} ${clock(at)}`;
+}
+
 /** Stored timestamps are ISO 8601 UTC; people read them in local time, so detail views also state the offset. */
 export function localTime(iso: string, exact = false): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return iso;
-  const two = (value: number) => String(value).padStart(2, "0");
-  const stamp = `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ` +
-    `${two(at.getHours())}:${two(at.getMinutes())}`;
+  const stamp = `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${clock(at)}`;
   if (!exact) return stamp;
   const offset = -at.getTimezoneOffset();
   const sign = offset < 0 ? "-" : "+";
