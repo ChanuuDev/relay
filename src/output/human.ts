@@ -1,4 +1,5 @@
 import type { Session, SessionUpdate } from "../session/session.types";
+import { projectName } from "../web/lib/format";
 import { clip, dim, localTime, pad, paint, terminalWidth, width, wrap } from "./terminal";
 
 const GAP = 2;
@@ -14,8 +15,11 @@ interface Column {
 }
 
 // Identity columns always stay; the rest leave in `drop` order when the terminal is narrow.
+// The project is the folder name only: a hook-recorded session is often named after it, so the full
+// path would repeat the name column, and the detail view still shows the whole working directory.
 const COLUMNS: Column[] = [
   { title: "이름", value: s => s.sessionName ?? "(이름 없음)", flex: 10, color: () => "1;36" },
+  { title: "프로젝트", value: s => projectName(s.workingDirectory), drop: 4 },
   { title: "Provider/Agent", value: s => `${s.provider}/${s.agent}`, drop: 3, color: providerColor },
   { title: "Agent Session ID", value: s => s.providerSessionId, color: () => "94" },
   { title: "생성", value: s => localTime(s.createdAt), drop: 2, color: () => "90" },

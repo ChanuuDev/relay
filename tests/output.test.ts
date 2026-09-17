@@ -48,6 +48,25 @@ describe("Terminal output", () => {
     }
   });
 
+  test("table shows the project folder name, not the full working directory", () => {
+    const items = [session(1), session(2, { workingDirectory: "C:\\workspace\\cold-warehouse-front\\" }),
+      session(3, { workingDirectory: "/home/user/manhole_project" })];
+    const lines = human({ items, page: { total: 3, offset: 0 } }, 120).split("\n");
+    expect(lines[0]).toContain("프로젝트");
+    expect(lines[0]!.indexOf("프로젝트")).toBeGreaterThan(lines[0]!.indexOf("이름"));
+    expect(lines[0]!.indexOf("프로젝트")).toBeLessThan(lines[0]!.indexOf("Agent Session ID"));
+    const rows = lines.filter(line => line.includes("f47ac10b-"));
+    expect(rows[0]).toContain("agent-session-chain");
+    expect(rows[1]).toContain("cold-warehouse-front");
+    expect(rows[2]).toContain("manhole_project");
+    for (const row of rows) { expect(row).not.toContain("workspace"); expect(row).not.toContain("/home/"); }
+    // A narrow terminal keeps the project beside the identity columns after Provider/Agent leaves.
+    const narrow = human({ items, page: { total: 3, offset: 0 } }, 80).split("\n");
+    expect(narrow[0]).toContain("프로젝트");
+    expect(narrow[0]).not.toContain("Provider/Agent");
+    for (const line of narrow) expect(width(line)).toBeLessThanOrEqual(80);
+  });
+
   test("detail keeps every field readable and history stays in sequence", () => {
     const view = human({ session: session(1, { summary: "요약 ".repeat(40) }),
       parentSession: { providerSessionId: "parent-id" }, children: [{ providerSessionId: "child-id" }],
