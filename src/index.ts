@@ -12,7 +12,7 @@ import { browse, copyNotice, interactiveTerminal, terminalContext } from "./outp
 import { terminalWidth } from "./output/terminal";
 import { SessionRepository } from "./session/session.repository";
 import { PROVIDERS, SessionService } from "./session/session.service";
-import type { NewSession } from "./session/session.types";
+import type { NewSession, Session } from "./session/session.types";
 import { directory } from "./validation";
 import { sessionCommand } from "./web/lib/session-context";
 import { startServer } from "./web/server";
@@ -43,28 +43,39 @@ async function run(command: Command, write: boolean, action: (service: SessionSe
   const options = command.optsWithGlobals();
   const config = loadConfig(options.dataDir);
   const db = openDatabase(config, !write);
-  let result: unknown;
-  try { result = action(new SessionService(new SessionRepository(db), config.retentionDays)); }
-  catch (error) {
-    if (error instanceof RelayError && error.code === "SESSION_NOT_FOUND" && error.details?.relayId &&
-      typeof error.details.providerSessionId === "string" && typeof error.details.provider === "string") {
-      const shell = process.platform === "win32" ? "powershell" : "bash";
-      const command = sessionCommand({ providerSessionId: error.details.providerSessionId, provider: error.details.provider }, config.dataDirectory, shell);
-      error.message += ` 다음 명령으로 조회하세요:\n${command}`;
-      error.details = { ...error.details, command, shell };
+  const service = new SessionService(new SessionRepository(db), config.retentionDays);
+  let picked: Session | undefined;
+  try {
+    let result: unknown;
+    try { result = action(service); }
+    catch (error) {
+      if (error instanceof RelayError && error.code === "SESSION_NOT_FOUND" && error.details?.relayId &&
+        typeof error.details.providerSessionId === "string" && typeof error.details.provider === "string") {
+        const shell = process.platform === "win32" ? "powershell" : "bash";
+        const command = sessionCommand({ providerSessionId: error.details.providerSessionId, provider: error.details.provider }, config.dataDirectory, shell);
+        error.message += ` 다음 명령으로 조회하세요:\n${command}`;
+        error.details = { ...error.details, command, shell };
+      }
+      throw error;
     }
-    throw error;
-  }
-  finally { db.close(); }
-  if (options.json) return void process.stdout.write(JSON.stringify(result) + "\n");
-  const space = terminalWidth();
-  const lines = render(result, space);
-  // The reader browses the same rows in the terminal, then keeps the plain table in the scrollback.
-  const picked = interactiveTerminal() && lines.some(line => line.owner) ? await browse(lines, space) : undefined;
-  process.stdout.write(lines.map(line => line.text).join("\n") + "\n");
+    if (options.json) return void process.stdout.write(JSON.stringify(result) + "\n");
+    const space = terminalWidth();
+    const lines = render(result, space);
+    // The reader browses the same rows in the terminal, then keeps the plain table in the scrollback.
+    // A list keeps the store open meanwhile, so the picked row can show its history and connections.
+    const listed = Array.isArray((result as { items?: unknown }).items);
+    picked = interactiveTerminal() && lines.some(line => line.owner)
+      ? await browse(lines, space, listed ? { detail: session => render(inspect(service, session), space) } : {}) : undefined;
+    process.stdout.write(lines.map(line => line.text).join("\n") + "\n");
+  } finally { db.close(); }
   // The clipboard runs after the view is gone, so a slow tool never delays closing it.
   // stdout stays the table alone; what the reader picked is status, so it goes to stderr.
   if (picked) process.stderr.write(copyNotice(picked, await copyToClipboard(terminalContext(picked, config))) + "\n");
+}
+
+/** A picked row shows what the browser's detail panel shows; a row the store has since dropped still shows itself. */
+function inspect(service: SessionService, session: Session): unknown {
+  try { return service.inspect(session.id); } catch { return { session }; }
 }
 
 function creation(command: Command) {

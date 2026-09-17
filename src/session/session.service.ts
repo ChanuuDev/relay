@@ -151,16 +151,29 @@ export class SessionService {
       childrenPage: { limit: 50, offset: 0, total: this.repo.count("WHERE parent_session_id = ?", [session.id]) } };
   }
 
+  private historyPage(session: Session, page: { limit: number; offset: number }) {
+    return { updates: this.repo.updates(session.id, page.limit, page.offset),
+      updatesPage: { ...page, total: this.repo.updateCount(session.id) } };
+  }
+
   show(id: string, provider?: string, history = false, input: { limit?: unknown; offset?: unknown } = {}) {
     const page = pagination(input);
     return this.transaction(false, () => {
       const session = this.resolve(id, provider);
-      return { ...this.detail(session), ...(history ? { updates: this.repo.updates(session.id, page.limit, page.offset),
-        updatesPage: { ...page, total: this.repo.updateCount(session.id) } } : {}) };
+      return { ...this.detail(session), ...(history ? this.historyPage(session, page) : {}) };
     });
   }
 
   byId(id: string) { return this.transaction(false, () => this.detail(this.internal(id))); }
+
+  /** Everything the detail view shows in one read: the session, its relations and the newest history page. */
+  inspect(id: string, input: { limit?: unknown; offset?: unknown } = {}) {
+    const page = pagination(input);
+    return this.transaction(false, () => {
+      const session = this.internal(id);
+      return { ...this.detail(session), ...this.historyPage(session, page) };
+    });
+  }
 
   list(filters: Filters = {}) {
     const { limit, offset } = pagination(filters);

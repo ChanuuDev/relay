@@ -43,13 +43,22 @@ function keyboard() {
 const report = (button: number, row: number, press = true) => `\x1b[<${button};12;${row}${press ? "M" : "m"}`;
 /** Mouse reporting off, cursor back, alternate screen released. */
 const RESTORE = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l";
-const selectedRow = (lines: string[]) => lines.findIndex(line => line.startsWith("\x1b[7m"));
+/** The highlighted body row; the help bar on the last line is reverse video too, so it is left out. */
+const selectedRow = (lines: string[]) => lines.slice(0, -1).findIndex(line => line.startsWith("\x1b[7m"));
+const shownText = (view: ReturnType<typeof screen>) => stripVTControlCharacters(view.last().join("\n"));
 const tick = () => Bun.sleep(5);
+
+/** What a list row opens: the same detail the browser shows, with one history entry. */
+function inspect(session: Session) {
+  return render({ session, parentSession: null, children: [], childrenPage: { total: 0 },
+    updates: [{ id: "u", sessionId: session.id, sequence: 1, summary: `진행 ${session.sessionName}`, createdAt: at }],
+    updatesPage: { total: 1 } }, SPACE);
+}
 
 function start(items: Session[], rows = 10) {
   const lines = render({ items, page: { total: items.length, offset: 0 } }, SPACE);
   const view = screen(rows); const keys = keyboard();
-  return { lines, view, keys, done: browse(lines, SPACE, view, keys) };
+  return { lines, view, keys, done: browse(lines, SPACE, { screen: view, input: keys, detail: inspect }) };
 }
 
 describe("Interactive terminal", () => {
@@ -58,7 +67,7 @@ describe("Interactive terminal", () => {
     const value = { items, page: { total: 2, offset: 0 } };
     const lines = render(value, SPACE);
     expect(lines.map(line => line.text).join("\n")).toBe(human(value, SPACE));
-    // Header, rule and footer belong to no session; only the rows can be copied.
+    // Header, rule and footer belong to no session; only the rows can be opened.
     expect(lines.filter(line => line.owner).map(line => line.owner)).toEqual(items);
     expect(lines.filter(line => !line.owner).length).toBe(3);
     const detail = render({ session: items[0], updates: [{ id: "u", sessionId: items[0]!.id, sequence: 1, summary: "진행", createdAt: at }], updatesPage: { total: 1 } }, SPACE);
@@ -66,16 +75,26 @@ describe("Interactive terminal", () => {
     expect(render({ items: [{ sequence: 1 }] }, SPACE).every(line => !line.owner)).toBe(true);
   });
 
-  test("hovering selects the row under the pointer and clicking picks it and closes", async () => {
+  test("hovering selects the row under the pointer, a click opens its detail and a second click copies and closes", async () => {
     const items = [session(1), session(2), session(3)];
-    const { view, keys, done } = start(items);
+    const { view, keys, done } = start(items, 40);
     // Screen rows 1 and 2 are the header and rule; the first session sits on row 3.
     expect(selectedRow(view.last())).toBe(2);
+    expect(shownText(view)).toContain("상세 보기");
     keys.send(report(35, 5, true));
     await tick();
     expect(selectedRow(view.last())).toBe(4);
     expect(stripVTControlCharacters(view.last()[4]!)).toContain(items[2]!.providerSessionId);
     keys.send(report(0, 5));
+    keys.send(report(0, 5, false));     // the release that follows the click changes nothing
+    await tick();
+    // The detail covers the list: no row is highlighted, and the browser's sections are all there.
+    expect(selectedRow(view.last())).toBe(-1);
+    const shown = shownText(view);
+    for (const part of [items[2]!.sessionName!, "codex · agent-session-chain", "최근 작업 요약", "요약 3", "세션 정보",
+      items[2]!.providerSessionId, "기록 이력 (1건)", "진행 세션 이름 3", "세션 연결 (0건)", "최초 세션", "목록으로"]) expect(shown).toContain(part);
+    expect(shown).not.toContain(items[0]!.providerSessionId);
+    keys.send(report(0, 3));
     // The view ends the same way q does; the clipboard write happens after the terminal is restored,
     // so a slow clipboard tool cannot leave the screen hanging.
     expect(await done).toBe(items[2]!);
@@ -84,22 +103,23 @@ describe("Interactive terminal", () => {
     expect(copyNotice(items[2]!, "failed")).toContain("복사하지 못했습니다");
   });
 
-  test("clicks outside a row and wheel scrolling never pick", async () => {
+  test("clicks outside a row and wheel scrolling never open anything", async () => {
     const items = [session(1), session(2)];
-    const { keys, done } = start(items, 8);
+    const { view, keys, done } = start(items, 8);
     keys.send(report(0, 1));            // header
     keys.send(report(0, 8));            // empty space below the rows
     keys.send(report(65, 4));           // wheel down
     keys.send(report(64, 4));           // wheel up
     keys.send(report(0, 3, false));     // button release, not a press
     await tick();
+    expect(selectedRow(view.last())).toBe(2);
     keys.send("q");
     expect(await done).toBeUndefined();
   });
 
-  test("keyboard moves, then Enter picks the selected row and closes", async () => {
+  test("keyboard moves, Enter opens the selected row's detail and Enter again copies and closes", async () => {
     const items = [session(1), session(2), session(3)];
-    const { view, keys, done } = start(items);
+    const { view, keys, done } = start(items, 40);
     keys.send("\x1b[2;3R");             // cursor position report: ignored, must not close the view
     keys.send("G");
     await tick();
@@ -109,10 +129,84 @@ describe("Interactive terminal", () => {
     expect(selectedRow(view.last())).toBe(2);
     keys.send("\x1b[B");
     keys.send("\r");
+    await tick();
+    expect(shownText(view)).toContain(items[1]!.providerSessionId);
+    expect(shownText(view)).not.toContain(items[2]!.providerSessionId);
+    keys.send("\r");
     expect(await done).toBe(items[1]!);
   });
 
-  test("q, Esc and Ctrl+C each close without picking", async () => {
+  test("Backspace and Esc leave the detail for the list with the row still selected; q closes from the detail", async () => {
+    const items = [session(1), session(2)];
+    const { view, keys, done } = start(items, 40);
+    for (const back of ["\x7f", "\x1b", "\x08"]) {
+      keys.send("\x1b[B");
+      keys.send("\r");
+      await tick();
+      expect(selectedRow(view.last())).toBe(-1);
+      expect(shownText(view)).toContain("최근 작업 요약");
+      keys.send(back);
+      await tick();
+      expect(selectedRow(view.last())).toBe(3);
+      expect(shownText(view)).not.toContain("최근 작업 요약");
+      keys.send("\x1b[A");
+      await tick();
+      expect(selectedRow(view.last())).toBe(2);
+    }
+    keys.send("\x7f");                  // Backspace in the list has nothing to go back to
+    keys.send("\r");
+    await tick();
+    expect(shownText(view)).toContain("최근 작업 요약");
+    keys.send("q");
+    expect(await done).toBeUndefined();
+    expect(view.all()).toEndWith(RESTORE);
+  });
+
+  test("the detail scrolls with the keys and the wheel instead of moving a cursor", async () => {
+    const items = [session(1, { summary: Array.from({ length: 30 }, (_, i) => `줄 ${i + 1}`).join("\n") })];
+    const { view, keys, done } = start(items, 8);
+    const first = () => stripVTControlCharacters(view.last()[0]!);
+    keys.send("\r");
+    await tick();
+    expect(first()).toContain("세션 이름 1");
+    keys.send("\x1b[B");
+    await tick();
+    expect(first()).toContain("codex");
+    keys.send("\x1b[6~");
+    await tick();
+    expect(first()).toContain("줄 ");
+    keys.send("G");
+    await tick();
+    expect(shownText(view)).toContain("이어받은 세션 없음");
+    keys.send(report(64, 3));
+    await tick();
+    expect(shownText(view)).not.toContain("이어받은 세션 없음");
+    keys.send("g");
+    await tick();
+    expect(first()).toContain("세션 이름 1");
+    expect(selectedRow(view.last())).toBe(-1);
+    keys.send("\x1b");
+    await tick();
+    expect(selectedRow(view.last())).toBe(2);
+    keys.send("q");
+    expect(await done).toBeUndefined();
+  });
+
+  test("a single session view starts in its detail: Enter copies at once and Esc or Backspace closes", async () => {
+    const target = session(1);
+    const lines = render({ session: target, parentSession: null, children: [], childrenPage: { total: 0 } }, SPACE);
+    for (const [key, expected] of [["\r", target], ["\x1b", undefined], ["\x7f", undefined]] as const) {
+      const view = screen(40); const keys = keyboard();
+      const done = browse(lines, SPACE, { screen: view, input: keys });
+      expect(selectedRow(view.last())).toBe(-1);
+      expect(shownText(view)).toContain("세션 정보");
+      expect(shownText(view)).not.toContain("목록으로");
+      keys.send(key);
+      expect(await done).toBe(expected);
+    }
+  });
+
+  test("q, Esc and Ctrl+C each close the list without picking", async () => {
     for (const key of ["q", "\x1b", "\x03"]) {
       const { keys, done } = start([session(1)]);
       keys.send(key);

@@ -4,7 +4,7 @@ import { clip, dim, localTime, pad, paint, shortTime, terminalWidth, width, wrap
 
 const GAP = 2;
 const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35" };
-const providerColor = (s: Session) => Object.hasOwn(PROVIDER_COLORS, s.provider) ? PROVIDER_COLORS[s.provider]! : "36";
+const providerColor = (s: { provider: string }) => Object.hasOwn(PROVIDER_COLORS, s.provider) ? PROVIDER_COLORS[s.provider]! : "36";
 
 interface Column {
   title: string;
@@ -64,34 +64,79 @@ function table(items: Session[], space: number): Line[] {
   ];
 }
 
-function card(session: Session, extra: [string, string][], space: number): Line[] {
-  const title = clip(session.sessionName ?? "(이름 없음)", space);
-  const fields: [string, string, string?][] = [
-    ["Agent Session ID", session.providerSessionId, "94"],
-    ["Relay 내부 ID", session.id, "90"],
-    ["Provider", `${session.provider} / ${session.agent}`, providerColor(session)],
-    ["Model", session.model ?? "미기록"],
-    ["Project", session.workingDirectory, "94"],
-    ["최초 기록", localTime(session.createdAt, true), "90"],
-    ["갱신", localTime(session.updatedAt, true), "90"],
-    ...extra,
-  ];
-  const label = Math.max(...fields.map(([name]) => width(name)));
-  return [
-    paint(title, "1;36"),
-    dim("-".repeat(space)),
-    ...fields.map(([name, value, color]) => `${dim(pad(name, label))}  ${paint(clip(value, space - label - GAP), color ?? "")}`),
-    "",
-    paint("요약", "1;36"),
-    ...wrap(session.summary, space - 2).map(text => `  ${text}`),
-  ].map(text => ({ text, owner: session }));
+/** A linked session as the API briefs it; a caller may know no more than its id. */
+type Brief = Partial<Pick<Session, "provider" | "providerSessionId" | "sessionName" | "summary">>;
+interface Detail {
+  session: Session; parentSession?: Brief | null; children?: Brief[]; childrenPage?: { total: number };
+  updates?: SessionUpdate[]; updatesPage?: { total: number };
 }
 
-function history(session: Session, updates: SessionUpdate[], total: number, space: number): Line[] {
-  return ["", paint(`기록 이력 (${total}건)`, "1;36"), ...updates.flatMap(update => [
-    `  ${paint(`#${update.sequence}`, "36")} ${paint(localTime(update.createdAt), "90")}`,
-    ...wrap(update.summary, space - 6).map(text => `      ${text}`),
-  ])].map(text => ({ text, owner: session }));
+const title = (s: Brief) => s.sessionName ?? "이름 없는 세션";
+const heading = (text: string, note?: string) => paint(text, "1;36") + (note ? `  ${dim(note)}` : "");
+
+/** Coloured pieces on one line, each cut to what is left of the budget so the line never overflows. */
+function inline(parts: [string, string?][], space: number, gap = " ".repeat(GAP)): string {
+  const shown: string[] = [];
+  let room = space;
+  for (const [text, color] of parts) {
+    const piece = clip(text, room);
+    if (!piece) break;
+    shown.push(paint(piece, color ?? ""));
+    room -= width(piece) + width(gap);
+  }
+  return shown.join(gap);
+}
+
+function relation(linked: Brief, space: number): string[] {
+  const parts: [string, string?][] = [[title(linked), "1;36"]];
+  if (linked.provider) parts.push([linked.provider, providerColor({ provider: linked.provider })]);
+  if (linked.providerSessionId) parts.push([linked.providerSessionId, "94"]);
+  return [`    ${inline(parts, space - 4)}`, ...wrap(linked.summary ?? "", space - 6).filter(Boolean).map(text => `      ${text}`)];
+}
+
+/** The browser's detail panel in text: heading, summary, session information, history, then connections. */
+function detail(data: Detail, space: number): Line[] {
+  const s = data.session;
+  const fields: [string, string, string?][] = [
+    ["Provider / Agent", `${s.provider} / ${s.agent}`, providerColor(s)],
+    ["모델", s.model ?? "미기록"],
+    ["작업 경로", s.workingDirectory, "94"],
+    ["최초 기록", localTime(s.createdAt, true), "90"],
+    ["마지막 갱신", localTime(s.updatedAt, true), "90"],
+    ["Agent Session ID", s.providerSessionId, "94"],
+    ["Relay 내부 ID", s.id, "90"],
+  ];
+  const label = Math.max(...fields.map(([name]) => width(name)));
+  const children = data.children ?? [];
+  const childCount = data.childrenPage?.total ?? children.length;
+  return [
+    paint(clip(title(s), space), "1;36"),
+    inline([[s.agent, providerColor(s)], ["·", "2"], [projectName(s.workingDirectory)]], space, " "),
+    dim("-".repeat(space)),
+    heading("최근 작업 요약"),
+    ...wrap(s.summary, space - 2).map(text => `  ${text}`),
+    dim("  작업을 이어가기 전, 실제 프로젝트 파일도 확인하세요."),
+    "",
+    heading("세션 정보"),
+    ...fields.map(([name, value, color]) => `  ${dim(pad(name, label))}${" ".repeat(GAP)}${paint(clip(value, space - label - GAP - 2), color ?? "")}`),
+    ...(data.updates ? [
+      "",
+      heading(`기록 이력 (${data.updatesPage?.total ?? data.updates.length}건)`, "최신 기록부터"),
+      ...data.updates.flatMap(update => [
+        `  ${paint(`#${update.sequence}`, "36")} ${paint(localTime(update.createdAt), "90")}`,
+        ...wrap(update.summary, space - 6).map(text => `      ${text}`),
+      ]),
+      ...(data.updates.length ? [] : [dim("  현재 페이지에 이력이 없습니다.")]),
+    ] : []),
+    "",
+    heading(`세션 연결 (${childCount + (data.parentSession ? 1 : 0)}건)`),
+    paint("  이전 세션", "36"),
+    ...(data.parentSession ? relation(data.parentSession, space) : [dim("    최초 세션 · 이전 연결 없음")]),
+    paint("  현재 세션", "36"),
+    `    ${paint(clip(title(s), space - 4), "1;36")}`,
+    paint(`  이어받은 세션 (${childCount}건)`, "36"),
+    ...(children.length ? children.flatMap(child => relation(child, space)) : [dim("    이어받은 세션 없음")]),
+  ].map(text => ({ text, owner: s }));
 }
 
 const HOOK_STATUS: Record<string, string> = {
@@ -101,10 +146,8 @@ const HOOK_STATUS: Record<string, string> = {
 /** Lines plus their owning session; `human` is the same output flattened for a non-interactive terminal. */
 
 export function render(value: unknown, space = terminalWidth()): Line[] {
-  const data = value as {
-    session?: Session; items?: Session[]; page?: { total: number; offset: number };
-    parentSession?: { providerSessionId: string }; children?: { providerSessionId: string }[];
-    childrenPage?: { total: number }; updates?: SessionUpdate[]; updatesPage?: { total: number };
+  const data = value as Partial<Detail> & {
+    items?: Session[]; page?: { total: number; offset: number };
     scope?: { cwd: string | null }; binDirectory?: string; executable?: string;
     wrappers?: { path: string; status: string }[];
     hosts?: { host?: string; path: string; status: string; detail?: string }[];
@@ -126,15 +169,9 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
     return [...table(data.items, space), ...plain([footer])];
   }
   if (data.session) {
-    const children = data.children ?? [];
     return [
       ...(data.scope ? plain(wrap(`조회 범위: ${data.scope.cwd ?? "전체 프로젝트"}`, space)) : []),
-      ...card(data.session, [
-        ...(data.parentSession ? [["Parent", data.parentSession.providerSessionId] as [string, string]] : []),
-        ...(children.length ? [[`Children`, `${data.childrenPage?.total ?? children.length}건 · ` +
-          children.map(child => child.providerSessionId).join(", ")] as [string, string]] : []),
-      ], space),
-      ...(data.updates ? history(data.session, data.updates, data.updatesPage?.total ?? data.updates.length, space) : []),
+      ...detail({ ...data, session: data.session }, space),
     ];
   }
   return plain([JSON.stringify(value, null, 2)]);
