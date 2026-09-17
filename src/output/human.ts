@@ -20,7 +20,8 @@ interface Column {
 const COLUMNS: Column[] = [
   { title: "이름", value: s => s.sessionName ?? "(이름 없음)", flex: 10, color: () => "1;36" },
   { title: "프로젝트", value: s => projectName(s.workingDirectory), drop: 4 },
-  { title: "Provider/Agent", value: s => `${s.provider}/${s.agent}`, drop: 3, color: providerColor },
+  // The provider is carried by the colour, so the cell holds only the agent name.
+  { title: "Agent", value: s => s.agent, drop: 3, color: providerColor },
   { title: "Agent Session ID", value: s => s.providerSessionId, color: () => "94" },
   { title: "생성", value: s => shortTime(s.createdAt), drop: 2, color: () => "90" },
   { title: "갱신", value: s => shortTime(s.updatedAt), drop: 2, color: () => "90" },

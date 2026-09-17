@@ -60,10 +60,13 @@ describe("Terminal output", () => {
     expect(rows[1]).toContain("cold-warehouse-front");
     expect(rows[2]).toContain("manhole_project");
     for (const row of rows) { expect(row).not.toContain("workspace"); expect(row).not.toContain("/home/"); }
-    // A narrow terminal keeps the project beside the identity columns after Provider/Agent leaves.
+    // The agent cell names the tool only; the provider shows through the cell colour.
+    expect(rows[0]).toContain("claude-code");
+    expect(rows[0]).not.toContain("anthropic");
+    // A narrow terminal keeps the project beside the identity columns after the agent column leaves.
     const narrow = human({ items, page: { total: 3, offset: 0 } }, 80).split("\n");
     expect(narrow[0]).toContain("프로젝트");
-    expect(narrow[0]).not.toContain("Provider/Agent");
+    expect(narrow.some(line => line.includes("claude-code"))).toBe(false);
     for (const line of narrow) expect(width(line)).toBeLessThanOrEqual(80);
   });
 
@@ -129,7 +132,7 @@ describe("Terminal output", () => {
     for (const [index, space] of [70, 100, 160, 200, 80].entries()) {
       for (const line of stripVTControlCharacters(colored[index]!).split("\n")) expect(width(line)).toBeLessThanOrEqual(space);
     }
-    const providerCodes = ["openai/codex", "anthropic/claude-code", "xai/grok"]
+    const providerCodes = ["codex", "claude-code", "grok"]
       .map(label => colored[3]!.match(new RegExp(`\\x1b\\[([\\d;]+)m${label}\\x1b`))?.[1]);
     expect(providerCodes.every(Boolean)).toBe(true);
     expect(new Set(providerCodes).size).toBe(3);
