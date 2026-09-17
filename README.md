@@ -87,13 +87,15 @@ relay latest grok --cwd "C:\workspace\my-project" --json
 
 조회 결과에서 Agent가 보는 단서는 다음과 같습니다.
 
-| 필드 | 의미 |
-| --- | --- |
-| `provider` / `agent` | 어떤 제공자와 도구의 세션인지 |
-| `providerSessionId` | 원본 세션을 찾을 때 쓰는 실제 Agent Session ID |
-| `workingDirectory` | 어느 프로젝트에서 한 작업인지 |
-| `sessionName` / `summary` | 어떤 작업을 하던 세션인지 |
-| `createdAt` / `updatedAt` | Relay에 처음 기록하고 마지막으로 갱신한 시각 |
+
+| 필드                        | 의미                                 |
+| ------------------------- | ---------------------------------- |
+| `provider` / `agent`      | 어떤 제공자와 도구의 세션인지                   |
+| `providerSessionId`       | 원본 세션을 찾을 때 쓰는 실제 Agent Session ID |
+| `workingDirectory`        | 어느 프로젝트에서 한 작업인지                   |
+| `sessionName` / `summary` | 어떤 작업을 하던 세션인지                     |
+| `createdAt` / `updatedAt` | Relay에 처음 기록하고 마지막으로 갱신한 시각        |
+
 
 ### 직접 골라서 다음 대화에 붙여넣기
 
@@ -111,36 +113,42 @@ relay --grok
 
 ## 명령
 
-| 명령 | 용도 |
-| --- | --- |
-| `relay --codex` / `--claude` / `--grok` | 해당 출처의 최근 기록을 고르는 단축 조회 |
-| `relay latest <codex\|claude\|grok> [--cwd <경로>]` | 출처의 최근 갱신 기록 한 건 |
-| `relay list [--query <텍스트>] [--provider] [--agent] [--cwd]` | 세션 목록과 부분 검색 |
-| `relay show <Agent Session ID> [--provider] [--history]` | 세션 상세와 요약 이력 |
-| `relay record` | 현재 세션 첫 기록 |
-| `relay update --session-id <ID> --summary <요약>` | 진행 요약 갱신 |
-| `relay continue <이전 ID> --parent-provider <제공자> ...` | 이전 세션에 현재 세션 연결 |
-| `relay web [--open] [--port <번호>]` | 브라우저 조회 서버 실행 |
-| `relay install-hooks` | SessionStart 훅 등록 |
+
+| 명령                                                          | 용도                      |
+| ----------------------------------------------------------- | ----------------------- |
+| `relay --codex` / `--claude` / `--grok`                     | 해당 출처의 최근 기록을 고르는 단축 조회 |
+| `relay latest <별칭> [--cwd <경로>]`             | 출처의 최근 갱신 기록 한 건        |
+| `relay list [--query <텍스트>] [--provider] [--agent] [--cwd]` | 세션 목록과 부분 검색            |
+| `relay show <Agent Session ID> [--provider] [--history]`    | 세션 상세와 요약 이력            |
+| `relay record`                                              | 현재 세션 첫 기록              |
+| `relay update --session-id <ID> --summary <요약>`             | 진행 요약 갱신                |
+| `relay continue <이전 ID> --parent-provider <제공자> ...`        | 이전 세션에 현재 세션 연결         |
+| `relay web [--open] [--port <번호>]`                          | 브라우저 조회 서버 실행           |
+| `relay install-hooks`                                       | SessionStart 훅 등록       |
+
 
 Agent나 스크립트에서는 `--json`을 붙이세요. 성공 결과는 stdout, 실패는 stderr에 JSON 하나로 출력됩니다. 종료 코드는 `0` 성공, `2` 입력·설정 오류, `3` 기록 없음, `4` 충돌, `5` 저장소 오류, `6` 서버 시작 실패입니다.
 
 ### 조회 별칭
 
-| 별칭 | provider | agent |
-| --- | --- | --- |
-| `codex` | `openai` | `codex` |
+
+| 별칭       | provider    | agent         |
+| -------- | ----------- | ------------- |
+| `codex`  | `openai`    | `codex`       |
 | `claude` | `anthropic` | `claude-code` |
-| `grok` | `xai` | `grok` |
+| `grok`   | `xai`       | `grok`        |
+
 
 "최근"의 기준은 Relay의 마지막 갱신 시각 `updatedAt`입니다. `latest`와 단축 조회는 기본적으로 모든 프로젝트를 대상으로 하며, `--cwd`를 주면 정확히 일치하는 경로의 기록만 찾습니다. 범위에 기록이 없으면 `SESSION_NOT_FOUND`를 반환하고 다른 프로젝트나 제공자로 자동 전환하지 않습니다.
 
 ### 두 종류의 ID
 
-| 표시 이름 | JSON 필드 | 쓰임새 |
-| --- | --- | --- |
+
+| 표시 이름            | JSON 필드             | 쓰임새                                       |
+| ---------------- | ------------------- | ----------------------------------------- |
 | Agent Session ID | `providerSessionId` | 원본 도구가 부여한 실제 세션 ID. CLI 조회와 원본 세션 탐색에 사용 |
-| Relay 내부 ID | `id` | Relay 저장소 식별자. 웹 API와 부모·자식 연결에 사용 |
+| Relay 내부 ID      | `id`                | Relay 저장소 식별자. 웹 API와 부모·자식 연결에 사용        |
+
 
 Agent Session ID는 Claude Code, Codex, Grok이 각자 발급하는 36자 UUID이며 Relay는 그 값을 그대로 저장합니다. 같은 ID가 여러 제공자에 있으면 `--provider`를 지정합니다. 내부 ID를 CLI에 잘못 입력하면 올바른 `relay show` 명령을 안내합니다.
 
@@ -191,7 +199,7 @@ relay continue '<이전 Agent Session ID>' --parent-provider xai --provider open
 
 각각 `.agents/skills/relay-session`, `.claude/skills/relay-session`에 배치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`으로 Grok 기록을 조회할 수 있습니다.
 
-### 자동 기록 프롬프트
+### 자동 기록 프롬프트 템플릿
 
 프로젝트의 `AGENTS.md` 또는 `CLAUDE.md`에 아래 지침을 추가하면 Agent가 첫 작업 전에 기록 절차를 수행합니다.
 
@@ -209,11 +217,13 @@ relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 
 
 `relay install-hooks`가 세 도구의 SessionStart 훅을 등록하며, `relay.exe`를 실행할 때도 빠진 훅을 다시 채웁니다. 기존 훅은 유지하고 Relay 항목이 있으면 실행 파일 경로만 맞춥니다.
 
-| 도구 | 훅 위치 | 명령 |
-| --- | --- | --- |
+
+| 도구          | 훅 위치                        | 명령                      |
+| ----------- | --------------------------- | ----------------------- |
 | Claude Code | 사용자 설정 `hooks.SessionStart` | `relay.exe hook claude` |
-| Codex | `~/.codex/hooks.json` | `relay-hook-codex.cmd` |
-| Grok | `~/.grok/hooks/relay.json` | `relay-hook-grok.cmd` |
+| Codex       | `~/.codex/hooks.json`       | `relay-hook-codex.cmd`  |
+| Grok        | `~/.grok/hooks/relay.json`  | `relay-hook-grok.cmd`   |
+
 
 Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.cmd` 경로를 넣습니다.
 
@@ -235,22 +245,26 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 
 `relay list`와 단축 조회는 아래 열을 표시합니다. 이름과 Agent Session ID는 항상 남고, 터미널이 좁으면 요약, 생성, 갱신, Agent, 프로젝트 순으로 숨깁니다.
 
-| 열 | 내용 |
-| --- | --- |
-| 이름 | 세션 이름. 훅이 기록한 세션은 프로젝트 폴더명 |
-| 프로젝트 | 작업 경로의 폴더명 |
-| Agent | 도구 이름. 제공자별로 색이 다름 |
-| Agent Session ID | 원본 도구의 실제 세션 ID |
-| 생성 · 갱신 | 로컬 시각을 `26.09.17 18:00` 형식으로 표시 |
-| 요약 | 마지막 진행 요약 |
+
+| 열                | 내용                              |
+| ---------------- | ------------------------------- |
+| 이름               | 세션 이름. 훅이 기록한 세션은 프로젝트 폴더명      |
+| 프로젝트             | 작업 경로의 폴더명                      |
+| Agent            | 도구 이름. 제공자별로 색이 다름              |
+| Agent Session ID | 원본 도구의 실제 세션 ID                 |
+| 생성 · 갱신          | 로컬 시각을 `26.09.17 18:00` 형식으로 표시 |
+| 요약               | 마지막 진행 요약                       |
+
 
 터미널에서 직접 실행하면 행을 골라 복사하는 선택 화면이 열립니다. 파일로 리디렉션하거나 Agent가 비대화형으로 호출하면 표 또는 JSON만 출력합니다.
 
-| 조작 | 동작 |
-| --- | --- |
-| 마우스 이동 · `↑` `↓` · `j` `k` · `PgUp` `PgDn` · `g` `G` | 행 이동 |
-| 클릭 · `Enter` · `Space` | 선택한 세션의 조회 안내 한 줄을 복사하고 닫기 |
-| `q` · `Esc` · `Ctrl+C` | 복사하지 않고 닫기 |
+
+| 조작                                                   | 동작                         |
+| ---------------------------------------------------- | -------------------------- |
+| 마우스 이동 · `↑` `↓` · `j` `k` · `PgUp` `PgDn` · `g` `G` | 행 이동                       |
+| 클릭 · `Enter` · `Space`                               | 선택한 세션의 조회 안내 한 줄을 복사하고 닫기 |
+| `q` · `Esc` · `Ctrl+C`                               | 복사하지 않고 닫기                 |
+
 
 선택 화면은 `RELAY_NO_TUI=1`, 색상은 `NO_COLOR=1`로 끕니다. 글자 크기는 터미널 설정을 따릅니다. Windows 클립보드에서 한글이 깨지면 `RELAY_CLIPBOARD=powershell`을 지정하세요.
 
@@ -292,44 +306,34 @@ DB는 로컬 디스크에 두세요. 네트워크 드라이브나 클라우드 �
 
 ## 문제 해결
 
-| 증상 | 확인할 것 |
-| --- | --- |
-| `relay`를 찾지 못함 | 새 터미널을 열거나 실행 파일의 절대경로를 사용 |
+
+| 증상                  | 확인할 것                                                 |
+| ------------------- | ----------------------------------------------------- |
+| `relay`를 찾지 못함      | 새 터미널을 열거나 실행 파일의 절대경로를 사용                            |
 | `SESSION_NOT_FOUND` | 출처, 조회 범위, 저장소 경로 확인. Relay에 없다는 뜻이지 원본 세션이 없다는 뜻은 아님 |
-| 엉뚱한 프로젝트의 기록이 나옴 | 기본값은 전체 프로젝트. `latest <별칭> --cwd <절대경로>`로 제한 |
-| 요약이 훅 기본 문구뿐임 | Agent가 작업 시작 후 `update`로 단서를 남겼는지 확인 |
-| 오래된 기록이 사라짐 | 30일 보관 정책. 원본 Agent 기록과 프로젝트 파일은 별개 |
-| 설치 시 파일이 사용 중 | 실행 중인 `relay web` 서버를 종료하고 다시 설치 |
-| 웹 포트가 사용 중 | `relay web --port 7475`처럼 다른 포트 지정 |
-| Codex 훅이 실행되지 않음 | Codex에서 `/hooks`로 Relay 항목을 신뢰 |
+| 엉뚱한 프로젝트의 기록이 나옴    | 기본값은 전체 프로젝트. `latest <별칭> --cwd <절대경로>`로 제한          |
+| 요약이 훅 기본 문구뿐임       | Agent가 작업 시작 후 `update`로 단서를 남겼는지 확인                  |
+| 오래된 기록이 사라짐         | 30일 보관 정책. 원본 Agent 기록과 프로젝트 파일은 별개                   |
+| 설치 시 파일이 사용 중       | 실행 중인 `relay web` 서버를 종료하고 다시 설치                      |
+| 웹 포트가 사용 중          | `relay web --port 7475`처럼 다른 포트 지정                    |
+| Codex 훅이 실행되지 않음    | Codex에서 `/hooks`로 Relay 항목을 신뢰                        |
+
 
 ## API
 
 웹 서버는 로컬 조회 전용입니다. `127.0.0.1`에 바인딩하고 Host/Origin 검사와 CSP를 적용하며, 쓰기 API는 없습니다.
 
-| 조회 API | 용도 |
-| --- | --- |
-| `GET /api/v1/health` | 버전, 준비 상태, 저장소 경로 |
-| `GET /api/v1/sessions` | 목록: `q/provider/agent/cwd/limit/offset` |
-| `GET /api/v1/sessions/:id` | 상세, 부모, 자식 첫 페이지 |
-| `GET /api/v1/sessions/:id/updates` | 요약 이력 |
-| `GET /api/v1/sessions/:id/children` | 자식 세션 |
 
-`:id`는 Relay 내부 ID입니다. 응답은 `schemaVersion: 1`과 camelCase 필드를 쓰고, 페이지 크기는 기본 50, 최대 100입니다. 구버전 DB 스키마 v1은 처음 열 때 v2로 자동 전환되며, v2 DB는 구버전 실행 파일로 열 수 없으므로 업그레이드 전에 저장소를 백업하세요.
+| 조회 API                              | 용도                                      |
+| ----------------------------------- | --------------------------------------- |
+| `GET /api/v1/health`                | 버전, 준비 상태, 저장소 경로                       |
+| `GET /api/v1/sessions`              | 목록: `q/provider/agent/cwd/limit/offset` |
+| `GET /api/v1/sessions/:id`          | 상세, 부모, 자식 첫 페이지                        |
+| `GET /api/v1/sessions/:id/updates`  | 요약 이력                                   |
+| `GET /api/v1/sessions/:id/children` | 자식 세션                                   |
 
-## 개발
 
-TypeScript와 Bun으로 구현하고 SQLite에 저장합니다. 웹은 React, shadcn, TanStack Query, Zustand를 사용합니다.
-
-```powershell
-npm ci
-npx playwright install chromium
-npm run check
-```
-
-`npm run check`는 타입 검사, 단위 테스트, 실행 파일 빌드, Playwright 브라우저 테스트를 순서대로 실행합니다. 개별 실행은 `npm run typecheck`, `npm test`, `npm run build`, `npm run test:web`이며, 개발 중 CLI는 `npm run relay -- --help`로 실행합니다.
-
-웹 자산은 `src/web/generated/`에 생성되며 Git에 포함하지 않습니다. Playwright는 빌드된 실행 파일을 사용하므로 코드 변경 후에는 먼저 빌드하세요. 검증 대상 플랫폼은 Windows입니다.
+`:id`는 Relay 내부 ID입니다. 응답은 `schemaVersion: 1`과 camelCase 필드를 쓰고, 페이지 크기는 기본 50, 최대 100입니다.
 
 ## 라이선스
 
