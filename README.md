@@ -17,7 +17,7 @@ Relay가 저장하는 프로젝트 경로는 작업 디렉터리입니다. 원�
 
 기록은 로컬 SQLite에 저장하고 CLI와 브라우저에서 조회합니다. 전체 대화 보관, 원본 로그 수집, 실행 중인 Agent 전환, 기존 대화 자동 재개는 제공하지 않습니다.
 
-[사용 흐름](#이전-세션을-전달하는-방법) · [설치](#설치와-실행--windows) · [자동 기록용 4줄 프롬프트](#자동-기록용-4줄-프롬프트) · [조회 명령](#조회-명령과-식별자) · [30일 보관](#최근-작업을-위한-30일-보관) · [문제 해결](#문제-해결)
+[사용 흐름](#이전-세션을-전달하는-방법) · [설치](#설치와-실행--windows) · [자동 기록용 프롬프트](#자동-기록용-4줄-프롬프트) · [조회 명령](#조회-명령과-식별자) · [30일 보관](#최근-작업을-위한-30일-보관) · [문제 해결](#문제-해결)
 
 ## 이전 세션을 전달하는 방법
 
@@ -43,13 +43,15 @@ relay latest grok --cwd "C:\workspace\my-project" --json
 
 조회 결과에서 주로 쓰는 단서는 다음과 같습니다.
 
-| 정보 | Agent가 확인하는 것 |
-|---|---|
-| `provider` / `agent` | 어떤 제공자와 도구의 세션인지 |
-| `providerSessionId` | 원본 세션을 찾을 때 사용할 실제 Agent Session ID |
-| `workingDirectory` | 어느 프로젝트에서 수행한 작업인지 |
-| `sessionName` / `summary` | 어떤 작업을 하던 세션인지 |
-| `createdAt` / `updatedAt` | Relay에 처음 기록하고 마지막으로 갱신한 시점 |
+
+| 정보                        | Agent가 확인하는 것                       |
+| ------------------------- | ----------------------------------- |
+| `provider` / `agent`      | 어떤 제공자와 도구의 세션인지                    |
+| `providerSessionId`       | 원본 세션을 찾을 때 사용할 실제 Agent Session ID |
+| `workingDirectory`        | 어느 프로젝트에서 수행한 작업인지                  |
+| `sessionName` / `summary` | 어떤 작업을 하던 세션인지                      |
+| `createdAt` / `updatedAt` | Relay에 처음 기록하고 마지막으로 갱신한 시점         |
+
 
 `summary`는 이 세션이 찾던 작업인지 판단하는 짧은 단서입니다. 상세한 판단 근거나 변경 내용이 필요하면 Agent가 추가로 조사합니다. `show --history`로 확인하는 것은 **Relay에 남긴 요약의 이력**이며, 원본 대화 전체가 아닙니다.
 
@@ -87,7 +89,7 @@ npm run build
 .\scripts\install-cli.ps1
 ```
 
-이미 빌드된 `dist/relay.exe`를 받았다면 설치 스크립트만 실행하면 됩니다. 스크립트는 실행 파일을 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 해당 폴더를 사용자 PATH에 추가합니다. `Installed:`가 표시되면 새 터미널에서 확인하세요.
+이미 빌드된 `dist/relay.exe`를 받았다면 설치 스크립트만 실행하면 됩니다. 스크립트는 실행 파일을 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 해당 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 Claude·Grok·Codex SessionStart 훅을 등록합니다. `Installed:`가 표시되면 새 터미널에서 확인하세요.
 
 ```powershell
 relay --version
@@ -101,7 +103,7 @@ relay --help
 .\dist\relay.exe latest grok --json
 ```
 
-CLI 설치만으로 모든 Agent 세션이 자동 기록되는 것은 아닙니다. [기록 명령](#세션-기록과-연결)을 직접 사용하거나, 사용할 프로젝트에 [스킬과 기록 지침](#agent-스킬과-자동-기록)을 적용하세요.
+`relay.exe`를 실행하면 빠진 SessionStart 훅을 다시 등록합니다. `relay hook`은 세션 시작 경로라서 등록을 건너뜁니다. Codex는 등록 후 `/hooks`에서 한 번 신뢰해야 실행됩니다. 작업 요약은 이후 Agent가 `update`로 남깁니다. 프로젝트에는 [스킬과 기록 지침](#agent-스킬과-자동-기록)을 적용하세요.
 
 ### 브라우저 열기
 
@@ -145,16 +147,19 @@ npm run build
 
 ```text
 세션의 첫 작업 전에 relay-session 스킬을 읽고, 그 절차에 따라 현재 세션 정보를 Relay에 기록한다.
+명령을 추측하지 않는다. 스킬을 찾지 못하면 relay --help로 확인한다.
 호스트가 제공한 실제 세션 ID만 사용하고, 기존 기록을 먼저 확인해 없을 때만 생성한다.
 이전 작업을 이어받으면 continue로 출처를 연결하고, 작업 단위가 끝나면 짧은 진행 단서를 갱신한다.
 relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속한다.
 ```
 
-이 프롬프트는 Agent가 수행할 지침이며 강제 실행 훅은 아닙니다. `record` 중복 호출, 임의 ID 생성, 긴 대화 복사를 요구하지 않습니다. PowerShell에서는 호스트가 제공하는 환경변수를 `$env:CODEX_THREAD_ID` 또는 `$env:CLAUDE_CODE_SESSION_ID` 형태로 전달합니다. 변수가 제공되지 않는 환경은 스킬의 실제 ID 확인 절차를 따릅니다.
+이 프롬프트는 Agent가 수행할 지침이며 강제 실행 훅은 아닙니다. `record` 중복 호출, 임의 ID 생성, 긴 대화 복사를 요구하지 않습니다. PowerShell에서는 호스트가 제공하는 환경변수를 `$env:CODEX_THREAD_ID`, `$env:CLAUDE_CODE_SESSION_ID`, `$env:GROK_SESSION_ID` 형태로 전달합니다. 변수가 제공되지 않는 환경은 스킬의 실제 ID 확인 절차를 따릅니다.
 
 ### 시작 훅으로 첫 기록 남기기
 
-`relay hook <codex|claude|grok>`은 호스트가 전달하는 JSON을 stdin으로 받아 첫 기록을 만듭니다. 예를 들어 Claude Code의 `SessionStart` 명령 훅에 등록하는 설정은 다음과 같습니다. 사용자 설정의 `hooks.SessionStart`에 기존 항목을 보존하며 추가하고, 실행 파일 경로는 실제 설치 위치로 바꾸세요.
+`relay hook <codex|claude|grok>`은 호스트가 전달하는 JSON을 stdin으로 받아 첫 기록을 만듭니다. `relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart 훅을 등록합니다. 기존 훅은 유지하고, Relay 항목이 이미 있으면 실행 파일 경로만 맞춥니다. 수동으로 넣을 때의 위치는 다음과 같습니다.
+
+Claude Code는 사용자 설정의 `hooks.SessionStart`에 기존 항목을 보존하며 추가합니다.
 
 ```json
 {
@@ -166,9 +171,33 @@ relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 
 }
 ```
 
-훅은 `{}`를 먼저 출력하고, 기록 처리 중 오류는 호스트 세션에 전파하지 않습니다. CLI 부재 시에는 예시의 `|| echo {}`가 대체 출력을 제공합니다. 훅 등록과 제한 시간은 사용하는 호스트에서 설정해야 합니다.
+Grok은 `~/.grok/hooks/relay.json`에 둡니다. Windows에서는 `relay.exe`가 같은 폴더에 만드는 `relay-hook-grok.cmd`를 사용합니다.
 
-- 세션 ID는 페이로드의 `session_id`, `sessionId`, `thread_id` 순서로 확인하고, 없으면 `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` 환경변수를 확인합니다. 유효한 값이 없으면 기록하지 않습니다.
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "C:/Users/<사용자>/.local/bin/relay-hook-grok.cmd", "timeout": 10 }] }
+    ]
+  }
+}
+```
+
+Codex는 `~/.codex/hooks.json`에 둡니다. 등록 후 Codex에서 `/hooks`로 해당 항목을 신뢰해야 실행됩니다.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "C:/Users/<사용자>/.local/bin/relay-hook-codex.cmd", "timeout": 10 }] }
+    ]
+  }
+}
+```
+
+훅은 `{}`를 먼저 출력하고, 기록 처리 중 오류는 호스트 세션에 전파하지 않습니다. CLI 부재 시에는 예시의 `|| echo {}` 또는 hook 래퍼가 대체 출력을 제공합니다. 훅 등록과 제한 시간은 사용하는 호스트에서 설정해야 합니다.
+
+- 세션 ID는 페이로드의 `session_id`, `sessionId`, `thread_id` 순서로 확인하고, 없으면 `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `GROK_SESSION_ID` 환경변수를 확인합니다. 유효한 값이 없으면 기록하지 않습니다.
 - 작업 폴더 이름과 `세션 첫 기록 (훅 자동 기록)`이라는 요약으로 등록합니다. 실제 작업 단서는 이후 Agent가 `update`로 남깁니다.
 - `agent_id`가 있는 서브에이전트 페이로드는 건너뜁니다. 같은 첫 입력을 다시 받아도 이력을 중복 생성하지 않습니다.
 
@@ -222,25 +251,29 @@ relay continue '<이전 Agent Session ID>' --parent-provider xai --provider open
 
 ## 조회 명령과 식별자
 
-| 명령 | 용도 |
-|---|---|
-| `relay latest grok --json` | 모든 프로젝트에서 최근 갱신된 Grok 기록 한 건 |
-| `relay --codex` / `--claude` / `--grok` | 해당 출처의 최근 기록을 고르는 단축 조회 |
-| `relay list --query "로그인" --json` | 작업명·ID·최근 요약·작업 경로의 부분 검색 |
-| `relay list --provider openai --agent codex --json` | 제공자와 도구로 목록 필터링 |
-| `relay latest claude --cwd "C:\workspace\my-project" --json` | 지정한 프로젝트의 최근 Claude 기록 |
-| `relay show '<Agent Session ID>' --provider xai --json` | 실제 ID로 지정한 세션 조회 |
-| `relay show '<Agent Session ID>' --provider xai --history --json` | 해당 세션의 Relay 요약 이력까지 조회 |
+
+| 명령                                                                | 용도                           |
+| ----------------------------------------------------------------- | ---------------------------- |
+| `relay latest grok --json`                                        | 모든 프로젝트에서 최근 갱신된 Grok 기록 한 건 |
+| `relay --codex` / `--claude` / `--grok`                           | 해당 출처의 최근 기록을 고르는 단축 조회      |
+| `relay list --query "로그인" --json`                                 | 작업명·ID·최근 요약·작업 경로의 부분 검색    |
+| `relay list --provider openai --agent codex --json`               | 제공자와 도구로 목록 필터링              |
+| `relay latest claude --cwd "C:\workspace\my-project" --json`      | 지정한 프로젝트의 최근 Claude 기록       |
+| `relay show '<Agent Session ID>' --provider xai --json`           | 실제 ID로 지정한 세션 조회             |
+| `relay show '<Agent Session ID>' --provider xai --history --json` | 해당 세션의 Relay 요약 이력까지 조회      |
+
 
 Agent나 스크립트에서는 `--json`을 사용하세요. 성공 결과는 stdout, 실패 결과는 stderr의 JSON 하나로 출력됩니다. 자동화에서 npm 실행 로그가 섞이지 않도록 `relay` 실행 파일을 직접 호출하세요.
 
 ### 출처와 조회 범위
 
-| 조회 별칭 | provider | agent |
-|---|---|---|
-| `codex` | `openai` | `codex` |
+
+| 조회 별칭    | provider    | agent         |
+| -------- | ----------- | ------------- |
+| `codex`  | `openai`    | `codex`       |
 | `claude` | `anthropic` | `claude-code` |
-| `grok` | `xai` | `grok` |
+| `grok`   | `xai`       | `grok`        |
+
 
 “최근”의 기준은 **Relay의 마지막 갱신 시각(`updatedAt`)**입니다. 원본 도구에서 가장 최근에 생성한 세션과 같다고 보장하지 않습니다. Relay에 기록되지 않은 세션은 조회되지 않습니다.
 
@@ -250,10 +283,12 @@ Agent나 스크립트에서는 `--json`을 사용하세요. 성공 결과는 std
 
 ### 두 종류의 ID
 
-| 표시 이름 | JSON 필드 | 쓰임새 |
-|---|---|---|
+
+| 표시 이름            | JSON 필드             | 쓰임새                                      |
+| ---------------- | ------------------- | ---------------------------------------- |
 | Agent Session ID | `providerSessionId` | 원본 Agent의 실제 세션 ID. CLI 조회와 원본 세션 탐색에 사용 |
-| Relay 내부 ID | `id` | Relay 저장소 내부 식별자. 웹 API와 부모·자식 연결에 사용 |
+| Relay 내부 ID      | `id`                | Relay 저장소 내부 식별자. 웹 API와 부모·자식 연결에 사용    |
+
 
 동일한 실제 세션 ID가 여러 제공자에 있으면 `--provider`를 지정해야 합니다. 내부 ID를 CLI에 잘못 입력하면, 일치하는 내부 기록이 있는 경우 올바른 `relay show` 명령을 안내합니다. 안내에는 실제 ID, provider, 현재 Relay 저장소 경로가 들어갑니다. JSON에서는 `error.details.command`와 `error.details.shell`로 확인할 수 있습니다.
 
@@ -263,13 +298,15 @@ Agent나 스크립트에서는 `--json`을 사용하세요. 성공 결과는 std
 
 터미널에서 직접 조회하면 행을 선택해 복사할 수 있습니다. 복사하면 선택 화면이 닫히고, 조회 결과는 터미널 스크롤백에 남습니다. 파일로 리디렉션하거나 Agent가 비대화형으로 호출하면 표 또는 JSON만 출력합니다.
 
-| 조작 | 동작 |
-|---|---|
-| 마우스 이동 | 행 선택 |
-| 클릭 · `Enter` · `Space` | 선택한 세션의 조회 안내 한 줄을 복사하고 닫기 |
-| `↑` `↓` · `k` `j` · `PgUp` `PgDn` · `g` `G` | 행 이동 |
-| 휠 | 스크롤 |
-| `q` · `Esc` · `Ctrl+C` | 복사하지 않고 닫기 |
+
+| 조작                                          | 동작                         |
+| ------------------------------------------- | -------------------------- |
+| 마우스 이동                                      | 행 선택                       |
+| 클릭 · `Enter` · `Space`                      | 선택한 세션의 조회 안내 한 줄을 복사하고 닫기 |
+| `↑` `↓` · `k` `j` · `PgUp` `PgDn` · `g` `G` | 행 이동                       |
+| 휠                                           | 스크롤                        |
+| `q` · `Esc` · `Ctrl+C`                      | 복사하지 않고 닫기                 |
+
 
 `RELAY_NO_TUI=1`로 선택 화면을 끌 수 있습니다. 한글 폭을 고려해 표를 정렬하며, 좁은 터미널에서는 부가 열을 숨깁니다. 색상은 `NO_COLOR=1` 또는 `FORCE_COLOR=0`으로 끌 수 있고, JSON에는 색 코드를 넣지 않습니다. 시각은 화면에서 로컬 시간으로, JSON에서 ISO 8601 UTC로 제공합니다.
 
@@ -316,30 +353,34 @@ Relay의 기본 보관 기간은 **마지막 갱신으로부터 30일**입니다
 
 ## 문제 해결
 
-| 증상 | 확인할 것 |
-|---|---|
-| `relay`를 찾지 못함 | 설치 후 새 터미널을 열거나 실행 파일의 절대경로를 사용하세요. |
-| `SESSION_NOT_FOUND` | 출처·조회 범위·저장소를 확인하세요. 내부 ID를 입력했다면 안내된 조회 명령을 사용하세요. Relay에 없다는 뜻이지 원본 세션이 없다는 뜻은 아닙니다. |
-| 엉뚱한 프로젝트의 최근 기록이 나옴 | 기본값은 전체 프로젝트입니다. `latest <별칭> --cwd <프로젝트 절대경로>`로 제한하세요. |
-| 세션은 있지만 작업 단서가 비어 있거나 시작 훅 문구뿐임 | Agent가 실제 작업을 시작한 뒤 `update`로 짧은 단서를 남겼는지 확인하세요. |
-| 자세한 작업 내용이 필요함 | 실제 세션 ID와 도구 정보를 바탕으로 접근 가능한 원본 기록을 찾고 현재 소스를 확인하세요. `show --history`는 Relay 요약 이력만 제공합니다. |
-| 오래된 Relay 기록이 사라짐 | 기본 30일 보관 정책을 확인하세요. 원본 Agent 기록과 프로젝트 파일은 별개입니다. |
-| 설치 시 다른 프로세스에서 사용 중 | 해당 실행 파일을 사용하는 Relay 웹 서버를 종료하고 다시 설치하세요. |
-| 웹 포트가 이미 사용 중 | `relay web --port 7475`처럼 다른 포트를 지정하세요. |
-| 스킬 설치 시 기존 파일과 다름 | 기존 사용자 지침과 새 원본을 비교한 뒤 수동으로 반영하세요. 설치 스크립트는 다른 내용을 덮어쓰지 않습니다. |
-| 스크립트 실행 정책으로 차단됨 | 정책을 우회하지 말고 실행 파일을 직접 사용하거나 관리자에게 문의하세요. |
+
+| 증상                              | 확인할 것                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
+| `relay`를 찾지 못함                  | 설치 후 새 터미널을 열거나 실행 파일의 절대경로를 사용하세요.                                                        |
+| `SESSION_NOT_FOUND`             | 출처·조회 범위·저장소를 확인하세요. 내부 ID를 입력했다면 안내된 조회 명령을 사용하세요. Relay에 없다는 뜻이지 원본 세션이 없다는 뜻은 아닙니다.     |
+| 엉뚱한 프로젝트의 최근 기록이 나옴             | 기본값은 전체 프로젝트입니다. `latest <별칭> --cwd <프로젝트 절대경로>`로 제한하세요.                                   |
+| 세션은 있지만 작업 단서가 비어 있거나 시작 훅 문구뿐임 | Agent가 실제 작업을 시작한 뒤 `update`로 짧은 단서를 남겼는지 확인하세요.                                           |
+| 자세한 작업 내용이 필요함                  | 실제 세션 ID와 도구 정보를 바탕으로 접근 가능한 원본 기록을 찾고 현재 소스를 확인하세요. `show --history`는 Relay 요약 이력만 제공합니다. |
+| 오래된 Relay 기록이 사라짐               | 기본 30일 보관 정책을 확인하세요. 원본 Agent 기록과 프로젝트 파일은 별개입니다.                                          |
+| 설치 시 다른 프로세스에서 사용 중             | 해당 실행 파일을 사용하는 Relay 웹 서버를 종료하고 다시 설치하세요.                                                  |
+| 웹 포트가 이미 사용 중                   | `relay web --port 7475`처럼 다른 포트를 지정하세요.                                                    |
+| 스킬 설치 시 기존 파일과 다름               | 기존 사용자 지침과 새 원본을 비교한 뒤 수동으로 반영하세요. 설치 스크립트는 다른 내용을 덮어쓰지 않습니다.                              |
+| 스크립트 실행 정책으로 차단됨                | 정책을 우회하지 말고 실행 파일을 직접 사용하거나 관리자에게 문의하세요.                                                   |
+
 
 ## API와 데이터 계약
 
 웹 서버는 로컬 조회용입니다. `127.0.0.1`에 바인딩하며 Host/Origin 검사, CSP, SQL 파라미터 바인딩, 텍스트 렌더링을 적용합니다. HTTP 쓰기 API, 임의 파일 다운로드, 셸 실행 기능은 없습니다. 같은 PC의 다른 프로세스를 격리하는 사용자 인증 수단은 아닙니다.
 
-| 조회 API | 용도 |
-|---|---|
-| `GET /api/v1/health` | 버전·준비 상태·Relay 저장소 경로 |
-| `GET /api/v1/sessions` | 목록: `q/provider/agent/cwd/limit/offset` |
-| `GET /api/v1/sessions/:id` | 상세·부모·자식 첫 페이지 |
-| `GET /api/v1/sessions/:id/updates` | Relay 요약 이력: `limit/offset` |
-| `GET /api/v1/sessions/:id/children` | 자식 세션: `limit/offset` |
+
+| 조회 API                              | 용도                                      |
+| ----------------------------------- | --------------------------------------- |
+| `GET /api/v1/health`                | 버전·준비 상태·Relay 저장소 경로                   |
+| `GET /api/v1/sessions`              | 목록: `q/provider/agent/cwd/limit/offset` |
+| `GET /api/v1/sessions/:id`          | 상세·부모·자식 첫 페이지                          |
+| `GET /api/v1/sessions/:id/updates`  | Relay 요약 이력: `limit/offset`             |
+| `GET /api/v1/sessions/:id/children` | 자식 세션: `limit/offset`                   |
+
 
 API의 `:id`는 **Relay 내부 ID**입니다. CLI의 실제 Agent Session ID와 구분하세요. API·CLI는 `schemaVersion: 1`과 camelCase 필드를 사용합니다. 페이지 크기는 기본 50, 최대 100이며 `offset`으로 이동합니다. 목록은 `updatedAt DESC, id DESC`, 요약 이력은 `sequence DESC`입니다.
 

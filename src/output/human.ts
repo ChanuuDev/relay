@@ -89,14 +89,31 @@ function history(session: Session, updates: SessionUpdate[], total: number, spac
   ])].map(text => ({ text, owner: session }));
 }
 
+const HOOK_STATUS: Record<string, string> = {
+  added: "등록함", updated: "갱신함", unchanged: "이미 등록됨", skipped: "건너뜀",
+};
+
 /** Lines plus their owning session; `human` is the same output flattened for a non-interactive terminal. */
+
 export function render(value: unknown, space = terminalWidth()): Line[] {
   const data = value as {
     session?: Session; items?: Session[]; page?: { total: number; offset: number };
     parentSession?: { providerSessionId: string }; children?: { providerSessionId: string }[];
     childrenPage?: { total: number }; updates?: SessionUpdate[]; updatesPage?: { total: number };
-    scope?: { cwd: string | null };
+    scope?: { cwd: string | null }; binDirectory?: string; executable?: string;
+    wrappers?: { path: string; status: string }[];
+    hosts?: { host?: string; path: string; status: string; detail?: string }[];
   };
+  if (data.hosts && data.binDirectory) {
+    const row = (label: string, status: string, file: string, detail?: string) =>
+      `${label}  ${HOOK_STATUS[status] ?? status}  ${file}${detail ? `  (${detail})` : ""}`;
+    return plain([
+      `실행 파일  ${data.executable ?? ""}`,
+      `훅 래퍼    ${data.binDirectory}`,
+      ...((data.wrappers ?? []).map(wrapper => row("래퍼", wrapper.status, wrapper.path))),
+      ...(data.hosts.map(host => row(host.host ?? "host", host.status, host.path, host.detail))),
+    ]);
+  }
   if (data.items) {
     if (data.items.some(item => typeof item?.providerSessionId !== "string")) return plain([JSON.stringify(value, null, 2)]);
     const footer = `${paint(`총 ${data.page?.total ?? data.items.length}건`, "36")} ${dim(`· offset ${data.page?.offset ?? 0}`)}`;

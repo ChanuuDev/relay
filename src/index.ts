@@ -5,13 +5,15 @@ import path from "node:path";
 import { loadConfig } from "./config";
 import { openDatabase } from "./db/database";
 import { errorBody, invalid, RelayError, storageError } from "./errors";
-import { SessionRepository } from "./session/session.repository";
-import { PROVIDERS, SessionService } from "./session/session.service";
-import type { NewSession } from "./session/session.types";
+import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
 import { terminalWidth } from "./output/terminal";
+import { SessionRepository } from "./session/session.repository";
+import { PROVIDERS, SessionService } from "./session/session.service";
+import type { NewSession } from "./session/session.types";
+import { directory } from "./validation";
 import { sessionCommand } from "./web/lib/session-context";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
@@ -108,7 +110,7 @@ program.command("hook <agent>").description("Agent 세션 첫 기록 훅의 JSON
       // A subagent shares the host session; only the session itself is recorded.
       if (payload.agent_id || !Object.hasOwn(PROVIDERS, alias)) return;
       const sessionId = [payload.session_id, payload.sessionId, payload.thread_id,
-        process.env.CLAUDE_CODE_SESSION_ID, process.env.CODEX_THREAD_ID]
+        process.env.CLAUDE_CODE_SESSION_ID, process.env.CODEX_THREAD_ID, process.env.GROK_SESSION_ID]
         .find((value): value is string => typeof value === "string" && value.trim().length > 0);
       if (!sessionId) return;
       const cwd = typeof payload.cwd === "string" && existsSync(payload.cwd) ? payload.cwd : process.cwd();
@@ -120,6 +122,14 @@ program.command("hook <agent>").description("Agent 세션 첫 기록 훅의 JSON
           .record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: "세션 첫 기록 (훅 자동 기록)" });
       } finally { db.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
+  });
+
+program.command("install-hooks").description("Claude/Grok/Codex SessionStart 훅 등록")
+  .option("--bin-dir <path>", "relay.exe와 훅 래퍼를 둘 절대경로")
+  .action((o, c: Command) => {
+    const result = installHostHooks({ binDirectory: o.binDir === undefined ? undefined : directory(o.binDir, false) });
+    if (c.optsWithGlobals().json) return void process.stdout.write(JSON.stringify(result) + "\n");
+    process.stdout.write(render(result).map(line => line.text).join("\n") + "\n");
   });
 
 program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C로 종료)")
@@ -144,6 +154,7 @@ program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C로 �
   });
 
 try {
+  autoInstallHostHooks();
   if (process.argv.length <= 2) program.outputHelp();
   else await program.parseAsync(process.argv);
 } catch (error) {

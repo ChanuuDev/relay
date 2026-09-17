@@ -58,5 +58,12 @@ if (-not $NoPath) {
     if (-not (Test-PathEntry $env:Path $installRoot)) { $env:Path = $env:Path.TrimEnd(';') + ';' + $installRoot }
 }
 Write-Output "Installed: $target"
+try {
+    $hook = & $target install-hooks
+    if ($LASTEXITCODE -eq 0) { Write-Output $hook }
+    else { Write-Output 'Hook registration skipped. Run: relay install-hooks' }
+} catch {
+    Write-Output 'Hook registration skipped. Run: relay install-hooks'
+}
 if ($NoPath) { Write-Output 'PATH was not changed.' }
 else { Write-Output 'Ready: relay --codex. Reopen other terminals if the command is not found.' }

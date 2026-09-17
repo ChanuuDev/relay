@@ -19,6 +19,7 @@ Relay는 전체 대화나 원본 로그를 복원하는 도구가 아니라, 다
    |---|---|---|
    | Claude Code | `CLAUDE_CODE_SESSION_ID` | `anthropic` / `claude-code` |
    | Codex | `CODEX_THREAD_ID` | `openai` / `codex` |
+   | Grok | `GROK_SESSION_ID` | `xai` / `grok` |
    | 그 밖의 호스트 | 호스트가 제공하는 세션 식별자 | 해당 도구의 식별자 |
 
    환경이 실제 ID를 제공하지 않으면 사용자에게 도구에 표시된 ID를 물어보고, 확인 전에는 기록하지 않는다.
@@ -78,7 +79,7 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있다. 훅은 다음 규칙을 따른다.
 
 - 먼저 `{}`를 출력하고 기록을 시도한다. 저장소 오류, 잘못된 JSON, `relay` 부재가 Agent 세션을 막지 않도록 실패를 조용히 처리한다.
-- 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID` 환경변수를 쓴다. 임의 ID를 만들지 않는다.
+- 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID`·`GROK_SESSION_ID` 환경변수를 쓴다. 임의 ID를 만들지 않는다.
 - 세션 이름은 작업 폴더 이름으로, 요약은 첫 기록임을 나타내는 짧은 문장으로 저장한다. 이후 실제 맥락은 Agent가 `relay update`로 갱신한다.
 - 페이로드에 `agent_id`가 있으면 서브에이전트이므로 기록하지 않는다.
 - 같은 세션에서 다시 실행돼도 같은 첫 기록 입력이면 이력이 늘지 않는다.
@@ -94,5 +95,7 @@ Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 
   }
 }
 ```
+
+`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart 훅을 등록한다. Grok은 `~/.grok/hooks/relay.json`, Codex는 `~/.codex/hooks.json`이다. Codex는 등록 후 `/hooks`에서 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
 
 조회만 요청받은 경우에는 훅이나 `record/update/continue`를 호출하지 않는다. 기록을 원하지 않는 세션은 훅 설정 항목을 빼면 된다.

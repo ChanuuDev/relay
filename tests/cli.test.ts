@@ -189,10 +189,12 @@ describe("CLI processes", () => {
   });
 
   test("session first-record hook records from stdin and never fails the host session", () => {
-    const hook = (payload: string, extra: Record<string, string> = {}) => {
+    const hook = (payload: string, extra: Record<string, string> = {}, alias = "claude") => {
       // The host session of this test run must not leak into the payload fallback.
-      const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, ...extra };
-      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", "claude", "--data-dir", dir],
+      const env: Record<string, string | undefined> = {
+        ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, GROK_SESSION_ID: undefined, ...extra,
+      };
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, "--data-dir", dir],
         { cwd: root, env, stdin: Buffer.from(payload), stdout: "pipe", stderr: "pipe" });
       return { code: result.exitCode, stdout: result.stdout.toString().trim() };
     };
@@ -215,6 +217,12 @@ describe("CLI processes", () => {
     // A host that omits the id from the payload is still recorded from its session environment variable.
     expect(hook("{}", { CLAUDE_CODE_SESSION_ID: "env-session" }).code).toBe(0);
     expect(cli(dir, ["show", "env-session"]).data.session.providerSessionId).toBe("env-session");
+    expect(hook(JSON.stringify({ sessionId: "grok-payload", cwd: root }), {}, "grok").code).toBe(0);
+    expect(cli(dir, ["show", "grok-payload", "--provider", "xai"]).data.session.agent).toBe("grok");
+    expect(hook("{}", { GROK_SESSION_ID: "grok-env-session" }, "grok").code).toBe(0);
+    expect(cli(dir, ["show", "grok-env-session", "--provider", "xai"]).data.session.provider).toBe("xai");
+    expect(hook("{}", { CODEX_THREAD_ID: "codex-env-session" }, "codex").code).toBe(0);
+    expect(cli(dir, ["show", "codex-env-session", "--provider", "openai"]).data.session.agent).toBe("codex");
   }, 15000);
 
   test("failed history writes roll back through CLI and error stream", () => {

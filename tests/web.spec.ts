@@ -8,13 +8,14 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const binary = path.join(root, "dist", process.platform === "win32" ? "relay.exe" : "relay");
+const spawnEnv = { ...process.env, RELAY_SKIP_HOOK_INSTALL: "1" };
 let dir: string;
 let port: number;
 let server: ChildProcess | undefined;
 let url: string;
 
 function cli(args: string[]) {
-  const result = spawnSync(binary, [...args, "--data-dir", dir, "--json"], { cwd: dir, encoding: "utf8", timeout: 10000 });
+  const result = spawnSync(binary, [...args, "--data-dir", dir, "--json"], { cwd: dir, encoding: "utf8", timeout: 10000, env: spawnEnv });
   if (result.status !== 0) throw new Error(`CLI failed: ${result.stderr} ${result.error ?? ""}`);
   return JSON.parse(result.stdout);
 }
@@ -22,7 +23,7 @@ function record(id: string, name: string, provider = "openai", agent = "codex", 
   return cli(["record", "--provider", provider, "--agent", agent, "--session-id", id, "--session-name", name, "--cwd", dir, "--summary", summary]);
 }
 async function launch() {
-  server = spawn(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, windowsHide: true, stdio: "pipe" });
+  server = spawn(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, windowsHide: true, stdio: "pipe", env: spawnEnv });
   let logs = ""; server.stderr?.on("data", chunk => { logs += chunk; });
   await expect.poll(async () => {
     if (server?.exitCode !== null) throw new Error(`Server exited: ${logs}`);
@@ -63,9 +64,9 @@ test.afterEach(async () => {
 
 test("standalone binary outside source: CLI → table → detail/history → reconnect", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", err => errors.push(err.message));
-  expect(spawnSync(binary, ["--version"], { cwd: dir, encoding: "utf8" }).stdout.trim()).toBe("0.1.0");
-  expect(spawnSync(binary, ["--help"], { cwd: dir, encoding: "utf8" }).stdout).toContain("Usage: relay");
-  const occupied = spawnSync(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, encoding: "utf8", timeout: 5000 });
+  expect(spawnSync(binary, ["--version"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout.trim()).toBe("0.1.0");
+  expect(spawnSync(binary, ["--help"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout).toContain("Usage: relay");
+  const occupied = spawnSync(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, encoding: "utf8", timeout: 5000, env: spawnEnv });
   expect(occupied.status).toBe(6); expect(occupied.stdout).toBe(""); expect(occupied.stderr).toContain("PORT_IN_USE");
   await ready(page); await expect(page.getByText("저장된 세션이 없습니다.", { exact: false })).toBeVisible();
   const created = record("external-session", "CLI에서 시작한 한국어 작업");
