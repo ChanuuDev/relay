@@ -220,11 +220,11 @@ relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 
 `relay install-hooks`가 세 도구의 SessionStart·SessionEnd 훅을 등록하며, `relay.exe`를 실행할 때도 빠진 훅을 다시 채웁니다. 기존 훅은 유지하고 Relay 항목이 있으면 실행 파일 경로만 맞춥니다.
 
 
-| 도구        | 훅 위치                                               | 시작 명령               | 종료 명령                     |
-| ----------- | ----------------------------------------------------- | ----------------------- | ----------------------------- |
-| Claude Code | 사용자 설정 `hooks.SessionStart` · `hooks.SessionEnd` | `relay.exe hook claude` | `relay.exe hook claude --end` |
-| Codex       | `~/.codex/hooks.json`                                 | `relay-hook-codex.cmd`  | `relay-hook-codex-end.cmd`    |
-| Grok        | `~/.grok/hooks/relay.json`                            | `relay-hook-grok.cmd`   | `relay-hook-grok-end.cmd`     |
+| 도구        | 훅 위치                                                          | 시작 명령               | 종료 명령                     |
+| ----------- | ---------------------------------------------------------------- | ----------------------- | ----------------------------- |
+| Claude Code | 사용자 설정 `hooks.SessionStart` · `hooks.SessionEnd`            | `relay.exe hook claude` | `relay.exe hook claude --end` |
+| Codex       | `~/.codex/hooks.json` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `relay-hook-codex.cmd`  | `relay-hook-codex-end.cmd`    |
+| Grok        | `~/.grok/hooks/relay.json`                                       | `relay-hook-grok.cmd`   | `relay-hook-grok-end.cmd`     |
 
 
 Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.cmd` 경로를 넣습니다.
@@ -249,7 +249,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 - 세션에 종료 시각(`endedAt`)과 호스트가 보낸 사유(`endReason`, 예: `prompt_input_exit`, `logout`)를 남깁니다. 마지막 갱신 시각과 요약 이력은 바뀌지 않습니다.
 - 이력이 훅 자동 기록 한 건뿐이고 이어받은 세션도 없으면 Agent가 아무 맥락도 남기지 않은 세션이므로 기록을 삭제합니다.
 - 같은 세션이 다시 시작되거나 `update`·`continue`가 오면 종료 기록을 지웁니다. 종료 기록이 없는 세션은 터미널과 브라우저에서 `진행 중`으로 보입니다. 터미널을 강제로 닫거나 프로세스가 죽으면 훅이 실행되지 않으므로, 종료 기록이 없다고 해서 반드시 진행 중인 것은 아닙니다.
-- Codex는 등록된 시작·종료 항목을 `/hooks`에서 각각 신뢰해야 실행됩니다.
+- Codex는 등록된 시작·종료 항목을 `/hooks`에서 각각 신뢰해야 실행됩니다. Orca처럼 `CODEX_HOME`을 따로 두는 호스트에서 실행한 Codex는 그 폴더의 `hooks.json`을 읽으므로, 그 환경변수가 있는 셸에서 `relay install-hooks`를 한 번 실행하세요.
 
 ## 터미널과 브라우저 화면
 

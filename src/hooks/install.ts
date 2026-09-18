@@ -28,6 +28,8 @@ export interface HookInstallOptions {
   homeDirectory?: string;
   binDirectory?: string;
   executablePath?: string;
+  /** Codex home directories to register in; by default `$CODEX_HOME` when set, and `~/.codex`. */
+  codexHomes?: string[];
 }
 
 type CommandHook = { type: string; command?: unknown; timeout?: unknown; statusMessage?: unknown };
@@ -76,6 +78,21 @@ function binDirectory(options: HookInstallOptions, home: string) {
     return path.dirname(options.executablePath ?? process.execPath);
   }
   return path.join(home, ".local", "bin");
+}
+
+// Codex reads its hooks from `$CODEX_HOME` when a host such as Orca sets it, and from `~/.codex` otherwise.
+// Both are registered so the hook runs however Codex is launched.
+function codexHomes(options: HookInstallOptions, home: string): string[] {
+  if (options.codexHomes) return options.codexHomes;
+  const seen = new Set<string>();
+  return [process.env.CODEX_HOME, path.join(home, ".codex")]
+    .filter((dir): dir is string => typeof dir === "string" && dir.trim().length > 0)
+    .filter(dir => {
+      const key = process.platform === "win32" ? path.resolve(dir).toLowerCase() : path.resolve(dir);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function executablePath(options: HookInstallOptions, bin: string) {
@@ -193,8 +210,8 @@ export function installHostHooks(options: HookInstallOptions = {}): HookInstallR
     const hosts = [
       installHostFile(path.join(home, ".claude", "settings.json"), "claude", commands("claude")),
       installHostFile(path.join(home, ".grok", "hooks", "relay.json"), "grok", commands("grok")),
-      installHostFile(path.join(home, ".codex", "hooks.json"), "codex",
-        commands("codex", event => ({ statusMessage: event === "SessionEnd" ? "Relay session end" : "Relay session record" }))),
+      ...codexHomes(options, home).map(dir => installHostFile(path.join(dir, "hooks.json"), "codex",
+        commands("codex", event => ({ statusMessage: event === "SessionEnd" ? "Relay session end" : "Relay session record" })))),
     ];
     return { schemaVersion: 1, binDirectory: bin, executable, wrappers, hosts };
   } catch (error) {

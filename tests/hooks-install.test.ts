@@ -10,8 +10,8 @@ afterEach(() => cleanup(dir));
 
 function home() { return path.join(dir, "home"); }
 function bin() { return path.join(dir, "bin"); }
-function install() {
-  return installHostHooks({ homeDirectory: home(), binDirectory: bin(), executablePath: path.join(bin(), "relay.exe") });
+function install(codexHomes = [path.join(home(), ".codex")]) {
+  return installHostHooks({ homeDirectory: home(), binDirectory: bin(), executablePath: path.join(bin(), "relay.exe"), codexHomes });
 }
 
 test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd without clobbering other hooks", () => {
@@ -110,13 +110,37 @@ test("install-hooks updates a moved relay path and skips invalid JSON", () => {
 test("CLI install-hooks writes into RELAY_USER_HOME and --bin-dir", () => {
   const result = Bun.spawnSync(
     [process.execPath, path.join(root, "src/index.ts"), "install-hooks", "--bin-dir", bin(), "--json"],
-    { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), RELAY_HOOK_BIN_DIR: bin() }, stdout: "pipe", stderr: "pipe" },
+    { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), RELAY_HOOK_BIN_DIR: bin(), CODEX_HOME: undefined }, stdout: "pipe", stderr: "pipe" },
   );
   expect(result.exitCode).toBe(0);
   const data = JSON.parse(result.stdout.toString());
   expect(data.schemaVersion).toBe(1);
   expect(data.hosts).toHaveLength(3);
   expect(data.hosts.every((h: { status: string }) => h.status === "added")).toBe(true);
+});
+
+test("install-hooks registers Codex in CODEX_HOME as well as ~/.codex, once when they are the same folder", () => {
+  const orca = path.join(dir, "orca-codex-home");
+  const both = install([orca, path.join(home(), ".codex")]);
+  expect(both.hosts.filter(h => h.host === "codex").map(h => h.path)).toEqual([path.join(orca, "hooks.json"), path.join(home(), ".codex", "hooks.json")]);
+  for (const file of [path.join(orca, "hooks.json"), path.join(home(), ".codex", "hooks.json")]) {
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    expect(String(doc.hooks.SessionStart[0].hooks[0].command).toLowerCase()).toContain("relay-hook-codex");
+    expect(String(doc.hooks.SessionEnd[0].hooks[0].command).toLowerCase()).toContain("relay-hook-codex");
+  }
+  // The environment variable is what Codex itself reads, so the CLI follows it without a flag.
+  const result = Bun.spawnSync(
+    [process.execPath, path.join(root, "src/index.ts"), "install-hooks", "--bin-dir", bin(), "--json"],
+    { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), RELAY_HOOK_BIN_DIR: bin(), CODEX_HOME: orca }, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(result.exitCode).toBe(0);
+  const data = JSON.parse(result.stdout.toString()) as { hosts: { host: string; path: string; status: string }[] };
+  expect(data.hosts.filter(h => h.host === "codex").map(h => h.status)).toEqual(["unchanged", "unchanged"]);
+  const same = Bun.spawnSync(
+    [process.execPath, path.join(root, "src/index.ts"), "install-hooks", "--bin-dir", bin(), "--json"],
+    { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), RELAY_HOOK_BIN_DIR: bin(), CODEX_HOME: path.join(home(), ".codex") }, stdout: "pipe", stderr: "pipe" },
+  );
+  expect((JSON.parse(same.stdout.toString()) as { hosts: { host: string }[] }).hosts.filter(h => h.host === "codex")).toHaveLength(1);
 });
 
 test("shouldAutoInstallHooks skips bun, tests, hook invocations and the skip flag", () => {
