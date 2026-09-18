@@ -1,6 +1,12 @@
+import type { Session } from "../../session/session.types";
+
 export const projectName = (path: string) => path.replace(/\\/g, "/").replace(/\/$/, "").split("/").pop() || path;
 export function timestamp(value: string | null) {
   return value ? new Date(value).toLocaleString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "미기록";
+}
+/** When and why the host closed the session; a session without an end on record says so. */
+export function endLabel(session: Pick<Session, "endedAt" | "endReason">) {
+  return session.endedAt ? `${timestamp(session.endedAt)}${session.endReason ? ` · ${session.endReason}` : ""}` : "기록 없음";
 }
 export function relativeTime(value: string) {
   const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));

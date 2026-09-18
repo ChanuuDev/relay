@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmdirSync } from "node:fs";
 import path from "node:path";
+import { HOOK_SUMMARY } from "../src/session/session.service";
 import { age, fixture, input } from "./helpers";
 
 describe("Session Service", () => {
@@ -11,7 +12,8 @@ describe("Session Service", () => {
   test("atomic records and descending history without lifecycle fields", () => {
     const recorded = f.service.record(input("a")).session;
     expect(recorded.createdAt).toBe(recorded.updatedAt); expect(recorded.model).toBeNull();
-    for (const field of ["status", "startedAt", "endedAt"]) expect(recorded).not.toHaveProperty(field);
+    for (const field of ["status", "startedAt"]) expect(recorded).not.toHaveProperty(field);
+    expect(recorded.endedAt).toBeNull(); expect(recorded.endReason).toBeNull();
     f.service.update("a", "중간\n요약");
     const updated = f.service.update("a", "완료").session;
     const result = f.service.show("a", undefined, true);
@@ -185,6 +187,57 @@ describe("Session Service", () => {
       expect(r.service.record(input("kept-leaf"), "kept-root").session.providerSessionId).toBe("kept-leaf");
       expect(r.service.list().page.total).toBe(2);
     } finally { r.close(); }
+  });
+
+  test("end keeps a session the agent wrote to, drops an untouched automatic record, and any new context reopens it", () => {
+    // A hook recorded both sessions; only one ever received context from the agent.
+    f.service.record(input("worked", { summary: HOOK_SUMMARY }));
+    f.service.record(input("idle", { summary: HOOK_SUMMARY }));
+    f.service.update("worked", "작업 맥락");
+    const before = f.service.show("worked").session;
+
+    const ended = f.service.end("worked", "openai", "prompt_input_exit");
+    expect(ended.deleted).toBe(false);
+    expect(ended.session.endedAt).not.toBeNull();
+    expect(ended.session.endReason).toBe("prompt_input_exit");
+    // The close is not context: the last-context time and the history stay as they were.
+    expect(ended.session.updatedAt).toBe(before.updatedAt);
+    expect(f.service.show("worked", undefined, true).updatesPage?.total).toBe(2);
+    expect(f.service.show("worked").session.endedAt).toBe(ended.session.endedAt);
+
+    const dropped = f.service.end("idle", "openai");
+    expect(dropped.deleted).toBe(true);
+    expect(() => f.service.show("idle")).toThrow("찾을 수 없습니다");
+    expect(f.db.query("SELECT count(*) AS n FROM session_updates WHERE session_id = ?").get(dropped.session.id)).toEqual({ n: 0 });
+    expect(f.service.list().page.total).toBe(1);
+
+    // A session the agent recorded itself with a real note is context, even without a later update.
+    f.service.record(input("manual", { summary: "직접 남긴 첫 요약" }));
+    expect(f.service.end("manual", "openai").deleted).toBe(false);
+    // An automatic record that became someone's origin stays: the child still points at it.
+    f.service.record(input("origin", { summary: HOOK_SUMMARY }));
+    f.service.record(input("next"), "origin", "openai");
+    expect(f.service.end("origin", "openai").deleted).toBe(false);
+    // An automatic record that was taken over through `continue` has the takeover note and stays.
+    f.service.record(input("taken", { summary: HOOK_SUMMARY }));
+    f.service.record({ provider: "openai", agent: "codex", sessionId: "taken", summary: "이어받음" }, "manual", "openai");
+    expect(f.service.end("taken", "openai").deleted).toBe(false);
+
+    // Resuming the same session, a progress update or a retried continuation all clear the end on record.
+    expect(f.service.record(input("worked", { summary: HOOK_SUMMARY })).session.endedAt).toBeNull();
+    expect(f.service.show("worked").session.endReason).toBeNull();
+    f.service.end("worked", "openai", "logout");
+    expect(f.service.update("worked", "다시 진행").session.endedAt).toBeNull();
+    expect(f.service.show("worked").session.endedAt).toBeNull();
+    f.service.end("taken", "openai", "other");
+    const retried = f.service.record({ provider: "openai", agent: "codex", sessionId: "taken", summary: "이어받음" }, "manual", "openai");
+    expect(retried.session.endedAt).toBeNull();
+    expect(f.service.show("taken").session.endedAt).toBeNull();
+
+    // The reason is optional text under the usual limits; an unknown session is an error like any lookup.
+    expect(() => f.service.end("worked", "openai", "x".repeat(201))).toThrow("reason");
+    expect(() => f.service.end("missing", "openai")).toThrow("찾을 수 없습니다");
+    expect(f.service.end("worked", "openai").session.endReason).toBeNull();
   });
 
   test("retention of 0 keeps every record regardless of age", () => {

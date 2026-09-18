@@ -5,6 +5,9 @@ import { storageError } from "../errors";
 
 export type HookChange = "added" | "updated" | "unchanged" | "skipped";
 export type HookHost = "claude" | "grok" | "codex";
+export type HookEvent = "SessionStart" | "SessionEnd";
+/** The session hooks Relay registers: the first record when a session opens, the close when it ends. */
+export const HOOK_EVENTS: HookEvent[] = ["SessionStart", "SessionEnd"];
 
 export interface HookInstallEntry {
   host?: HookHost;
@@ -81,26 +84,27 @@ function executablePath(options: HookInstallOptions, bin: string) {
   return path.join(bin, process.platform === "win32" ? "relay.exe" : "relay");
 }
 
-function claudeCommand(executable: string) {
-  return `"${executable.replaceAll("\\", "/")}" hook claude || echo {}`;
+const endFlag = (event: HookEvent) => event === "SessionEnd" ? " --end" : "";
+
+function hookCommand(executable: string, alias: HookHost, event: HookEvent) {
+  return `"${executable.replaceAll("\\", "/")}" hook ${alias}${endFlag(event)} || echo {}`;
 }
 
-function unixCommand(executable: string, alias: "grok" | "codex") {
-  return `"${executable.replaceAll("\\", "/")}" hook ${alias} || echo {}`;
+export function wrapperName(alias: "grok" | "codex", event: HookEvent) {
+  return `relay-hook-${alias}${event === "SessionEnd" ? "-end" : ""}.cmd`;
 }
 
-function wrapperName(alias: "grok" | "codex") {
-  return `relay-hook-${alias}.cmd`;
+export function wrapperScript(alias: HookHost, event: HookEvent = "SessionStart") {
+  return `@echo off\r\nif exist "%~dp0relay.exe" (\r\n  "%~dp0relay.exe" hook ${alias}${endFlag(event)}\r\n) else (\r\n  echo {}\r\n)\r\n`;
 }
 
-export function wrapperScript(alias: "grok" | "codex" | "claude") {
-  return `@echo off\r\nif exist "%~dp0relay.exe" (\r\n  "%~dp0relay.exe" hook ${alias}\r\n) else (\r\n  echo {}\r\n)\r\n`;
-}
-
-function isRelayCommand(command: unknown, alias: string) {
+// Both entries name the alias, so the end form is told apart before the start form is assumed.
+function isRelayCommand(command: unknown, alias: string, event: HookEvent) {
   if (typeof command !== "string") return false;
   const normalized = command.replaceAll("\\", "/").toLowerCase();
-  return normalized.includes(`hook ${alias}`) || normalized.includes(`relay-hook-${alias}.cmd`);
+  const end = normalized.includes(`hook ${alias} --end`) || normalized.includes(`relay-hook-${alias}-end.cmd`);
+  if (event === "SessionEnd") return end;
+  return !end && (normalized.includes(`hook ${alias}`) || normalized.includes(`relay-hook-${alias}.cmd`));
 }
 
 function parseJsonFile(file: string): { missing: true } | { value: Record<string, unknown> } | { error: string } {
@@ -132,14 +136,14 @@ function writeText(file: string, content: string): HookChange {
   return existed ? "updated" : "added";
 }
 
-function ensureSessionStart(doc: HookDoc, alias: string, command: string, extra: Partial<CommandHook> = {}): HookChange {
+function ensureEvent(doc: HookDoc, event: HookEvent, alias: string, command: string, extra: Partial<CommandHook> = {}): HookChange {
   if (!doc.hooks || Array.isArray(doc.hooks) || typeof doc.hooks !== "object") doc.hooks = {};
-  const groups = Array.isArray(doc.hooks.SessionStart) ? doc.hooks.SessionStart : [];
-  doc.hooks.SessionStart = groups;
+  const groups = Array.isArray(doc.hooks[event]) ? doc.hooks[event]! : [];
+  doc.hooks[event] = groups;
   const wanted: CommandHook = { type: "command", command, timeout: 10, ...extra };
   for (const group of groups) {
     if (!group || !Array.isArray(group.hooks)) continue;
-    const index = group.hooks.findIndex(hook => isRelayCommand(hook?.command, alias));
+    const index = group.hooks.findIndex(hook => isRelayCommand(hook?.command, alias, event));
     if (index < 0) continue;
     const current = group.hooks[index]!;
     if (current.command === command && current.timeout === 10) return "unchanged";
@@ -150,19 +154,21 @@ function ensureSessionStart(doc: HookDoc, alias: string, command: string, extra:
   return "added";
 }
 
-function installHostFile(
-  file: string, alias: string, command: string, extra: Partial<CommandHook> = {},
-): HookInstallEntry {
+type HostCommands = Record<HookEvent, { command: string; extra?: Partial<CommandHook> }>;
+
+/** One entry per host file: both events are settled in the same write, and the file reports the larger change. */
+function installHostFile(file: string, alias: HookHost, commands: HostCommands): HookInstallEntry {
   const parsed = parseJsonFile(file);
-  if ("error" in parsed) return { host: alias as HookHost, path: file, status: "skipped", detail: parsed.error };
+  if ("error" in parsed) return { host: alias, path: file, status: "skipped", detail: parsed.error };
   const doc = ("missing" in parsed ? {} : parsed.value) as HookDoc;
   const before = JSON.stringify(doc);
-  const status = ensureSessionStart(doc, alias, command, extra);
+  const changes = HOOK_EVENTS.map(event => ensureEvent(doc, event, alias, commands[event].command, commands[event].extra));
+  const status: HookChange = changes.includes("updated") ? "updated" : changes.includes("added") ? "added" : "unchanged";
   if (status === "unchanged" && !("missing" in parsed) && JSON.stringify(doc) === before) {
-    return { host: alias as HookHost, path: file, status };
+    return { host: alias, path: file, status };
   }
   writeJson(file, doc);
-  return { host: alias as HookHost, path: file, status: "missing" in parsed ? "added" : status };
+  return { host: alias, path: file, status: "missing" in parsed ? "added" : status };
 }
 
 export function installHostHooks(options: HookInstallOptions = {}): HookInstallResult {
@@ -174,16 +180,21 @@ export function installHostHooks(options: HookInstallOptions = {}): HookInstallR
     const wrappers: HookInstallEntry[] = [];
     if (process.platform === "win32") {
       for (const alias of ["grok", "codex"] as const) {
-        const file = path.join(bin, wrapperName(alias));
-        wrappers.push({ path: file, status: writeText(file, wrapperScript(alias)) });
+        for (const event of HOOK_EVENTS) {
+          const file = path.join(bin, wrapperName(alias, event));
+          wrappers.push({ path: file, status: writeText(file, wrapperScript(alias, event)) });
+        }
       }
     }
-    const grokCommand = process.platform === "win32" ? path.join(bin, wrapperName("grok")) : unixCommand(executable, "grok");
-    const codexCommand = process.platform === "win32" ? path.join(bin, wrapperName("codex")) : unixCommand(executable, "codex");
+    const commands = (alias: HookHost, extra?: (event: HookEvent) => Partial<CommandHook>) => Object.fromEntries(HOOK_EVENTS.map(event => [event, {
+      command: alias !== "claude" && process.platform === "win32" ? path.join(bin, wrapperName(alias, event)) : hookCommand(executable, alias, event),
+      extra: extra?.(event),
+    }])) as HostCommands;
     const hosts = [
-      installHostFile(path.join(home, ".claude", "settings.json"), "claude", claudeCommand(executable)),
-      installHostFile(path.join(home, ".grok", "hooks", "relay.json"), "grok", grokCommand),
-      installHostFile(path.join(home, ".codex", "hooks.json"), "codex", codexCommand, { statusMessage: "Relay session record" }),
+      installHostFile(path.join(home, ".claude", "settings.json"), "claude", commands("claude")),
+      installHostFile(path.join(home, ".grok", "hooks", "relay.json"), "grok", commands("grok")),
+      installHostFile(path.join(home, ".codex", "hooks.json"), "codex",
+        commands("codex", event => ({ statusMessage: event === "SessionEnd" ? "Relay session end" : "Relay session record" }))),
     ];
     return { schemaVersion: 1, binDirectory: bin, executable, wrappers, hosts };
   } catch (error) {

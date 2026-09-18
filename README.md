@@ -30,6 +30,7 @@ Relay는 찾을 단서만 전달하고, 내용 파악은 Agent가 합니다. 전
 ## 주요 기능
 
 - **자동 첫 기록**: Claude Code, Codex, Grok의 SessionStart 훅이 세션 시작 시 식별 정보를 기록합니다.
+- **종료 기록**: SessionEnd 훅이 종료 시각과 사유를 남깁니다. 훅 자동 기록만 남은 채 끝난 세션은 목록만 차지하므로 지웁니다.
 - **조회**: 출처별 최근 세션, 프로젝트별 조회, 이름·ID·요약·경로 부분 검색을 지원합니다.
 - **세션 연결**: `continue`로 이전 세션과 현재 세션의 부모·자식 관계를 남깁니다.
 - **터미널 선택 화면**: 표에서 행을 고르면 상세를 확인하고, 다음 대화에 붙여넣을 조회 명령을 복사합니다.
@@ -50,7 +51,7 @@ npm run build
 .\scripts\install-cli.ps1
 ```
 
-설치 스크립트는 `dist\relay.exe`를 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 그 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 SessionStart 훅을 등록합니다. 이미 빌드된 실행 파일이 있다면 설치 스크립트만 실행하면 됩니다.
+설치 스크립트는 `dist\relay.exe`를 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 그 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 SessionStart·SessionEnd 훅을 등록합니다. 이미 빌드된 실행 파일이 있다면 설치 스크립트만 실행하면 됩니다.
 
 ```powershell
 relay --version
@@ -114,17 +115,17 @@ relay --grok
 ## 명령
 
 
-| 명령                                                          | 용도                      |
-| ----------------------------------------------------------- | ----------------------- |
-| `relay --codex` / `--claude` / `--grok`                     | 해당 출처의 최근 기록을 고르는 단축 조회 |
-| `relay latest <별칭> [--cwd <경로>]`             | 출처의 최근 갱신 기록 한 건        |
-| `relay list [--query <텍스트>] [--provider] [--agent] [--cwd]` | 세션 목록과 부분 검색            |
-| `relay show <Agent Session ID> [--provider] [--history]`    | 세션 상세와 요약 이력            |
-| `relay record`                                              | 현재 세션 첫 기록              |
-| `relay update --session-id <ID> --summary <요약>`             | 진행 요약 갱신                |
-| `relay continue <이전 ID> --parent-provider <제공자> ...`        | 이전 세션에 현재 세션 연결         |
-| `relay web [--open] [--port <번호>]`                          | 브라우저 조회 서버 실행           |
-| `relay install-hooks`                                       | SessionStart 훅 등록       |
+| 명령                                                           | 용도                                     |
+| -------------------------------------------------------------- | ---------------------------------------- |
+| `relay --codex` / `--claude` / `--grok`                        | 해당 출처의 최근 기록을 고르는 단축 조회 |
+| `relay latest <별칭> [--cwd <경로>]`                           | 출처의 최근 갱신 기록 한 건              |
+| `relay list [--query <텍스트>] [--provider] [--agent] [--cwd]` | 세션 목록과 부분 검색                    |
+| `relay show <Agent Session ID> [--provider] [--history]`       | 세션 상세와 요약 이력                    |
+| `relay record`                                                 | 현재 세션 첫 기록                        |
+| `relay update --session-id <ID> --summary <요약>`              | 진행 요약 갱신                           |
+| `relay continue <이전 ID> --parent-provider <제공자> ...`      | 이전 세션에 현재 세션 연결               |
+| `relay web [--open] [--port <번호>]`                           | 브라우저 조회 서버 실행                  |
+| `relay install-hooks`                                          | SessionStart·SessionEnd 훅 등록          |
 
 
 Agent나 스크립트에서는 `--json`을 붙이세요. 성공 결과는 stdout, 실패는 stderr에 JSON 하나로 출력됩니다. 종료 코드는 `0` 성공, `2` 입력·설정 오류, `3` 기록 없음, `4` 충돌, `5` 저장소 오류, `6` 서버 시작 실패입니다.
@@ -165,7 +166,7 @@ relay show $env:CODEX_THREAD_ID --provider openai --json
 relay record --provider openai --agent codex --session-id $env:CODEX_THREAD_ID --session-name "로그인 리다이렉트 수정" --summary "로그인 콜백의 리다이렉트 동작 확인 중"
 ```
 
-기록이 이미 있거나 작업 단위가 끝났으면 요약을 갱신합니다. 시작 훅이 먼저 기록한 경우에도 `update`를 씁니다.
+기록이 이미 있거나 작업 단위가 끝났으면 요약을 갱신합니다. 시작 훅이 먼저 기록한 경우에도 `update`를 씁니다. 훅 자동 기록만 남은 채 세션이 끝나면 그 기록은 삭제되므로, 남길 세션은 첫 작업 단위가 끝나면 갱신하세요.
 
 ```powershell
 relay update --session-id $env:CODEX_THREAD_ID --provider openai --summary "auth/callback.ts 수정, 테스트 통과. 모바일 확인 필요"
@@ -208,21 +209,22 @@ relay continue '<이전 Agent Session ID>' --parent-provider xai --provider open
 명령을 추측하지 않는다. 스킬을 찾지 못하면 relay --help로 확인한다.
 호스트가 제공한 실제 세션 ID만 사용하고, 기존 기록을 먼저 확인해 없을 때만 생성한다.
 이전 작업을 이어받으면 continue로 출처를 연결하고, 작업 단위가 끝나면 짧은 진행 단서를 갱신한다.
+update를 한 번도 남기지 않은 세션 기록은 종료 시 삭제되므로 첫 작업 단위가 끝나면 반드시 갱신한다.
 relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속한다.
 ```
 
 세션 ID는 호스트가 환경변수로 제공합니다. PowerShell에서는 `$env:CLAUDE_CODE_SESSION_ID`, `$env:CODEX_THREAD_ID`, `$env:GROK_SESSION_ID`입니다.
 
-### 시작 훅
+### 시작·종료 훅
 
-`relay install-hooks`가 세 도구의 SessionStart 훅을 등록하며, `relay.exe`를 실행할 때도 빠진 훅을 다시 채웁니다. 기존 훅은 유지하고 Relay 항목이 있으면 실행 파일 경로만 맞춥니다.
+`relay install-hooks`가 세 도구의 SessionStart·SessionEnd 훅을 등록하며, `relay.exe`를 실행할 때도 빠진 훅을 다시 채웁니다. 기존 훅은 유지하고 Relay 항목이 있으면 실행 파일 경로만 맞춥니다.
 
 
-| 도구          | 훅 위치                        | 명령                      |
-| ----------- | --------------------------- | ----------------------- |
-| Claude Code | 사용자 설정 `hooks.SessionStart` | `relay.exe hook claude` |
-| Codex       | `~/.codex/hooks.json`       | `relay-hook-codex.cmd`  |
-| Grok        | `~/.grok/hooks/relay.json`  | `relay-hook-grok.cmd`   |
+| 도구        | 훅 위치                                               | 시작 명령               | 종료 명령                     |
+| ----------- | ----------------------------------------------------- | ----------------------- | ----------------------------- |
+| Claude Code | 사용자 설정 `hooks.SessionStart` · `hooks.SessionEnd` | `relay.exe hook claude` | `relay.exe hook claude --end` |
+| Codex       | `~/.codex/hooks.json`                                 | `relay-hook-codex.cmd`  | `relay-hook-codex-end.cmd`    |
+| Grok        | `~/.grok/hooks/relay.json`                            | `relay-hook-grok.cmd`   | `relay-hook-grok-end.cmd`     |
 
 
 Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.cmd` 경로를 넣습니다.
@@ -232,28 +234,39 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "\"C:/Users/<사용자>/.local/bin/relay.exe\" hook claude || echo {}", "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "\"C:/Users/<사용자>/.local/bin/relay.exe\" hook claude --end || echo {}", "timeout": 10 }] }
     ]
   }
 }
 ```
 
-훅은 `{}`를 먼저 출력하고 기록 오류를 호스트 세션에 전파하지 않습니다. 세션 ID는 페이로드의 `session_id`, `sessionId`, `thread_id`와 환경변수 순으로 찾고, 작업 폴더 이름과 `세션 첫 기록 (훅 자동 기록)` 요약으로 등록합니다. 실제 작업 단서는 이후 Agent가 `update`로 남깁니다.
+훅은 `{}`를 먼저 출력하고 기록 오류를 호스트 세션에 전파하지 않습니다. 세션 ID는 페이로드의 `session_id`, `sessionId`, `thread_id`와 환경변수 순으로 찾고, 시작 훅은 작업 폴더 이름과 `세션 첫 기록 (훅 자동 기록)` 요약으로 등록합니다. 실제 작업 단서는 이후 Agent가 `update`로 남깁니다.
+
+종료 훅은 세션이 정상 종료될 때 실행됩니다.
+
+- 세션에 종료 시각(`endedAt`)과 호스트가 보낸 사유(`endReason`, 예: `prompt_input_exit`, `logout`)를 남깁니다. 마지막 갱신 시각과 요약 이력은 바뀌지 않습니다.
+- 이력이 훅 자동 기록 한 건뿐이고 이어받은 세션도 없으면 Agent가 아무 맥락도 남기지 않은 세션이므로 기록을 삭제합니다.
+- 같은 세션이 다시 시작되거나 `update`·`continue`가 오면 종료 기록을 지웁니다. 종료 기록이 없는 세션은 터미널과 브라우저에서 `진행 중`으로 보입니다. 터미널을 강제로 닫거나 프로세스가 죽으면 훅이 실행되지 않으므로, 종료 기록이 없다고 해서 반드시 진행 중인 것은 아닙니다.
+- Codex는 등록된 시작·종료 항목을 `/hooks`에서 각각 신뢰해야 실행됩니다.
 
 ## 터미널과 브라우저 화면
 
 ### 터미널 표
 
-`relay list`와 단축 조회는 아래 열을 표시합니다. 이름과 Agent Session ID는 항상 남고, 터미널이 좁으면 요약, 생성, 갱신, Agent, 프로젝트 순으로 숨깁니다.
+`relay list`와 단축 조회는 아래 열을 표시합니다. 이름과 Agent Session ID는 항상 남고, 터미널이 좁으면 요약, 생성, 갱신, 종료, Agent, 프로젝트 순으로 숨깁니다.
 
 
-| 열                | 내용                              |
-| ---------------- | ------------------------------- |
-| 이름               | 세션 이름. 훅이 기록한 세션은 프로젝트 폴더명      |
-| 프로젝트             | 작업 경로의 폴더명                      |
-| Agent            | 도구 이름. 제공자별로 색이 다름              |
-| Agent Session ID | 원본 도구의 실제 세션 ID                 |
-| 생성 · 갱신          | 로컬 시각을 `26.09.17 18:00` 형식으로 표시 |
-| 요약               | 마지막 진행 요약                       |
+| 열               | 내용                                                   |
+| ---------------- | ------------------------------------------------------ |
+| 이름             | 세션 이름. 훅이 기록한 세션은 프로젝트 폴더명          |
+| 프로젝트         | 작업 경로의 폴더명                                     |
+| Agent            | 도구 이름. 제공자별로 색이 다름                        |
+| Agent Session ID | 원본 도구의 실제 세션 ID                               |
+| 생성 · 갱신      | 로컬 시각을 `26.09.17 18:00` 형식으로 표시             |
+| 종료             | 종료 훅이 남긴 종료 시각. 종료 기록이 없으면 `진행 중` |
+| 요약             | 마지막 진행 요약                                       |
 
 
 터미널에서 직접 실행하면 행을 골라 상세를 보고 복사하는 선택 화면이 열립니다. 상세는 브라우저 상세와 같은 내용을 한 화면에 담습니다. 파일로 리디렉션하거나 Agent가 비대화형으로 호출하면 표 또는 JSON만 출력합니다.
@@ -303,21 +316,22 @@ DB는 로컬 디스크에 두세요. 네트워크 드라이브나 클라우드 �
 
 ### 보관 기간
 
-기본 보관 기간은 **마지막 갱신으로부터 30일**입니다. 정리는 `record`, `continue`, `update` 같은 기록 명령에서만 수행하며, 자식이 참조하는 부모는 함께 보존합니다. `retentionDays`는 0~3650이고 `0`이면 자동 삭제를 끕니다. Relay 기록을 정리해도 프로젝트 소스나 원본 Agent의 세션 파일은 삭제하지 않습니다.
+기본 보관 기간은 **마지막 갱신으로부터 30일**입니다. 정리는 `record`, `continue`, `update`와 종료 훅 같은 기록 명령에서만 수행하며, 자식이 참조하는 부모는 함께 보존합니다. `retentionDays`는 0~3650이고 `0`이면 자동 삭제를 끕니다. Relay 기록을 정리해도 프로젝트 소스나 원본 Agent의 세션 파일은 삭제하지 않습니다.
 
 ## 문제 해결
 
 
-| 증상                  | 확인할 것                                                 |
-| ------------------- | ----------------------------------------------------- |
-| `relay`를 찾지 못함      | 새 터미널을 열거나 실행 파일의 절대경로를 사용                            |
-| `SESSION_NOT_FOUND` | 출처, 조회 범위, 저장소 경로 확인. Relay에 없다는 뜻이지 원본 세션이 없다는 뜻은 아님 |
-| 엉뚱한 프로젝트의 기록이 나옴    | 기본값은 전체 프로젝트. `latest <별칭> --cwd <절대경로>`로 제한          |
-| 요약이 훅 기본 문구뿐임       | Agent가 작업 시작 후 `update`로 단서를 남겼는지 확인                  |
-| 오래된 기록이 사라짐         | 30일 보관 정책. 원본 Agent 기록과 프로젝트 파일은 별개                   |
-| 설치 시 파일이 사용 중       | 실행 중인 `relay web` 서버를 종료하고 다시 설치                      |
-| 웹 포트가 사용 중          | `relay web --port 7475`처럼 다른 포트 지정                    |
-| Codex 훅이 실행되지 않음    | Codex에서 `/hooks`로 Relay 항목을 신뢰                        |
+| 증상                          | 확인할 것                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| `relay`를 찾지 못함           | 새 터미널을 열거나 실행 파일의 절대경로를 사용                                        |
+| `SESSION_NOT_FOUND`           | 출처, 조회 범위, 저장소 경로 확인. Relay에 없다는 뜻이지 원본 세션이 없다는 뜻은 아님 |
+| 엉뚱한 프로젝트의 기록이 나옴 | 기본값은 전체 프로젝트. `latest <별칭> --cwd <절대경로>`로 제한                       |
+| 요약이 훅 기본 문구뿐임       | Agent가 작업 시작 후 `update`로 단서를 남겼는지 확인                                  |
+| 세션이 목록에서 사라짐        | 훅 자동 기록만 남은 채 종료되면 삭제됩니다. Agent가 `update`를 남겼는지 확인          |
+| 오래된 기록이 사라짐          | 30일 보관 정책. 원본 Agent 기록과 프로젝트 파일은 별개                                |
+| 설치 시 파일이 사용 중        | 실행 중인 `relay web` 서버를 종료하고 다시 설치                                       |
+| 웹 포트가 사용 중             | `relay web --port 7475`처럼 다른 포트 지정                                            |
+| Codex 훅이 실행되지 않음      | Codex에서 `/hooks`로 Relay 시작·종료 항목을 신뢰                                      |
 
 
 ## API
@@ -334,7 +348,7 @@ DB는 로컬 디스크에 두세요. 네트워크 드라이브나 클라우드 �
 | `GET /api/v1/sessions/:id/children` | 자식 세션                                   |
 
 
-`:id`는 Relay 내부 ID입니다. 응답은 `schemaVersion: 1`과 camelCase 필드를 쓰고, 페이지 크기는 기본 50, 최대 100입니다.
+`:id`는 Relay 내부 ID입니다. 응답은 `schemaVersion: 1`과 camelCase 필드를 쓰고, 페이지 크기는 기본 50, 최대 100입니다. 세션의 `endedAt`과 `endReason`은 종료 훅이 남긴 종료 시각과 사유이며, 종료 기록이 없으면 `null`입니다.
 
 ## 라이선스
 

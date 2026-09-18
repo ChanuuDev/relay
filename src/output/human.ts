@@ -25,6 +25,8 @@ const COLUMNS: Column[] = [
   { title: "Agent Session ID", value: s => s.providerSessionId, color: () => "94" },
   { title: "생성", value: s => shortTime(s.createdAt), drop: 2, color: () => "90" },
   { title: "갱신", value: s => shortTime(s.updatedAt), drop: 2, color: () => "90" },
+  // A closed session shows when the host ended it; without an end on record it reads as still open.
+  { title: "종료", value: s => s.endedAt ? shortTime(s.endedAt) : "진행 중", drop: 2, color: s => s.endedAt ? "90" : "32" },
   { title: "요약", value: s => s.summary, flex: 20, drop: 1 },
 ];
 
@@ -103,6 +105,7 @@ function detail(data: Detail, space: number): Line[] {
     ["작업 경로", s.workingDirectory, "94"],
     ["최초 기록", localTime(s.createdAt, true), "90"],
     ["마지막 갱신", localTime(s.updatedAt, true), "90"],
+    ["세션 종료", s.endedAt ? `${localTime(s.endedAt, true)}${s.endReason ? ` · ${s.endReason}` : ""}` : "기록 없음", s.endedAt ? "90" : "2"],
     ["Agent Session ID", s.providerSessionId, "94"],
     ["Relay 내부 ID", s.id, "90"],
   ];

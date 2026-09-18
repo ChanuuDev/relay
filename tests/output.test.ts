@@ -9,7 +9,7 @@ function session(index: number, extra: Partial<Session> = {}): Session {
   return { id: `ses_00000000-0000-0000-0000-00000000000${index}`, provider: "anthropic", agent: "claude-code",
     providerSessionId: `f47ac10b-58cc-4372-a567-0e02b2c3d4000${index}`, sessionName: `세션 이름 ${index}`,
     model: "claude-opus-5", workingDirectory: "C:/workspace/agent-session-chain",
-    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, ...extra };
+    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, endedAt: null, endReason: null, ...extra };
 }
 
 describe("Terminal output", () => {
@@ -85,7 +85,29 @@ describe("Terminal output", () => {
     expect(view).toContain("기록 이력 (2건)");
     expect(lines.findIndex(l => l.includes("#2"))).toBeLessThan(lines.findIndex(l => l.includes("#1")));
     expect(view).toContain("최초 기록");
-    for (const forbidden of ["상태", "종료", "START", "PROGRESS", "END"]) expect(view).not.toContain(forbidden);
+    for (const forbidden of ["상태", "START", "PROGRESS", "END"]) expect(view).not.toContain(forbidden);
+    expect(view).toContain("세션 종료");
+    expect(view).toContain("기록 없음");
+  });
+
+  test("a closed session shows its end in the table and the detail; an open one reads as in progress", () => {
+    const ended = "2026-09-16T06:30:00.000Z";
+    const items = [session(1), session(2, { endedAt: ended, endReason: "prompt_input_exit" })];
+    const listed = human({ items, page: { total: 2, offset: 0 } }, 200).split("\n");
+    expect(listed[0]).toContain("종료");
+    const rows = listed.filter(line => line.includes("f47ac10b-"));
+    expect(rows[0]).toContain("진행 중");
+    expect(rows[1]).toContain(shortTime(ended));
+    expect(rows[1]).not.toContain("진행 중");
+    for (const line of listed) expect(width(line)).toBeLessThanOrEqual(200);
+    const detail = human({ session: items[1] }, 100);
+    expect(detail).toContain(localTime(ended, true));
+    expect(detail).toContain("prompt_input_exit");
+    expect(detail).not.toContain("기록 없음");
+    // The narrow table drops the end column with the other timestamps, never the identity columns.
+    const narrow = human({ items, page: { total: 2, offset: 0 } }, 60).split("\n");
+    expect(narrow[0]).not.toContain("종료");
+    expect(narrow[0]).toContain("Agent Session ID");
   });
 
   test("latest scope remains distinct from the selected session project and fits narrow output", () => {

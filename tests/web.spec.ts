@@ -23,6 +23,12 @@ function cli(args: string[]) {
 function record(id: string, name: string, provider = "openai", agent = "codex", summary = "첫 기록") {
   return cli(["record", "--provider", provider, "--agent", agent, "--session-id", id, "--session-name", name, "--cwd", dir, "--summary", summary]);
 }
+/** What a host session hook sends on stdin, through the same binary the hosts call. */
+function hook(alias: string, payload: Record<string, unknown>, end = false) {
+  const result = spawnSync(binary, ["hook", alias, ...(end ? ["--end"] : []), "--data-dir", dir],
+    { cwd: dir, encoding: "utf8", timeout: 10000, env: spawnEnv, input: JSON.stringify(payload) });
+  if (result.status !== 0 || result.stdout.trim() !== "{}") throw new Error(`hook failed: ${result.stderr} ${result.error ?? ""}`);
+}
 async function launch() {
   server = spawn(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, windowsHide: true, stdio: "pipe", env: spawnEnv });
   let logs = ""; server.stderr?.on("data", chunk => { logs += chunk; });
@@ -91,6 +97,26 @@ test("standalone binary outside source: CLI → table → detail/history → rec
   await expect(page.locator("#database-path")).toContainText("relay.db");
   await page.screenshot({ path: test.info().outputPath("detail.png"), fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test("a closed session is marked in the list and the detail; an untouched automatic record disappears on close", async ({ page }) => {
+  hook("codex", { session_id: "worked", cwd: dir });
+  hook("codex", { session_id: "idle", cwd: dir });
+  cli(["update", "--session-id", "worked", "--summary", "작업 맥락 기록"]);
+  await ready(page);
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(2);
+  await expect(page.locator(".ended-badge")).toHaveCount(0);
+  hook("codex", { session_id: "worked", reason: "prompt_input_exit" }, true);
+  hook("codex", { session_id: "idle", reason: "prompt_input_exit" }, true);
+  await expect(page.locator("#list-content tbody tr")).toHaveCount(1, { timeout: 5000 });
+  await expect(page.locator("#list-content .ended-badge")).toHaveText("종료");
+  await page.locator("#list-content .row-summary").first().click();
+  await expect(page.locator("[data-testid=session-end]")).toContainText("prompt_input_exit");
+  await expect(page.getByRole("complementary", { name: "세션 상세" }).locator(".ended-badge")).toBeVisible();
+  // The host starts the same session again: the end on record clears without a page reload.
+  hook("codex", { session_id: "worked", cwd: dir });
+  await expect(page.locator("[data-testid=session-end]")).toHaveText("기록 없음", { timeout: 5000 });
+  await expect(page.locator(".ended-badge")).toHaveCount(0);
 });
 
 test("filters, >100 records, pagination, keyboard navigation, parent/child and back state", async ({ page }) => {

@@ -43,7 +43,7 @@ Relay는 전체 대화나 원본 로그를 복원하는 도구가 아니라, 다
    relay update --session-id <실제 Session ID> --summary <현재까지의 맥락과 다음 작업>
    ```
 
-5. 의미 있는 작업 단위가 끝날 때마다 `relay update --session-id <실제 Session ID> --summary <다음 대화에 필요한 사실>`을 실행한다. 요약은 목표, 현재 상태, 변경 파일, 검증 결과, 남은 위험이나 다음 작업처럼 다음 대화에서 바로 쓸 사실을 중심으로 짧게 쓴다. 전체 채팅, reasoning, 키, 로그인 정보, 파일 내용 전문은 기록하지 않는다.
+5. 의미 있는 작업 단위가 끝날 때마다 `relay update --session-id <실제 Session ID> --summary <다음 대화에 필요한 사실>`을 실행한다. 훅 자동 기록만 있고 `update`가 없는 세션은 종료 훅이 삭제하므로, 남겨야 할 세션은 첫 작업 단위가 끝나면 반드시 갱신한다. 요약은 목표, 현재 상태, 변경 파일, 검증 결과, 남은 위험이나 다음 작업처럼 다음 대화에서 바로 쓸 사실을 중심으로 짧게 쓴다. 전체 채팅, reasoning, 키, 로그인 정보, 파일 내용 전문은 기록하지 않는다.
 
 기록 명령이 실패하면 사용자에게 한 줄로 알리고 원래 작업을 계속한다. 기록 성공 여부를 확인하려고 같은 `update`를 자동 재전송하지 말고, 필요하면 `relay show <ID> --provider <provider> --history --json`으로 확인한다.
 
@@ -53,7 +53,7 @@ Relay는 전체 대화나 원본 로그를 복원하는 도구가 아니라, 다
 2. `relay latest <별칭> --json`을 실행한다.
 3. 사용자가 저장소를 지정했으면 `--data-dir <절대경로>`를 사용하고, 아니라면 기존 `RELAY_DATA_DIR`/기본 저장소를 유지한다. 프로젝트 범위를 명시적으로 요청했을 때만 `--cwd <절대경로>`를 추가한다. 기본 호출은 모든 프로젝트에서 해당 출처의 최근 기록을 조회한다.
 4. stdout의 JSON을 읽는다. 성공 응답 `schemaVersion: 1`과 `session`을 확인한다. 실패하면 stderr의 오류를 설명한다. 기록 없음은 해당 출처에 Relay 기록이 없다는 뜻이지, 원본 도구에 세션이 없다는 뜻이 아니다.
-5. 응답 첫 부분에 조회 출처(provider/agent)와 Provider Session ID를 밝힌다. 세션명, 모델, 작업 경로, 최초 기록 시각(`createdAt`), 마지막 맥락 갱신 시각(`updatedAt`), 최근 요약, 부모·자식 관계를 전달한다. 자식 목록이 일부이면 `childrenPage.total`을 기준으로 알린다.
+5. 응답 첫 부분에 조회 출처(provider/agent)와 Provider Session ID를 밝힌다. 세션명, 모델, 작업 경로, 최초 기록 시각(`createdAt`), 마지막 맥락 갱신 시각(`updatedAt`), 최근 요약, 종료 시각과 사유(`endedAt`, `endReason`, 없으면 종료 기록 없음), 부모·자식 관계를 전달한다. 자식 목록이 일부이면 `childrenPage.total`을 기준으로 알린다.
 
 별칭 매핑은 `codex → openai/codex`, `claude → anthropic/claude-code`, `grok → xai/grok`이다. 회사 식별자 `openai` 등을 `latest`의 별칭 인자로 바꾸어 넣지 않는다.
 
@@ -77,13 +77,14 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 
 ## Agent 훅
 
-Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있다. 훅은 다음 규칙을 따른다.
+Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있고, `SessionEnd` 훅에서 `relay hook <codex|claude|grok> --end`를 호출하면 종료를 기록한다. 훅은 다음 규칙을 따른다.
 
 - 먼저 `{}`를 출력하고 기록을 시도한다. 저장소 오류, 잘못된 JSON, `relay` 부재가 Agent 세션을 막지 않도록 실패를 조용히 처리한다.
 - 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID`·`GROK_SESSION_ID` 환경변수를 쓴다. 임의 ID를 만들지 않는다.
 - 세션 이름은 작업 폴더 이름으로, 요약은 첫 기록임을 나타내는 짧은 문장으로 저장한다. 이후 실제 맥락은 Agent가 `relay update`로 갱신한다.
 - 페이로드에 `agent_id`가 있으면 서브에이전트이므로 기록하지 않는다.
 - 같은 세션에서 다시 실행돼도 같은 첫 기록 입력이면 이력이 늘지 않는다.
+- `--end`는 종료 시각과 페이로드의 `reason`을 세션에 남기고 마지막 갱신 시각과 이력은 건드리지 않는다. 이력이 훅 자동 기록 한 건뿐이고 이어받은 세션도 없는 기록은 목록만 차지하므로 이때 삭제한다. 같은 세션이 다시 시작되거나 `update`·`continue`가 오면 종료 기록은 지워진다.
 
 예시:
 
@@ -92,12 +93,15 @@ Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "\"C:/Users/<사용자>/.local/bin/relay.exe\" hook claude || echo {}", "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "\"C:/Users/<사용자>/.local/bin/relay.exe\" hook claude --end || echo {}", "timeout": 10 }] }
     ]
   }
 }
 ```
 
-`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart 훅을 등록한다. Grok은 `~/.grok/hooks/relay.json`, Codex는 `~/.codex/hooks.json`이다. Codex는 등록 후 `/hooks`에서 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
+`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart·SessionEnd 훅을 등록한다. Grok은 `~/.grok/hooks/relay.json`, Codex는 `~/.codex/hooks.json`이다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
 
 훅은 첫 기록을 자동화하는 편의 장치이며 기록의 전제 조건이 아니다. 훅이 등록되지 않았거나 실행되지 않아 첫 기록이 없으면 Agent가 「현재 세션 기록」 절차대로 `record`하고, 이어받을 때는 `continue`한다.
 

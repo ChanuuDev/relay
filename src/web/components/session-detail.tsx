@@ -1,10 +1,11 @@
-import { ArrowLeft, ArrowUpRight, CalendarDays, Clock3, Copy, Folder, GitBranch, Hash, Terminal } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, CalendarDays, Clock3, Copy, Folder, GitBranch, Hash, LogOut, Terminal } from "lucide-react";
 import type { Session } from "../../session/session.types";
 import type { BriefSession, DetailData, HistoryData, ListData, QueryResult } from "../lib/queries";
 import { listLocation } from "../lib/store";
 import { useUI, type DetailTab } from "../lib/store";
-import { projectName, timestamp } from "../lib/format";
+import { endLabel, projectName, timestamp } from "../lib/format";
 import { sessionCommand, sessionContext } from "../lib/session-context";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { NativeSelect, NativeSelectOption } from "./ui/native-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
@@ -24,7 +25,7 @@ export function SessionDetail({ detail, updates, children, storeDirectory, copy 
     <div className="detail-topline"><span className="eyebrow">SESSION DETAILS</span><NavLink href={listLocation()} className="close-detail" aria-label="목록으로 돌아가기"><ArrowLeft /> 목록으로</NavLink></div>
     <ErrorNotice id="detail-error" error={detail.error} />
     {detail.isPending ? <Loading /> : s ? <>
-      <header className="detail-header"><div className="flex items-center gap-2"><span className="muted">{s.agent}</span></div>
+      <header className="detail-header"><div className="flex items-center gap-2"><span className="muted">{s.agent}</span>{s.endedAt && <Badge variant="outline" className="ended-badge">종료</Badge>}</div>
         <h2>{s.sessionName ?? "이름 없는 세션"}</h2><p className="detail-project"><Folder />{projectName(s.workingDirectory)}</p></header>
       <div className="detail-actions"><Button onClick={() => copy(sessionContext(s, { shell, storeDirectory }))}><Copy data-icon="inline-start" />세션 컨텍스트 복사</Button>
         <Button variant="outline" onClick={() => copy(sessionCommand(s, storeDirectory, shell))}><Terminal data-icon="inline-start" />조회 명령 복사</Button></div>
@@ -58,6 +59,6 @@ function Relation({ session }: { session: BriefSession }) {
 function SessionMetadata({ session: s, copy }: { session: Session; copy: (value: string) => void }) {
   return <div className="detail-section"><h3>세션 정보</h3><div className="identity-grid"><div><span>Provider / Agent</span><strong>{s.provider} / {s.agent}</strong></div><div><span>모델</span><strong>{s.model ?? "미기록"}</strong></div></div>
     <div className="path-block"><span><Folder />작업 경로</span><code>{s.workingDirectory}</code></div>
-    <div className="time-grid"><div><CalendarDays /><span>최초 기록</span><time title={s.createdAt}>{timestamp(s.createdAt)}</time></div><div><Clock3 /><span>마지막 갱신</span><time title={s.updatedAt}>{timestamp(s.updatedAt)}</time></div></div>
+    <div className="time-grid"><div><CalendarDays /><span>최초 기록</span><time title={s.createdAt}>{timestamp(s.createdAt)}</time></div><div><Clock3 /><span>마지막 갱신</span><time title={s.updatedAt}>{timestamp(s.updatedAt)}</time></div><div><LogOut /><span>세션 종료</span><time title={s.endedAt ?? "종료 기록 없음"} data-testid="session-end">{endLabel(s)}</time></div></div>
     <details className="technical-details"><summary><Hash />세션 식별자</summary><dl><dt>Agent Session ID</dt><dd>{s.providerSessionId}</dd></dl><CopyButton value={s.providerSessionId} copy={copy} label="Agent Session ID만 복사" /><dl><dt>Relay 내부 ID</dt><dd>{s.id}</dd></dl></details></div>;
 }

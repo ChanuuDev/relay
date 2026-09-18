@@ -5,6 +5,9 @@ import { directory, identifier, optionalText, pagination, text } from "../valida
 import { SessionRepository } from "./session.repository";
 import { brief, type Filters, type NewSession, type Session } from "./session.types";
 
+/** The note a session hook stores before the agent has said anything about the work. */
+export const HOOK_SUMMARY = "세션 첫 기록 (훅 자동 기록)";
+
 export const PROVIDERS = {
   codex: { provider: "openai", agent: "codex" },
   claude: { provider: "anthropic", agent: "claude-code" },
@@ -77,7 +80,7 @@ export class SessionService {
           throw new RelayError("SESSION_EXISTS", "같은 제공자·ID가 다른 도구로 저장되어 있습니다.", 4, 409, { agent: existing.agent });
         }
         // Already linked to this parent, so a retry has nothing to do; further context belongs in `update`.
-        return { schemaVersion: 1, session: existing, parentSession: brief(parent) };
+        return { schemaVersion: 1, session: this.reopen(existing), parentSession: brief(parent) };
       }
       const cwd = givenCwd ?? directory(parent?.workingDirectory ?? process.cwd(), true);
       const sessionName = input.sessionName === undefined ? parent?.sessionName ?? null : givenName;
@@ -87,16 +90,23 @@ export class SessionService {
           this.repo.firstSummary(existing.id) !== summary) {
           throw new RelayError("SESSION_EXISTS", "같은 제공자·ID로 다른 생성 정보가 이미 저장되어 있습니다.", 4, 409);
         }
-        return { schemaVersion: 1, session: existing, ...(parent ? { parentSession: brief(parent) } : {}) };
+        // A host that resumes the same session starts it again, so an end on record no longer holds.
+        return { schemaVersion: 1, session: this.reopen(existing), ...(parent ? { parentSession: brief(parent) } : {}) };
       }
       const now = new Date().toISOString();
       const session: Session = { id: `ses_${crypto.randomUUID()}`, provider, agent, providerSessionId,
         sessionName, model, workingDirectory: cwd, summary,
-        parentSessionId: parent?.id ?? null, createdAt: now, updatedAt: now };
+        parentSessionId: parent?.id ?? null, createdAt: now, updatedAt: now, endedAt: null, endReason: null };
       this.repo.insert(session);
       this.repo.append(session);
       return { schemaVersion: 1, session, ...(parent ? { parentSession: brief(parent) } : {}) };
     });
+  }
+
+  private reopen(existing: Session): Session {
+    if (existing.endedAt === null && existing.endReason === null) return existing;
+    this.repo.reopen(existing.id);
+    return { ...existing, endedAt: null, endReason: null };
   }
 
   /** Ancestor ids, nearest first. Links are kept acyclic, so the depth cap only guards a damaged store. */
@@ -120,7 +130,7 @@ export class SessionService {
     const session: Session = { ...existing, parentSessionId: parent.id,
       sessionName: incoming.input.sessionName === undefined ? existing.sessionName : incoming.name,
       model: incoming.input.model === undefined ? existing.model : incoming.model,
-      summary: incoming.summary, updatedAt: new Date().toISOString() };
+      summary: incoming.summary, updatedAt: new Date().toISOString(), endedAt: null, endReason: null };
     this.repo.link(session);
     this.repo.change(session);
     this.repo.append(session);
@@ -137,9 +147,32 @@ export class SessionService {
       const session = this.resolve(id, provider);
       session.summary = summary;
       session.updatedAt = new Date().toISOString();
+      session.endedAt = null; session.endReason = null;
       this.repo.change(session);
       this.repo.append(session);
       return { schemaVersion: 1, session };
+    });
+  }
+
+  /**
+   * The host closed the session. A record holding only the automatic first entry never received any
+   * context from the agent, so it is dropped instead of filling the list; every other session keeps
+   * when and why it ended. `updatedAt` stays put: it is the time of the last context, not of the close.
+   */
+  end(id: string, provider?: string, reasonInput?: unknown) {
+    const reason = optionalText(reasonInput, "reason", 200);
+    return this.write(() => {
+      const session = this.resolve(id, provider);
+      const untouched = this.repo.updateCount(session.id) === 1 && this.repo.firstSummary(session.id) === HOOK_SUMMARY &&
+        this.repo.count("WHERE parent_session_id = ?", [session.id]) === 0;
+      if (untouched) {
+        this.repo.remove(session.id);
+        return { schemaVersion: 1, session, deleted: true };
+      }
+      session.endedAt = new Date().toISOString();
+      session.endReason = reason;
+      this.repo.end(session);
+      return { schemaVersion: 1, session, deleted: false };
     });
   }
 

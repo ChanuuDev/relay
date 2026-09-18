@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/002_init.sql" with { type: "text" };
+import schema from "./migrations/003_init.sql" with { type: "text" };
 
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -68,9 +68,14 @@ function migrateV1(db: Database) {
   }
 }
 
+// A closed session keeps when and why it ended. Rows written before v3 simply have no end on record.
+function migrateV2(db: Database) {
+  db.exec("ALTER TABLE sessions ADD COLUMN ended_at TEXT; ALTER TABLE sessions ADD COLUMN end_reason TEXT;");
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current !== 0 && current !== 1) {
+  if (current !== 0 && current !== 1 && current !== 2) {
     checkVersion(db);
     return;
   }
@@ -86,6 +91,10 @@ function initializeOrMigrate(db: Database) {
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 1) {
       migrateV1(db);
+      migrateV2(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 2) {
+      migrateV2(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);

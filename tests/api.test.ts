@@ -22,8 +22,8 @@ describe("Local read-only HTTP API", () => {
     const list = await request("/api/v1/sessions?provider=anthropic").json();
     expect(list.schemaVersion).toBe(1); expect(list.items[0].id).toBe(child.id); expect(list.page.total).toBe(1);
     const detail = await request(`/api/v1/sessions/${child.id}`).json(); expect(detail.parentSession.id).toBe(a.id);
-    expect(detail.session.createdAt).toBeString();
-    for (const field of ["status", "startedAt", "endedAt"]) {
+    expect(detail.session.createdAt).toBeString(); expect(detail.session.endedAt).toBeNull();
+    for (const field of ["status", "startedAt"]) {
       expect(detail.session).not.toHaveProperty(field);
       expect(list.items[0]).not.toHaveProperty(field);
     }

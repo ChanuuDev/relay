@@ -14,7 +14,7 @@ function session(index: number, extra: Partial<Session> = {}): Session {
   return { id: `ses_00000000-0000-0000-0000-00000000000${index}`, provider: "openai", agent: "codex",
     providerSessionId: `f47ac10b-58cc-4372-a567-0e02b2c3d4000${index}`, sessionName: `세션 이름 ${index}`,
     model: "gpt-5", workingDirectory: root, summary: `요약 ${index}`,
-    parentSessionId: null, createdAt: at, updatedAt: at, ...extra };
+    parentSessionId: null, createdAt: at, updatedAt: at, endedAt: null, endReason: null, ...extra };
 }
 
 function screen(rows = 10) {

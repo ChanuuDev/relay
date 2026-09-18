@@ -10,6 +10,9 @@ export interface Session {
   parentSessionId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** When the host closed the session and why; null while no end is on record. */
+  endedAt: string | null;
+  endReason: string | null;
 }
 export interface SessionUpdate {
   id: string; sessionId: string; sequence: number;

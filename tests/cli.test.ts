@@ -16,7 +16,7 @@ describe("CLI processes", () => {
     expect(cli(dir, ["update", "--session-id", "a", "--summary", "진행"]).stderr).toBe("");
     const result = cli(dir, ["show", "a", "--history"]);
     expect(result.data.updates.length).toBe(2); expect(result.data.session.createdAt).toBeString();
-    expect(result.data.session).not.toHaveProperty("status"); expect(result.data.session).not.toHaveProperty("endedAt");
+    expect(result.data.session).not.toHaveProperty("status"); expect(result.data.session.endedAt).toBeNull();
     expect(cli(dir, ["latest", "codex"]).data.session.providerSessionId).toBe("a");
     const missing = cli(dir, ["latest", "grok"]); expect(missing.stdout).toBe(""); expect(missing.code).toBe(3);
     expect(missing.data.error.code).toBe("SESSION_NOT_FOUND");
@@ -189,12 +189,12 @@ describe("CLI processes", () => {
   });
 
   test("session first-record hook records from stdin and never fails the host session", () => {
-    const hook = (payload: string, extra: Record<string, string> = {}, alias = "claude") => {
+    const hook = (payload: string, extra: Record<string, string> = {}, alias = "claude", ...flags: string[]) => {
       // The host session of this test run must not leak into the payload fallback.
       const env: Record<string, string | undefined> = {
         ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, GROK_SESSION_ID: undefined, ...extra,
       };
-      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, "--data-dir", dir],
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, ...flags, "--data-dir", dir],
         { cwd: root, env, stdin: Buffer.from(payload), stdout: "pipe", stderr: "pipe" });
       return { code: result.exitCode, stdout: result.stdout.toString().trim() };
     };
@@ -224,6 +224,55 @@ describe("CLI processes", () => {
     expect(hook("{}", { CODEX_THREAD_ID: "codex-env-session" }, "codex").code).toBe(0);
     expect(cli(dir, ["show", "codex-env-session", "--provider", "openai"]).data.session.agent).toBe("codex");
   }, 15000);
+
+  test("session end hook closes a session with context, removes an untouched automatic record, and stays silent otherwise", () => {
+    const hook = (payload: string, alias = "claude", ...flags: string[]) => {
+      const env: Record<string, string | undefined> = {
+        ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, GROK_SESSION_ID: undefined,
+      };
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, ...flags, "--data-dir", dir],
+        { cwd: root, env, stdin: Buffer.from(payload), stdout: "pipe", stderr: "pipe" });
+      return { code: result.exitCode, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString() };
+    };
+    const start = (id: string, alias = "claude") => hook(JSON.stringify({ session_id: id, cwd: root }), alias);
+    const end = (payload: Record<string, unknown>, alias = "claude") => hook(JSON.stringify(payload), alias, "--end");
+
+    start("worked"); start("idle"); start("grok-idle", "grok");
+    cli(dir, ["update", "--session-id", "worked", "--summary", "작업 맥락"]);
+    const closed = end({ session_id: "worked", cwd: root, hook_event_name: "SessionEnd", reason: "prompt_input_exit" });
+    expect(closed.code).toBe(0); expect(closed.stdout).toBe("{}"); expect(closed.stderr).toBe("");
+    const stored = cli(dir, ["show", "worked", "--history"]).data;
+    expect(stored.session.endedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(stored.session.endReason).toBe("prompt_input_exit");
+    expect(stored.updates.length).toBe(2);
+    // Only the automatic first record was there: the session leaves the list instead of lingering.
+    expect(end({ session_id: "idle", cwd: root, reason: "other" }).code).toBe(0);
+    expect(cli(dir, ["show", "idle"]).data.error.code).toBe("SESSION_NOT_FOUND");
+    // The alias decides the provider: a Claude end never touches the Grok record of the same id.
+    expect(end({ session_id: "grok-idle" }).code).toBe(0);
+    expect(cli(dir, ["show", "grok-idle", "--provider", "xai"]).data.session.summary).toBe("세션 첫 기록 (훅 자동 기록)");
+    expect(end({ sessionId: "grok-idle" }, "grok").code).toBe(0);
+    expect(cli(dir, ["list"]).data.page.total).toBe(1);
+    // Subagent teardown, unknown sessions and unusable payloads are ignored without failing the host.
+    for (const payload of [{ session_id: "worked", agent_id: "agent-1" }, { session_id: "worked", subagentType: "explore" },
+      { session_id: "never-recorded" }, { cwd: root }]) {
+      const result = end(payload);
+      expect(result.code).toBe(0); expect(result.stdout).toBe("{}");
+    }
+    for (const payload of ["", "not json", "[]"]) expect(hook(payload, "claude", "--end").code).toBe(0);
+    expect(cli(dir, ["show", "worked"]).data.session.endReason).toBe("prompt_input_exit");
+    // A reason the host sends is kept in the form the record accepts; control characters never reach the store.
+    expect(end({ session_id: "worked", reason: "  clear\n\tsession " + "x".repeat(300) }).code).toBe(0);
+    const reason = cli(dir, ["show", "worked"]).data.session.endReason as string;
+    expect(reason.startsWith("clear session x")).toBe(true); expect(reason.length).toBe(200);
+    expect(end({ session_id: "worked", reason: "" }).code).toBe(0);
+    expect(cli(dir, ["show", "worked"]).data.session.endReason).toBeNull();
+    // Starting the same session again reopens it; the end hook then closes it once more.
+    expect(start("worked").code).toBe(0);
+    expect(cli(dir, ["show", "worked"]).data.session.endedAt).toBeNull();
+    expect(end({ session_id: "worked", reason: "logout" }).code).toBe(0);
+    expect(cli(dir, ["show", "worked"]).data.session.endReason).toBe("logout");
+  }, 20000);
 
   test("failed history writes roll back through CLI and error stream", () => {
     cli(dir, record("a")); const db = new Database(path.join(dir, "relay.db"));

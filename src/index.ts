@@ -11,7 +11,7 @@ import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
 import { terminalWidth } from "./output/terminal";
 import { SessionRepository } from "./session/session.repository";
-import { PROVIDERS, SessionService } from "./session/session.service";
+import { HOOK_SUMMARY, PROVIDERS, SessionService } from "./session/session.service";
 import type { NewSession, Session } from "./session/session.types";
 import { directory } from "./validation";
 import { sessionCommand } from "./web/lib/session-context";
@@ -111,15 +111,16 @@ program.command("latest <provider>").description("codex / claude / grok 중 명�
   .option("--cwd <path>", "명시한 작업 경로 내에서만 조회")
   .action((alias: string, o, c: Command) => run(c, false, s => s.latest(alias, o.cwd)));
 
-program.command("hook <agent>").description("Agent 세션 첫 기록 훅의 JSON을 stdin으로 받아 기록 (codex/claude/grok)")
-  .action(async (alias: string, _options, command: Command) => {
+program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록 또는 종료 처리 (codex/claude/grok)")
+  .option("--end", "SessionEnd: 종료 시각·사유를 기록하고, 훅 자동 기록만 남은 세션은 삭제")
+  .action(async (alias: string, options: { end?: boolean }, command: Command) => {
     // A session hook must never block or fail the host session: answer first, record second, stay silent on failure.
     process.stdout.write("{}\n");
     try {
       const raw = process.stdin.isTTY ? "" : await Bun.stdin.text();
       const payload = (raw.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>;
-      // A subagent shares the host session; only the session itself is recorded.
-      if (payload.agent_id || !Object.hasOwn(PROVIDERS, alias)) return;
+      // A subagent shares the host session; only the session itself is recorded or closed.
+      if (payload.agent_id || payload.subagentType || payload.subagent_type || !Object.hasOwn(PROVIDERS, alias)) return;
       const sessionId = [payload.session_id, payload.sessionId, payload.thread_id,
         process.env.CLAUDE_CODE_SESSION_ID, process.env.CODEX_THREAD_ID, process.env.GROK_SESSION_ID]
         .find((value): value is string => typeof value === "string" && value.trim().length > 0);
@@ -129,13 +130,21 @@ program.command("hook <agent>").description("Agent 세션 첫 기록 훅의 JSON
       const config = loadConfig(command.optsWithGlobals().dataDir);
       const db = openDatabase(config);
       try {
-        new SessionService(new SessionRepository(db), config.retentionDays)
-          .record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: "세션 첫 기록 (훅 자동 기록)" });
+        const service = new SessionService(new SessionRepository(db), config.retentionDays);
+        if (options.end) service.end(sessionId, provider, endReason(payload));
+        else service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY });
       } finally { db.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
   });
 
-program.command("install-hooks").description("Claude/Grok/Codex SessionStart 훅 등록")
+/** The host's end reason in the form the record accepts; absent when the host sent none. */
+function endReason(payload: Record<string, unknown>): string | undefined {
+  const given = [payload.reason, payload.end_reason, payload.endReason].find((value): value is string => typeof value === "string");
+  const reason = given?.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 200);
+  return reason || undefined;
+}
+
+program.command("install-hooks").description("Claude/Grok/Codex SessionStart·SessionEnd 훅 등록")
   .option("--bin-dir <path>", "relay.exe와 훅 래퍼를 둘 절대경로")
   .action((o, c: Command) => {
     const result = installHostHooks({ binDirectory: o.binDir === undefined ? undefined : directory(o.binDir, false) });

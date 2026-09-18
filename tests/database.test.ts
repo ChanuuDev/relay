@@ -4,6 +4,7 @@ import path from "node:path";
 import { loadConfig } from "../src/config";
 import { DB_VERSION, openDatabase } from "../src/db/database";
 import legacySchema from "../src/db/migrations/001_init.sql" with { type: "text" };
+import v2Schema from "../src/db/migrations/002_init.sql" with { type: "text" };
 import { SessionRepository } from "../src/session/session.repository";
 import { SessionService } from "../src/session/session.service";
 import { cleanup, cliAsync, input, root, temporary } from "./helpers";
@@ -35,8 +36,10 @@ describe("Database record migration", () => {
 
   test.each(["ACTIVE", "INTERRUPTED", "COMPLETED", "ABANDONED"])("v1 %s records keep identity, dates, metadata, links and all history", status => {
     const old = legacy(status);
+    // The v1 lifecycle is not carried over: every migrated session starts without an end on record.
     const sessions = old.query(`SELECT id, provider, agent, provider_session_id, session_name, model,
-      working_directory, summary, parent_session_id, metadata_json, started_at AS created_at, updated_at
+      working_directory, summary, parent_session_id, metadata_json, started_at AS created_at, updated_at,
+      NULL AS ended_at, NULL AS end_reason
       FROM sessions ORDER BY id`).all();
     const updates = old.query("SELECT id, session_id, sequence, summary, created_at FROM session_updates ORDER BY id").all();
     old.close();
@@ -53,7 +56,8 @@ describe("Database record migration", () => {
       const detail = service.show("parent", "openai", true);
       expect(detail.children[0].providerSessionId).toBe("child");
       expect(detail.updates?.map(update => update.sequence)).toEqual([2, 1]);
-      for (const field of ["status", "startedAt", "endedAt"]) expect(detail.session).not.toHaveProperty(field);
+      for (const field of ["status", "startedAt"]) expect(detail.session).not.toHaveProperty(field);
+      expect(detail.session.endedAt).toBeNull(); expect(detail.session.endReason).toBeNull();
       expect(detail.updates?.[0]).not.toHaveProperty("type");
     } finally { db.close(); }
     const writer = openDatabase(config);
@@ -66,6 +70,41 @@ describe("Database record migration", () => {
     const reopened = openDatabase(config, true);
     try { expect(reopened.query("SELECT count(*) AS n FROM session_updates").get()).toEqual({ n: 5 }); }
     finally { reopened.close(); }
+  });
+
+  test("v2 records gain the end columns in place and keep every row, link and history entry", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v2Schema);
+    db.exec("PRAGMA user_version = 2");
+    const at = "2026-09-10T00:00:00.000Z";
+    const insert = db.query(`INSERT INTO sessions (id, provider, agent, provider_session_id, session_name, model,
+      working_directory, summary, parent_session_id, metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insert.run("ses_parent", "anthropic", "claude-code", "parent", "이전 작업", null, root, "마지막 맥락", null, "{}", at, at);
+    insert.run("ses_child", "openai", "codex", "child", "후속 작업", "gpt-5", root, "이어받음", "ses_parent", "{}", at, at);
+    db.query("INSERT INTO session_updates VALUES (?, ?, ?, ?, ?)").run("upd_parent", "ses_parent", 1, "마지막 맥락", at);
+    db.query("INSERT INTO session_updates VALUES (?, ?, ?, ?, ?)").run("upd_child", "ses_child", 1, "이어받음", at);
+    const before = db.query("SELECT * FROM sessions ORDER BY id").all() as Record<string, unknown>[];
+    db.close();
+
+    const config = loadConfig(dir);
+    const reader = openDatabase(config, true);
+    try {
+      expect(reader.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(reader.query("SELECT * FROM sessions ORDER BY id").all()).toEqual(before.map(row => ({ ...row, ended_at: null, end_reason: null })));
+      expect(reader.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(reader.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+      const service = new SessionService(new SessionRepository(reader));
+      expect(service.show("child", "openai").parentSession?.providerSessionId).toBe("parent");
+      expect(service.show("parent", "anthropic", true).updates?.length).toBe(1);
+    } finally { reader.close(); }
+    const writer = openDatabase(config);
+    try {
+      const service = new SessionService(new SessionRepository(writer));
+      const ended = service.end("child", "openai", "logout");
+      expect(ended.deleted).toBe(false);
+      expect(service.show("child", "openai").session.endReason).toBe("logout");
+      expect(service.update("child", "재개").session.endedAt).toBeNull();
+    } finally { writer.close(); }
   });
 
   test("failed migration rolls back schema, version and records", () => {

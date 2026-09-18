@@ -4,7 +4,8 @@ import type { Session, SessionUpdate } from "./session.types";
 const columns = `id, provider, agent, provider_session_id AS providerSessionId,
   session_name AS sessionName, model, working_directory AS workingDirectory,
   summary, parent_session_id AS parentSessionId,
-  created_at AS createdAt, updated_at AS updatedAt`;
+  created_at AS createdAt, updated_at AS updatedAt,
+  ended_at AS endedAt, end_reason AS endReason`;
 
 export class SessionRepository {
   constructor(public db: Database) {}
@@ -39,9 +40,23 @@ export class SessionRepository {
       .run(s.parentSessionId, s.sessionName, s.model, s.id);
   }
 
+  /** New context means the session is live again, so any end on record goes with the change. */
   change(s: Session) {
-    this.db.query("UPDATE sessions SET summary = ?, updated_at = ? WHERE id = ?")
+    this.db.query("UPDATE sessions SET summary = ?, updated_at = ?, ended_at = NULL, end_reason = NULL WHERE id = ?")
       .run(s.summary, s.updatedAt, s.id);
+  }
+
+  reopen(id: string) {
+    this.db.query("UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ?").run(id);
+  }
+
+  end(s: Session) {
+    this.db.query("UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?").run(s.endedAt, s.endReason, s.id);
+  }
+
+  /** History goes with the session through the cascade; a parent still referenced is refused by the foreign key. */
+  remove(id: string) {
+    return this.db.query("DELETE FROM sessions WHERE id = ?").run(id).changes;
   }
 
   append(s: Session) {
