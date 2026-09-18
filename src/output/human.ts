@@ -25,8 +25,8 @@ const COLUMNS: Column[] = [
   { title: "Agent Session ID", value: s => s.providerSessionId, color: () => "94" },
   { title: "생성", value: s => shortTime(s.createdAt), drop: 2, color: () => "90" },
   { title: "갱신", value: s => shortTime(s.updatedAt), drop: 2, color: () => "90" },
-  // A closed session shows when the host ended it; without an end on record it reads as still open.
-  { title: "종료", value: s => s.endedAt ? shortTime(s.endedAt) : "진행 중", drop: 2, color: s => s.endedAt ? "90" : "32" },
+  // No end column: hosts are often closed without a SessionEnd hook, so it would read "in progress"
+  // for nearly every row. The detail view still shows the end time when one was recorded.
   { title: "요약", value: s => s.summary, flex: 20, drop: 1 },
 ];
 
