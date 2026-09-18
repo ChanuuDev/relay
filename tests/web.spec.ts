@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const binary = path.join(root, "dist", process.platform === "win32" ? "relay.exe" : "relay");
+const { version } = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
 const spawnEnv = { ...process.env, RELAY_SKIP_HOOK_INSTALL: "1" };
 let dir: string;
 let port: number;
@@ -64,7 +65,7 @@ test.afterEach(async () => {
 
 test("standalone binary outside source: CLI → table → detail/history → reconnect", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", err => errors.push(err.message));
-  expect(spawnSync(binary, ["--version"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout.trim()).toBe("0.1.0");
+  expect(spawnSync(binary, ["--version"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout.trim()).toBe(version);
   expect(spawnSync(binary, ["--help"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout).toContain("Usage: relay");
   const occupied = spawnSync(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, encoding: "utf8", timeout: 5000, env: spawnEnv });
   expect(occupied.status).toBe(6); expect(occupied.stdout).toBe(""); expect(occupied.stderr).toContain("PORT_IN_USE");
