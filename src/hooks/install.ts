@@ -8,6 +8,9 @@ export type HookHost = "claude" | "grok" | "codex";
 export type HookEvent = "SessionStart" | "SessionEnd";
 /** The session hooks Relay registers: the first record when a session opens, the close when it ends. */
 export const HOOK_EVENTS: HookEvent[] = ["SessionStart", "SessionEnd"];
+/** Seconds a host waits for a Relay hook. Codex gives SessionEnd hooks one second by default and allows at most three, so its end hook is registered within that limit. */
+const HOOK_TIMEOUT = 10;
+const CODEX_END_TIMEOUT = 3;
 
 export interface HookInstallEntry {
   host?: HookHost;
@@ -157,13 +160,13 @@ function ensureEvent(doc: HookDoc, event: HookEvent, alias: string, command: str
   if (!doc.hooks || Array.isArray(doc.hooks) || typeof doc.hooks !== "object") doc.hooks = {};
   const groups = Array.isArray(doc.hooks[event]) ? doc.hooks[event]! : [];
   doc.hooks[event] = groups;
-  const wanted: CommandHook = { type: "command", command, timeout: 10, ...extra };
+  const wanted: CommandHook = { type: "command", command, timeout: HOOK_TIMEOUT, ...extra };
   for (const group of groups) {
     if (!group || !Array.isArray(group.hooks)) continue;
     const index = group.hooks.findIndex(hook => isRelayCommand(hook?.command, alias, event));
     if (index < 0) continue;
     const current = group.hooks[index]!;
-    if (current.command === command && current.timeout === 10) return "unchanged";
+    if (current.command === command && current.timeout === wanted.timeout) return "unchanged";
     group.hooks[index] = { ...current, ...wanted };
     return "updated";
   }
@@ -211,7 +214,10 @@ export function installHostHooks(options: HookInstallOptions = {}): HookInstallR
       installHostFile(path.join(home, ".claude", "settings.json"), "claude", commands("claude")),
       installHostFile(path.join(home, ".grok", "hooks", "relay.json"), "grok", commands("grok")),
       ...codexHomes(options, home).map(dir => installHostFile(path.join(dir, "hooks.json"), "codex",
-        commands("codex", event => ({ statusMessage: event === "SessionEnd" ? "Relay session end" : "Relay session record" })))),
+        commands("codex", event => ({
+          statusMessage: event === "SessionEnd" ? "Relay session end" : "Relay session record",
+          timeout: event === "SessionEnd" ? CODEX_END_TIMEOUT : HOOK_TIMEOUT,
+        })))),
     ];
     return { schemaVersion: 1, binDirectory: bin, executable, wrappers, hosts };
   } catch (error) {

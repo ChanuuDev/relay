@@ -100,7 +100,7 @@ Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 
 }
 ```
 
-`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart·SessionEnd 훅을 등록한다. Grok은 `~/.grok/hooks/relay.json`, Codex는 `~/.codex/hooks.json`이며 `CODEX_HOME`이 설정된 환경에서는 그 폴더의 `hooks.json`에도 등록한다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
+`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart·SessionEnd 훅을 등록한다. Grok은 `~/.grok/hooks/relay.json`, Codex는 `~/.codex/hooks.json`이며 `CODEX_HOME`이 설정된 환경에서는 그 폴더의 `hooks.json`에도 등록한다. Codex는 SessionEnd 훅에 최대 3초만 허용하므로 Codex 종료 훅은 timeout 3초로 등록한다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
 
 훅은 첫 기록을 자동화하는 편의 장치이며 기록의 전제 조건이 아니다. 훅이 등록되지 않았거나 실행되지 않아 첫 기록이 없으면 Agent가 「현재 세션 기록」 절차대로 `record`하고, 이어받을 때는 `continue`한다.
 

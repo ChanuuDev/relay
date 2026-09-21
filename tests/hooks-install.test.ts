@@ -63,6 +63,9 @@ test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd
   const codexEnd = String(codex.hooks.SessionEnd[0].hooks[0].command).toLowerCase();
   expect(codexEnd.includes("hook codex --end") || codexEnd.includes("relay-hook-codex-end.cmd")).toBe(true);
   expect(codex.hooks.SessionEnd[0].hooks[0].statusMessage).toBe("Relay session end");
+  expect(codex.hooks.SessionStart[0].hooks[0].timeout).toBe(10);
+  // Codex allows SessionEnd hooks at most three seconds.
+  expect(codex.hooks.SessionEnd[0].hooks[0].timeout).toBe(3);
 
   const second = install();
   expect(second.hosts.every(h => h.status === "unchanged")).toBe(true);
@@ -85,6 +88,23 @@ test("install-hooks adds the missing end hook to a file that only has the start 
   expect(claude.hooks.SessionStart).toHaveLength(1);
   expect(claude.hooks.SessionEnd[0].hooks[0].command).toContain("hook claude --end");
   expect(install().hosts.find(h => h.host === "claude")!.status).toBe("unchanged");
+});
+
+test("install-hooks lowers a Codex end hook that was registered with the ten second timeout", () => {
+  const codexHome = path.join(home(), ".codex");
+  mkdirSync(codexHome, { recursive: true });
+  writeFileSync(path.join(codexHome, "hooks.json"), JSON.stringify({
+    hooks: {
+      SessionStart: [{ hooks: [{ type: "command", command: path.join(bin(), "relay-hook-codex.cmd"), timeout: 10, statusMessage: "Relay session record" }] }],
+      SessionEnd: [{ hooks: [{ type: "command", command: path.join(bin(), "relay-hook-codex-end.cmd"), timeout: 10, statusMessage: "Relay session end" }] }],
+    },
+  }));
+  expect(install().hosts.find(h => h.host === "codex")!.status).toBe("updated");
+  const doc = JSON.parse(readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
+  expect(doc.hooks.SessionEnd).toHaveLength(1);
+  expect(doc.hooks.SessionEnd[0].hooks[0].timeout).toBe(3);
+  expect(doc.hooks.SessionStart[0].hooks[0].timeout).toBe(10);
+  expect(install().hosts.find(h => h.host === "codex")!.status).toBe("unchanged");
 });
 
 test("install-hooks updates a moved relay path and skips invalid JSON", () => {
