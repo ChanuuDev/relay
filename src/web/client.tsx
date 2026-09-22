@@ -1,20 +1,21 @@
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Check, ChevronRight, Layers, Radio, Terminal, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { Button } from "./components/ui/button";
-import { Badge } from "./components/ui/badge";
 import { Textarea } from "./components/ui/textarea";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { ErrorNotice } from "./components/session-common";
-import { SessionDetail } from "./components/session-detail";
-import { Filters } from "./components/session-filters";
-import { ContextGuide } from "./components/context-guide";
-import { SessionList } from "./components/session-list";
-import { WorkspaceSidebar } from "./components/workspace-sidebar";
+import { MenuBar } from "./components/desktop/menu-bar";
+import { Dock } from "./components/desktop/dock";
+import { Wallpaper } from "./components/desktop/wallpaper";
+import { SessionsWindow } from "./components/apps/sessions-window";
+import { GuideWindow } from "./components/apps/guide-window";
+import { CommandWindow } from "./components/apps/command-window";
+import { SettingsWindow } from "./components/apps/settings-window";
 import { resource, type BriefSession, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
-import { cn } from "./lib/utils";
+import { isMobileWidth, useDesktop } from "./lib/desktop-store";
+import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
 
 const queryClient = new QueryClient();
 
@@ -34,6 +35,10 @@ function App() {
   const failed = watched.some((query) => query.isError);
   const pending = watched.some((query) => query.isPending);
   const successAt = Math.min(...watched.map((query) => query.dataUpdatedAt));
+  const connection = failed ? "offline" : pending ? "pending" : "online";
+  const theme = useUI((state) => state.theme);
+  const mobile = useDesktop((state) => state.mobile);
+  const [dark, setDark] = useState(() => isDark(theme));
   const [copyStatus, setCopyStatus] = useState("");
   const [fallback, setFallback] = useState<{ value: string } | null>(null);
   const copyRef = useRef<HTMLTextAreaElement>(null);
@@ -41,7 +46,24 @@ function App() {
   const selectedRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    const pop = () => useUI.getState().syncLocation();
+    setDark(isDark(theme));
+    if (theme !== "system") return;
+    return watchSystemTheme(() => { applyTheme("system"); setDark(isDark("system")); });
+  }, [theme]);
+  useEffect(() => {
+    const resize = () => {
+      const desktop = useDesktop.getState();
+      desktop.setMobile(isMobileWidth(window.innerWidth));
+      desktop.clampAll(window.innerWidth, window.innerHeight);
+    };
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  useEffect(() => {
+    const pop = () => {
+      useUI.getState().syncLocation();
+      if (/^\/sessions\/[^/]+$/.test(location.pathname)) useDesktop.getState().open("sessions");
+    };
     window.addEventListener("popstate", pop);
     return () => window.removeEventListener("popstate", pop);
   }, []);
@@ -49,21 +71,24 @@ function App() {
     const shortcut = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey ||
-        target.closest("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
+        target.closest("input, textarea, select, [contenteditable=true], [role=dialog], [role=menu]")) return;
       if (event.key === "/") {
-        const search = document.getElementById("search");
-        if (search?.getClientRects().length) { event.preventDefault(); search.focus(); }
+        event.preventDefault();
+        useDesktop.getState().focus("sessions");
+        requestAnimationFrame(() => {
+          const search = document.getElementById("search");
+          if (search?.getClientRects().length) search.focus();
+        });
       }
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
   useEffect(() => {
-    document.title = detail.data?.session && id ? `${detail.data.session.sessionName ?? "세션 상세"} · Relay` : "Relay · 세션 워크스페이스";
+    document.title = detail.data?.session && id ? `${detail.data.session.sessionName ?? "세션 상세"} · Relay` : "Relay";
     if (id !== selectedRef.current) {
       const previous = selectedRef.current;
       selectedRef.current = id;
-      if (id && window.matchMedia("(max-width: 1100px)").matches) window.scrollTo(0, 0);
       if (id) document.querySelector<HTMLElement>(".detail-panel")?.focus({ preventScroll: true });
       else if (previous) {
         const link = Array.from(document.querySelectorAll<HTMLAnchorElement>(".session-name"))
@@ -93,26 +118,21 @@ function App() {
   }
   const activeFilters = ["q", "provider", "agent", "cwd"].filter((key) => params.has(key));
 
-  return <div className="app-shell">
+  return <div className="desktop" data-shell="desktop" data-mobile={mobile ? "" : undefined}>
     <a className="skip-link" href="#workspace">본문으로 건너뛰기</a>
-    <WorkspaceSidebar health={health.data} connection={failed ? "offline" : pending ? "pending" : "online"} />
-    <div className="workspace-shell"><header className="topbar"><div className="breadcrumb"><Layers /><span>워크스페이스</span><ChevronRight /><strong>세션 기록</strong></div><span className="local-label"><Terminal />로컬 · 읽기 전용</span></header>
-      <main id="workspace" tabIndex={-1}>
-        <div className="workspace-heading"><div><h1>세션 기록 <Badge variant="secondary">{list.data?.page.total.toLocaleString() ?? "—"}</Badge></h1><span>최근 기록부터 확인하고 다음 대화에 필요한 맥락을 복사하세요.</span></div></div>
-        <Filters />
-        {activeFilters.length > 0 && <div className="filter-chips" role="group" aria-label="적용된 필터">{activeFilters.map((key) => <Badge variant="secondary" key={key}>{params.get(key)}<button type="button" aria-label={`${key} 필터 해제`} onClick={() => { const next = new URLSearchParams(params); next.delete(key); next.delete("offset"); navigate(`/?${next}`); }}><X /></button></Badge>)}<Button variant="ghost" size="xs" onClick={() => navigate("/")}>전체 초기화</Button></div>}
-        <ErrorNotice id="global-error" error={health.error} />
-        <div className={cn("session-workspace", id && "has-detail")}>
-          <SessionList list={list} selectedId={id} activeFilters={activeFilters} storeDirectory={health.data?.dataDirectory} copy={copy} onPage={listPage} />
-          {id ? <SessionDetail key={id} detail={detail} updates={updates} children={children} storeDirectory={health.data?.dataDirectory} copy={copy} /> : <ContextGuide />}
-        </div>
-        <footer className="workspace-footer"><div id="connection-state" role="status"><Radio className={cn(failed && "offline")} />{failed ? "연결 끊김 또는 조회 오류 · 재시도 중" : pending ? "연결 확인 중…" : "연결됨 · 3초마다 자동 조회"}</div><span>{successAt ? `마지막 성공 조회 ${new Date(successAt).toLocaleTimeString("ko-KR")}` : "마지막 조회 —"}</span></footer>
-      </main>
-    </div>
-    {copyStatus && <div id="copy-status" className="copy-toast" role="status"><Check />{copyStatus}</div>}
-    {fallback !== null && <section id="copy-fallback" className="copy-fallback" aria-labelledby="copy-label" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeFallback(); } }}><div><label id="copy-label" htmlFor="copy-text">자동 복사 실패 — 아래 원문을 선택하여 복사하세요.</label><Button variant="ghost" size="icon-sm" aria-label="복사 원문 닫기" onClick={closeFallback}><X /></Button></div><Textarea id="copy-text" ref={copyRef} value={fallback.value} readOnly /></section>}
+    <Wallpaper dark={dark} />
+    <MenuBar connection={connection} dark={dark} />
+    <main id="desktop">
+      <SessionsWindow list={list} detail={detail} updates={updates} relations={children} health={health.data} params={params}
+        selectedId={id} activeFilters={activeFilters} copy={copy} onPage={listPage} successAt={successAt} />
+      <GuideWindow />
+      <CommandWindow detail={detail} health={health.data} copy={copy} />
+      <SettingsWindow health={health.data} healthError={health.error} connection={connection} />
+    </main>
+    <Dock />
+    {copyStatus && <div id="copy-status" className="copy-toast material-toast" role="status"><Check />{copyStatus}</div>}
+    {fallback !== null && <section id="copy-fallback" className="copy-fallback material-menu" aria-labelledby="copy-label" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeFallback(); } }}><div><label id="copy-label" htmlFor="copy-text">자동 복사 실패 — 아래 원문을 선택하여 복사하세요.</label><Button variant="ghost" size="icon-sm" aria-label="복사 원문 닫기" onClick={closeFallback}><X /></Button></div><Textarea id="copy-text" ref={copyRef} value={fallback.value} readOnly /></section>}
   </div>;
 }
-
 
 createRoot(document.getElementById("root")!).render(<StrictMode><QueryClientProvider client={queryClient}><TooltipProvider delayDuration={250}><App /></TooltipProvider></QueryClientProvider></StrictMode>);

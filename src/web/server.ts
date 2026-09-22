@@ -16,6 +16,7 @@ export function handler(service: SessionService, config: Config) {
       if (url.pathname.startsWith("/api/")) return Response.json(api(url, service, config), { headers: securityHeaders });
       const asset = assets.get(/^\/sessions\/[^/]+$/.test(url.pathname) ? "/" : url.pathname);
       if (!asset) throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);
+      if ("file" in asset) return new Response(Bun.file(asset.file), { headers: { ...securityHeaders, "Content-Type": asset.type, "Cache-Control": asset.cache } });
       return new Response(asset.body, { headers: { ...securityHeaders, "Content-Type": asset.type } });
     } catch (error) {
       const failure = error instanceof RelayError ? error : new RelayError("INTERNAL_ERROR", "요청 처리 중 오류가 발생했습니다.", 5, 500);

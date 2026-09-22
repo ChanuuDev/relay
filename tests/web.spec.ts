@@ -1,79 +1,14 @@
-import { test, expect, type Page } from "@playwright/test";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import net from "node:net";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { test, expect } from "@playwright/test";
+import { spawnSync } from "node:child_process";
+import { binary, cli, clipboardText, env, hook, launch, record, ready, spawnEnv, stop, useRelayServer, version } from "./web-helpers";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const binary = path.join(root, "dist", process.platform === "win32" ? "relay.exe" : "relay");
-const { version } = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
-const spawnEnv = { ...process.env, RELAY_SKIP_HOOK_INSTALL: "1" };
-let dir: string;
-let port: number;
-let server: ChildProcess | undefined;
-let url: string;
-
-function cli(args: string[]) {
-  const result = spawnSync(binary, [...args, "--data-dir", dir, "--json"], { cwd: dir, encoding: "utf8", timeout: 10000, env: spawnEnv });
-  if (result.status !== 0) throw new Error(`CLI failed: ${result.stderr} ${result.error ?? ""}`);
-  return JSON.parse(result.stdout);
-}
-function record(id: string, name: string, provider = "openai", agent = "codex", summary = "첫 기록") {
-  return cli(["record", "--provider", provider, "--agent", agent, "--session-id", id, "--session-name", name, "--cwd", dir, "--summary", summary]);
-}
-/** What a host session hook sends on stdin, through the same binary the hosts call. */
-function hook(alias: string, payload: Record<string, unknown>, end = false) {
-  const result = spawnSync(binary, ["hook", alias, ...(end ? ["--end"] : []), "--data-dir", dir],
-    { cwd: dir, encoding: "utf8", timeout: 10000, env: spawnEnv, input: JSON.stringify(payload) });
-  if (result.status !== 0 || result.stdout.trim() !== "{}") throw new Error(`hook failed: ${result.stderr} ${result.error ?? ""}`);
-}
-async function launch() {
-  server = spawn(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, windowsHide: true, stdio: "pipe", env: spawnEnv });
-  let logs = ""; server.stderr?.on("data", chunk => { logs += chunk; });
-  await expect.poll(async () => {
-    if (server?.exitCode !== null) throw new Error(`Server exited: ${logs}`);
-    try { return (await fetch(`${url}/api/v1/health`)).status; } catch { return 0; }
-  }).toBe(200);
-}
-async function stop() {
-  const child = server; server = undefined;
-  if (!child || child.exitCode !== null) return;
-  const done = new Promise<void>(resolve => child.once("exit", () => resolve()));
-  child.kill("SIGTERM"); await done;
-}
-async function ready(page: Page) {
-  await page.goto(url);
-  await expect(page.locator("#connection-state")).toContainText("연결됨");
-}
-
-async function clipboardText(page: Page) {
-  // Windows' native clipboard converts LF to CRLF; compare text using LF on every OS.
-  return (await page.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n");
-}
-
-test.beforeEach(async () => {
-  dir = mkdtempSync(path.join(tmpdir(), "relay-browser-"));
-  const reservation = net.createServer();
-  await new Promise<void>(resolve => reservation.listen(0, "127.0.0.1", resolve));
-  port = (reservation.address() as net.AddressInfo).port;
-  await new Promise<void>(resolve => reservation.close(() => resolve()));
-  url = `http://127.0.0.1:${port}`;
-  await launch();
-});
-test.afterEach(async () => {
-  await stop();
-  const target = realpathSync(dir);
-  if (path.dirname(target).toLowerCase() !== realpathSync(tmpdir()).toLowerCase() || !path.basename(target).startsWith("relay-browser-")) throw new Error("Unsafe cleanup");
-  rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-});
+useRelayServer();
 
 test("standalone binary outside source: CLI → table → detail/history → reconnect", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", err => errors.push(err.message));
-  expect(spawnSync(binary, ["--version"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout.trim()).toBe(version);
-  expect(spawnSync(binary, ["--help"], { cwd: dir, encoding: "utf8", env: spawnEnv }).stdout).toContain("Usage: relay");
-  const occupied = spawnSync(binary, ["web", "--data-dir", dir, "--port", String(port)], { cwd: dir, encoding: "utf8", timeout: 5000, env: spawnEnv });
+  expect(spawnSync(binary, ["--version"], { cwd: env.dir, encoding: "utf8", env: spawnEnv }).stdout.trim()).toBe(version);
+  expect(spawnSync(binary, ["--help"], { cwd: env.dir, encoding: "utf8", env: spawnEnv }).stdout).toContain("Usage: relay");
+  const occupied = spawnSync(binary, ["web", "--data-dir", env.dir, "--port", String(env.port)], { cwd: env.dir, encoding: "utf8", timeout: 5000, env: spawnEnv });
   expect(occupied.status).toBe(6); expect(occupied.stdout).toBe(""); expect(occupied.stderr).toContain("PORT_IN_USE");
   await ready(page); await expect(page.getByText("저장된 세션이 없습니다.", { exact: false })).toBeVisible();
   const created = record("external-session", "CLI에서 시작한 한국어 작업");
@@ -100,21 +35,21 @@ test("standalone binary outside source: CLI → table → detail/history → rec
 });
 
 test("a closed session is marked in the list and the detail; an untouched automatic record disappears on close", async ({ page }) => {
-  hook("codex", { session_id: "worked", cwd: dir });
-  hook("codex", { session_id: "idle", cwd: dir });
+  hook("codex", { session_id: "worked", cwd: env.dir });
+  hook("codex", { session_id: "idle", cwd: env.dir });
   cli(["update", "--session-id", "worked", "--summary", "작업 맥락 기록"]);
   await ready(page);
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(2);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(2);
   await expect(page.locator(".ended-badge")).toHaveCount(0);
   hook("codex", { session_id: "worked", reason: "prompt_input_exit" }, true);
   hook("codex", { session_id: "idle", reason: "prompt_input_exit" }, true);
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1, { timeout: 5000 });
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1, { timeout: 5000 });
   await expect(page.locator("#list-content .ended-badge")).toHaveText("종료");
   await page.locator("#list-content .row-summary").first().click();
   await expect(page.locator("[data-testid=session-end]")).toContainText("prompt_input_exit");
   await expect(page.getByRole("complementary", { name: "세션 상세" }).locator(".ended-badge")).toBeVisible();
   // The host starts the same session again: the end on record clears without a page reload.
-  hook("codex", { session_id: "worked", cwd: dir });
+  hook("codex", { session_id: "worked", cwd: env.dir });
   await expect(page.locator("[data-testid=session-end]")).toHaveText("기록 없음", { timeout: 5000 });
   await expect(page.locator(".ended-badge")).toHaveCount(0);
 });
@@ -124,16 +59,16 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   const parent = record("claude-parent", "Claude 이전 작업", "anthropic", "claude-code");
   cli(["update", "--session-id", "claude-parent", "--summary", "작업 인계"]);
   const child = cli(["continue", "claude-parent", "--parent-provider", "anthropic", "--provider", "openai", "--agent", "codex", "--session-id", "child", "--session-name", "Codex 후속 작업", "--summary", "재개"]);
-  await ready(page); await expect(page.locator("#list-content tbody tr")).toHaveCount(50);
+  await ready(page); await expect(page.locator("#list-content .session-row")).toHaveCount(50);
   await page.screenshot({ path: test.info().outputPath("table.png") });
   await expect(page.locator(".pager")).toContainText("총 107건");
   await page.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(page).toHaveURL(/offset=50/); await expect(page.locator("#list-content tbody tr")).toHaveCount(50);
+  await expect(page).toHaveURL(/offset=50/); await expect(page.locator("#list-content .session-row")).toHaveCount(50);
   await page.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(7);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(7);
   await page.getByLabel("Provider", { exact: true }).fill("anthropic");
   await page.getByRole("button", { name: "검색", exact: true }).click();
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
   const a = page.getByRole("link", { name: "Claude 이전 작업" }); await a.focus(); await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(parent.session.id));
   await page.getByRole("tab", { name: /세션 연결/ }).click();
@@ -142,7 +77,7 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await page.getByRole("complementary", { name: "세션 상세" }).getByRole("link", { name: "Claude 이전 작업" }).click();
   await page.getByRole("link", { name: "목록으로 돌아가기", exact: false }).click();
   await expect(page.getByLabel("Provider", { exact: true })).toHaveValue("anthropic");
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
   await page.getByLabel("검색", { exact: true }).fill("없는 세션"); await page.keyboard.press("Enter");
   await expect(page.getByText("검색 결과가 없습니다.", { exact: true })).toBeVisible();
 });
@@ -151,15 +86,15 @@ test("context copy is one shell-safe line handing over the lookup command, never
   const id = "literal'id; echo untrusted";
   const payload = '<img src=x onerror="window.pwned=1">\n<script>window.pwned=1</script>';
   record(id, "안전한 텍스트 검사", "openai", "codex", payload);
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
   await ready(page);
   await page.getByRole("button", { name: "세션 컨텍스트 복사", exact: true }).click();
-  await expect(page).toHaveURL(url + "/");
+  await expect(page).toHaveURL(env.url + "/");
   const listContext = await clipboardText(page);
   // A line break arrives as Enter while the paste is still coming in: the receiving CLI would send
   // the first lines as a message and drop the rest.
   expect(listContext).not.toMatch(/[\r\n]/);
-  for (const value of ["relay show", "--provider 'openai'", "--data-dir", dir.replaceAll("\\", "/")]) expect(listContext).toContain(value);
+  for (const value of ["relay show", "--provider 'openai'", "--data-dir", env.dir.replaceAll("\\", "/")]) expect(listContext).toContain(value);
   // The ID reaches the command quoted for whichever shell the platform defaults to.
   expect(listContext).toMatch(/literal(''|'"'"')id; echo untrusted/);
   expect(listContext).toMatch(/명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요\.$/);
@@ -176,7 +111,7 @@ test("context copy is one shell-safe line handing over the lookup command, never
   await page.getByText("세션 식별자", { exact: true }).click();
   await page.getByRole("button", { name: "Agent Session ID만 복사", exact: true }).click();
   expect(await clipboardText(page)).toBe(id);
-  const command = `relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${dir.replaceAll("\\", "/")}' --json`;
+  const command = `relay show 'literal''id; echo untrusted' --provider 'openai' --data-dir '${env.dir.replaceAll("\\", "/")}' --json`;
   await page.getByLabel("조회 명령 셸").selectOption("powershell");
   await page.getByRole("button", { name: "조회 명령 복사" }).click();
   expect(await clipboardText(page)).toBe(command);
@@ -217,12 +152,12 @@ test("polling preserves unsaved filter text, focus and scroll; hidden tabs pause
 test("context falls back to the default store command when storage lookup is unavailable", async ({ page, context }) => {
   record("same-id", "다른 제공자 작업");
   cli(["record", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "same-id",
-    "--session-name", "완료된 Claude 작업", "--model", "recorded-model", "--cwd", dir, "--summary", "이전 요약"]);
+    "--session-name", "완료된 Claude 작업", "--model", "recorded-model", "--cwd", env.dir, "--summary", "이전 요약"]);
   cli(["update", "--session-id", "same-id", "--provider", "anthropic", "--summary", "검증까지 마친 작업"]);
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: url });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
   await page.route("**/api/v1/health", route => route.fulfill({ status: 503, contentType: "application/json",
     body: JSON.stringify({ schemaVersion: 1, error: { message: "저장소 정보 조회 실패" } }) }));
-  await page.goto(url);
+  await page.goto(env.url);
   const row = page.locator(".session-row").filter({ has: page.getByRole("link", { name: "완료된 Claude 작업" }) });
   await row.getByRole("button", { name: "세션 컨텍스트 복사" }).click();
   const copied = await clipboardText(page);
@@ -235,23 +170,23 @@ test("context falls back to the default store command when storage lookup is una
 
 test("partial section failure keeps detail; missing ID and invalid input are not empty state", async ({ page }) => {
   const s = record("a", "부분 실패 검사");
-  await page.goto(`${url}/sessions/${s.session.id}`);
+  await page.goto(`${env.url}/sessions/${s.session.id}`);
   await expect(page.locator(".summary")).toHaveText("첫 기록");
   await page.route("**/api/v1/sessions/*/updates?*", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ schemaVersion: 1, error: { code: "DB_BUSY", message: "이력 잠금" } }) }));
   await expect(page.locator(".summary")).toHaveText("첫 기록");
   await page.getByRole("tab", { name: /기록 이력/ }).click();
   await expect(page.locator("#updates-error")).toContainText("이력 잠금");
   await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(1);
-  await page.goto(`${url}/sessions/absent`); await expect(page.locator("#detail-error")).toContainText("세션을 찾을 수 없습니다");
+  await page.goto(`${env.url}/sessions/absent`); await expect(page.locator("#detail-error")).toContainText("세션을 찾을 수 없습니다");
   await expect(page.getByRole("link", { name: "목록으로 돌아가기", exact: false })).toBeVisible();
-  await page.goto(`${url}/?status=bad`); await expect(page.locator("#list-error")).toContainText("status");
+  await page.goto(`${env.url}/?status=bad`); await expect(page.locator("#list-error")).toContainText("status");
   await expect(page.getByText("저장된 세션이 없습니다.", { exact: false })).toHaveCount(0);
 });
 
 test("narrow layout keeps full detail readable without page overflow", async ({ page }) => {
   const s = record("mobile", "좁은 화면 확인", "openai", "codex", "긴 한국어 요약 ".repeat(80));
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${url}/sessions/${s.session.id}`);
+  await page.goto(`${env.url}/sessions/${s.session.id}`);
   await expect(page.locator(".summary")).toContainText("긴 한국어 요약");
   await page.screenshot({ path: test.info().outputPath("mobile.png"), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -262,7 +197,7 @@ test("history and child pages beyond 50 remain navigable; detail polling preserv
   for (let i = 0; i < 52; i++) cli(["update", "--session-id", "parent", "--summary", `진행 ${i}`]);
   cli(["update", "--session-id", "parent", "--summary", "부모 종료"]);
   for (let i = 0; i < 52; i++) cli(["continue", "parent", "--provider", "openai", "--agent", "codex", "--session-id", `child-${i}`, "--session-name", `자식 ${i}`, "--summary", "자식 시작"]);
-  await page.goto(`${url}/sessions/${parent.session.id}`);
+  await page.goto(`${env.url}/sessions/${parent.session.id}`);
   await page.getByRole("tab", { name: /기록 이력/ }).click();
   await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(50);
   await page.locator("#updates-content").getByRole("button", { name: "다음", exact: true }).click();
@@ -312,16 +247,16 @@ test("record filters, filter chips and browser history keep their scopes without
   record("first", "검색할 설계 작업");
   record("second", "검색할 다른 작업", "anthropic", "claude-code");
   await ready(page);
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(2);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(2);
   await expect(page.getByRole("button", { name: /진행 중|중단됨|완료.*필터|상태 안내/ })).toHaveCount(0);
   await expect(page.locator(".stats-grid, .status-badge")).toHaveCount(0);
   await page.getByRole("button", { name: "상세 필터", exact: true }).click();
   await page.getByLabel("Agent", { exact: true }).fill("codex");
-  await page.getByLabel("프로젝트 경로", { exact: true }).fill(dir);
+  await page.getByLabel("프로젝트 경로", { exact: true }).fill(env.dir);
   await page.getByLabel("표시 개수", { exact: true }).selectOption("20");
   await page.getByRole("button", { name: "검색", exact: true }).click();
   await expect(page).toHaveURL(/limit=20/);
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
   await page.getByRole("link", { name: "검색할 설계 작업" }).click();
   await expect(page.getByRole("complementary", { name: "세션 상세" })).toBeVisible();
   await expect(page.locator(".selected-row")).toContainText("검색할 설계 작업");
@@ -329,7 +264,7 @@ test("record filters, filter chips and browser history keep their scopes without
   await expect(page.getByLabel("Agent", { exact: true })).toHaveValue("codex");
   await expect(page.getByLabel("표시 개수", { exact: true })).toHaveValue("20");
   await page.getByRole("button", { name: "agent 필터 해제" }).click();
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(2);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(2);
   await page.getByRole("button", { name: "전체 초기화", exact: true }).click();
   await expect(page.getByLabel("Agent", { exact: true })).toHaveValue("");
 });
@@ -340,7 +275,7 @@ test("mobile list, detail tabs and return preserve a searched session without ho
   await ready(page);
   await page.getByLabel("검색", { exact: true }).fill("모바일 작업");
   await page.getByRole("button", { name: "검색", exact: true }).click();
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("link", { name: /^모바일 작업/ }).click();
   await expect(page.getByRole("complementary", { name: "세션 상세" })).toBeVisible();
@@ -350,7 +285,7 @@ test("mobile list, detail tabs and return preserve a searched session without ho
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("link", { name: "목록으로 돌아가기" }).click();
   await expect(page.getByLabel("검색", { exact: true })).toHaveValue("모바일 작업");
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
 });
 
 test("search shortcut and keyboard detail navigation preserve focus and drafts", async ({ page }) => {
@@ -386,7 +321,7 @@ test("record discovery and warm responsive workspace stay usable at narrow width
   await expect(page.getByLabel("검색", { exact: true })).toBeFocused();
   await page.getByLabel("검색", { exact: true }).fill("이전 디자인");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#list-content tbody tr")).toHaveCount(1);
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
   await expect(page.getByRole("link", { name: "이전 디자인 작업" })).toBeVisible();
   await page.emulateMedia({ reducedMotion: "reduce" });
   for (const width of [1920, 1280, 1024, 760, 390, 320]) {
@@ -398,7 +333,7 @@ test("record discovery and warm responsive workspace stay usable at narrow width
     const copy = page.getByRole("complementary", { name: "세션 상세" }).getByRole("button", { name: "세션 컨텍스트 복사", exact: true });
     await expect(copy).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: test.info().outputPath(`cursor-detail-${width}.png`), fullPage: true });
+    await page.screenshot({ path: test.info().outputPath(`desktop-detail-${width}.png`), fullPage: true });
     await page.getByRole("link", { name: "목록으로 돌아가기" }).click();
     await expect(page.getByRole("link", { name: "이전 디자인 작업" })).toBeFocused();
   }
@@ -409,13 +344,13 @@ test("connection indicator stays neutral until loaded and reflects offline recov
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   await page.route("**/api/v1/health", async route => { await pending; await route.continue(); });
-  await page.goto(url);
-  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "pending");
+  await page.goto(env.url);
+  await expect(page.locator("#connection-state .connection-dot")).toHaveAttribute("data-state", "pending");
   release();
-  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "online");
+  await expect(page.locator("#connection-state .connection-dot")).toHaveAttribute("data-state", "online");
   await stop();
-  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "offline", { timeout: 10000 });
+  await expect(page.locator("#connection-state .connection-dot")).toHaveAttribute("data-state", "offline", { timeout: 10000 });
   await expect(page.getByRole("link", { name: "연결 상태 확인" })).toBeVisible();
   await launch();
-  await expect(page.locator(".sidebar-footer .connection-dot")).toHaveAttribute("data-state", "online", { timeout: 10000 });
+  await expect(page.locator("#connection-state .connection-dot")).toHaveAttribute("data-state", "online", { timeout: 10000 });
 });

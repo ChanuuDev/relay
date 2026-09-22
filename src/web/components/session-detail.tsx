@@ -22,18 +22,20 @@ export function SessionDetail({ detail, updates, children, storeDirectory, copy 
   const setShell = useUI((state) => state.setShell);
   const s = detail.data?.session;
   return <aside className="detail-panel" aria-label="세션 상세" tabIndex={-1}>
-    <div className="detail-topline"><span className="eyebrow">SESSION DETAILS</span><NavLink href={listLocation()} className="close-detail" aria-label="목록으로 돌아가기"><ArrowLeft /> 목록으로</NavLink></div>
+    <div className="detail-topline"><NavLink href={listLocation()} className="close-detail" aria-label="목록으로 돌아가기"><ArrowLeft />목록으로</NavLink>
+      {s && <><span className="detail-updated">최근 갱신 {timestamp(s.updatedAt)}</span>
+        <span className="detail-source"><span className="muted">{s.agent}</span>{s.endedAt && <Badge variant="outline" className="ended-badge">종료</Badge>}</span></>}</div>
     <ErrorNotice id="detail-error" error={detail.error} />
     {detail.isPending ? <Loading /> : s ? <>
-      <header className="detail-header"><div className="flex items-center gap-2"><span className="muted">{s.agent}</span>{s.endedAt && <Badge variant="outline" className="ended-badge">종료</Badge>}</div>
+      <header className="detail-header">
         <h2>{s.sessionName ?? "이름 없는 세션"}</h2><p className="detail-project"><Folder />{projectName(s.workingDirectory)}</p></header>
-      <div className="detail-actions"><Button onClick={() => copy(sessionContext(s, { shell, storeDirectory }))}><Copy data-icon="inline-start" />세션 컨텍스트 복사</Button>
-        <Button variant="outline" onClick={() => copy(sessionCommand(s, storeDirectory, shell))}><Terminal data-icon="inline-start" />조회 명령 복사</Button></div>
+      <div className="detail-actions"><Button size="sm" onClick={() => copy(sessionContext(s, { shell, storeDirectory }))}><Copy data-icon="inline-start" />세션 컨텍스트 복사</Button>
+        <Button size="sm" variant="outline" onClick={() => copy(sessionCommand(s, storeDirectory, shell))}><Terminal data-icon="inline-start" />조회 명령 복사</Button></div>
       <p className="context-copy-hint">붙여넣는 순간 대화가 먼저 전송되지 않도록, 이 기록을 읽는 조회 명령만 줄바꿈 없이 한 줄로 복사합니다.</p>
       <div className="shell-select"><label htmlFor="command-shell">조회 명령 셸</label><NativeSelect id="command-shell" size="sm" value={shell} onChange={(event) => setShell(event.target.value as typeof shell)}>
         <NativeSelectOption value="powershell">PowerShell</NativeSelectOption><NativeSelectOption value="bash">Bash</NativeSelectOption></NativeSelect></div>
       <Tabs value={tab} onValueChange={(value) => setTab(value as DetailTab)}>
-        <TabsList variant="line" className="detail-tabs"><TabsTrigger value="overview">개요</TabsTrigger><TabsTrigger value="history">기록 이력 <span>{updates.data?.page.total ?? "—"}</span></TabsTrigger>
+        <TabsList className="detail-tabs"><TabsTrigger value="overview">개요</TabsTrigger><TabsTrigger value="history">기록 이력 <span>{updates.data?.page.total ?? "—"}</span></TabsTrigger>
           <TabsTrigger value="connections">세션 연결 <span>{children.data ? children.data.page.total + (detail.data?.parentSession ? 1 : 0) : "—"}</span></TabsTrigger></TabsList>
         <TabsContent value="overview"><div className="detail-section"><h3>최근 작업 요약</h3><div className="summary">{s.summary}</div>
           <p className="hint">작업을 이어가기 전, 실제 프로젝트 파일도 확인하세요.</p></div><Separator /><SessionMetadata session={s} copy={copy} /></TabsContent>

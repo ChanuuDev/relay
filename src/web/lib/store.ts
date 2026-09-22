@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { applyTheme, readTheme, type Theme } from "./theme";
 
 export type DetailTab = "overview" | "history" | "connections";
 export type FilterDraft = { q: string; provider: string; agent: string; cwd: string; limit: string };
@@ -21,10 +22,12 @@ interface UIState {
   advanced: boolean;
   tab: DetailTab;
   shell: "powershell" | "bash";
+  theme: Theme;
   setDraft: (patch: Partial<FilterDraft>) => void;
   setAdvanced: (open: boolean) => void;
   setTab: (tab: DetailTab) => void;
   setShell: (shell: "powershell" | "bash") => void;
+  setTheme: (theme: Theme) => void;
   syncLocation: () => void;
 }
 
@@ -32,8 +35,10 @@ export const useUI = create<UIState>((set) => ({
   location: location.pathname + location.search,
   draft: readDraft(), advanced: Boolean(readDraft().agent || readDraft().cwd), tab: "overview",
   shell: navigator.platform.startsWith("Win") ? "powershell" : "bash",
+  theme: readTheme(),
   setDraft: (patch) => set((state) => ({ draft: { ...state.draft, ...patch } })),
   setAdvanced: (advanced) => set({ advanced }), setTab: (tab) => set({ tab }), setShell: (shell) => set({ shell }),
+  setTheme: (theme) => { applyTheme(theme); set({ theme }); },
   syncLocation: () => set((state) => {
     const next = location.pathname + location.search;
     const changedSession = state.location.split("?")[0] !== location.pathname;
