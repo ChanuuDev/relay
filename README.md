@@ -145,9 +145,12 @@ Agent가 스스로 기록하게 하려면 프로젝트마다 스킬과 지침을
 ```powershell
 .\scripts\install-skill.ps1 -Agent codex -ProjectDirectory "C:\workspace\my-project"
 .\scripts\install-skill.ps1 -Agent claude -ProjectDirectory "C:\workspace\my-project"
+.\scripts\install-skill.ps1 -Agent grok -ProjectDirectory "C:\workspace\my-project"
 ```
 
-각각 `.agents/skills/relay-session`, `.claude/skills/relay-session`에 배치됩니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code에서는 `/relay-session grok`으로 Grok 기록을 조회할 수 있습니다.
+각각 `.agents/skills/relay-session`, `.claude/skills/relay-session`, `.grok/skills/relay-session`에 배치됩니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code와 Grok에서는 `/relay-session grok`으로 Grok 기록을 조회할 수 있습니다.
+
+모든 프로젝트에서 쓰려면 `skills/relay-session`을 `~/.agents/skills/relay-session`에 복사하세요. Grok과 Codex가 함께 읽는 전역 스킬 폴더입니다.
 
 ### 프로젝트 지침
 

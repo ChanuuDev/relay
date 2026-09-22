@@ -32,6 +32,11 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   expect(installed).toContain("argument-hint: codex|claude|grok");
   // The agent must be able to invoke the skill itself; /relay-session stays available either way.
   expect(installed).not.toContain("disable-model-invocation");
+  expect(install("grok").exitCode).toBe(0);
+  const grokSkill = path.join(dir, ".grok/skills/relay-session/SKILL.md");
+  expect(readFileSync(grokSkill, "utf8")).toBe(installed);
+  // Only Codex needs the interface descriptor; the other hosts read the frontmatter.
+  expect(existsSync(path.join(dir, ".grok/skills/relay-session/agents/openai.yaml"))).toBe(false);
   expect(install("codex", "relative").exitCode).not.toBe(0);
 }, 15000);
 

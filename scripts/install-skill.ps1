@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('codex', 'claude')]
+    [ValidateSet('codex', 'claude', 'grok')]
     [string]$Agent,
     [Parameter(Mandatory = $true)]
     [string]$ProjectDirectory
@@ -11,7 +11,7 @@ if (-not [IO.Path]::IsPathRooted($ProjectDirectory)) { throw 'ProjectDirectory m
 $projectRoot = (Resolve-Path -LiteralPath $ProjectDirectory).Path
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { throw 'ProjectDirectory must be a directory.' }
 $sourceRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills/relay-session'
-$agentFolder = if ($Agent -eq 'codex') { '.agents' } else { '.claude' }
+$agentFolder = switch ($Agent) { 'codex' { '.agents' } 'claude' { '.claude' } 'grok' { '.grok' } }
 $targetRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot "$agentFolder/skills/relay-session"))
 if (-not $targetRoot.StartsWith($projectRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Target must remain inside the selected project.'
@@ -26,9 +26,9 @@ while ($cursor.Length -gt $projectRoot.Length) {
 }
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $skillText = [IO.File]::ReadAllText((Join-Path $sourceRoot 'SKILL.md'), $utf8)
-# Claude Code reads argument-hint from the frontmatter. Model invocation stays enabled so the
-# agent can follow the project instruction to record a session without waiting for /relay-session.
-if ($Agent -eq 'claude') {
+# Claude Code and Grok read argument-hint from the frontmatter. Model invocation stays enabled so
+# the agent can follow the project instruction to record a session without waiting for /relay-session.
+if ($Agent -ne 'codex') {
     $skillText = $skillText -replace '^---\r?\n', "---`nargument-hint: codex|claude|grok`n"
 }
 $files = @{ 'SKILL.md' = $skillText }
