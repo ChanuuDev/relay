@@ -59,9 +59,37 @@ div.desktop (fixed inset-0)
   목록 행은 제목 20px·요약 32px(2줄 고정)·메타 16px로 높이를 통일하며, 시각·건수는 `tabular-nums`, 라벨-값 쌍은 120px 라벨 열을 씁니다.
 - 여백은 4px 배수만 씁니다(행 안쪽 12px, 섹션 안쪽 16px, 섹션 사이 24px).
 
-## 5. 모션과 접근성
+## 5. 모션
 
-창 열기 160ms `scale(.96)→1`, 메뉴 80ms, Dock hover 140ms `translateY(-4px) scale(1.12)`, 테마 전환 200ms 크로스페이드.
-`prefers-reduced-motion: reduce`에서 모두 사라집니다. 초점 링은 2px 시스템 블루, 스크롤바는 얇은 오버레이입니다.
+모든 상태 전환은 GSAP으로 잇습니다. 값과 헬퍼는 **`lib/motion.ts` 한 곳**에만 있고(`MOTION`·`EASE`·`dur()`),
+컴포넌트는 `useGSAP`으로 그 헬퍼만 부릅니다. 애니메이션 대상은 transform·opacity뿐이며(상세 필터 행의 `height: auto`만 예외),
+설계 근거는 `.tasks/motion-design.md`입니다.
+
+| 토큰 | 값 | 용도 |
+| --- | --- | --- |
+| `micro` | 120ms | 툴팁, 칩, 강조선, 상태점 |
+| `fast` | 160ms | 종료(닫기·페이드아웃), 탭 콘텐츠·thumb |
+| `base` | 220ms | 진입, 메뉴, 토스트, 상세 교체, 목록 재정렬 |
+| `window` | 260ms | 창 열기·최소화·복원·최대화 |
+| `stagger` | 30ms (총 300ms 상한) | 목록 행 · `tight` 20ms는 상세 머리글 |
+| `pulse` | 600ms | 갱신된 행·요약의 배경 하이라이트 |
+
+이징은 진입 `power3.out`, 종료 `power2.in`, 이동·크기 `power3.inOut`, 토스트 `back.out(1.4)`, Dock 바운스 `power1.inOut`입니다.
+
+패턴은 넷입니다. **① 스토어 과도 상태** — 창 닫기·최소화는 `closing`/`minimizing`을 켜고 종료 트윈이 끝나면
+`finalizeClose`/`finalizeMinimize`가 실제 상태를 바꿉니다(`data-closing`·`data-minimizing`). **② 클론 오버레이** —
+`key` 교체로 리마운트되는 상세 패널·목록 콘텐츠는 교체 직전 DOM을 떠서 `.detail-clone`(`aria-hidden`+`inert`+`pointer-events:none`)으로
+같은 자리에 덮고 페이드아웃하며, 300ms 타임아웃 가드로 반드시 제거합니다. **③ FLIP** — 목록·타임라인 재정렬과 창 최대화,
+세그먼트 컨트롤 thumb 이동은 `Flip`이 맡습니다(`FlipList`는 커밋 직전 훅이 필요해 유일하게 클래스 컴포넌트입니다).
+**④ 펄스** — 폴링으로 내용이 바뀐 행·요약만 `--pulse-tint`에서 제 배경색으로 돌아옵니다(`data-pulsing`).
+React Query의 structural sharing 덕에 내용이 같은 폴링에서는 아무것도 움직이지 않습니다.
+
+`prefers-reduced-motion: reduce`에서는 `dur()`이 0을 돌려주고 Flip·펄스·클론을 모두 건너뛰어 즉시 반영됩니다.
+애니메이션은 초점·스크롤·URL을 바꾸지 않고, 언마운트를 300ms 이상 늦추지 않으며, 진행 중 트윈은 `overwrite: "auto"`로 정리해
+연타(세션 연타, 닫는 중 다시 열기)에도 상태가 어긋나지 않습니다. 드래그·리사이즈 중에는 트윈을 만들지 않습니다.
+
+## 6. 접근성
+
+초점 링은 2px 시스템 블루, 스크롤바는 얇은 오버레이입니다.
 랜드마크는 `header`(메뉴바) · `main#desktop` · `nav[aria-label=Dock]` · 창마다 `section[role=region]`이며,
 드래그·리사이즈는 포인터 전용이라 `창` 메뉴·Dock·설정의 `창 배치 초기화`가 키보드 대체 수단입니다.

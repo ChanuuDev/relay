@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent } from "react";
 import { APPS, MENU_BAR_HEIGHT, type AppId } from "../../lib/app-config";
-import { reservedBottom, useDesktop } from "../../lib/desktop-store";
+import { clampBox, reservedBottom, useDesktop } from "../../lib/desktop-store";
+import { snapTo } from "../../lib/motion";
 
 export type ResizeDir = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 export const RESIZE_DIRS: ResizeDir[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -9,7 +10,7 @@ export const RESIZE_DIRS: ResizeDir[] = ["n", "s", "e", "w", "ne", "nw", "se", "
 /** 상단바 안의 조작 요소에서는 드래그를 시작하지 않는다. */
 const INTERACTIVE = "a, button, input, select, textarea, [role=button], [role=tab], [role=menu], summary, [contenteditable]";
 
-function track(handle: HTMLElement, event: ReactPointerEvent, onMove: (moveEvent: PointerEvent) => void) {
+function track(handle: HTMLElement, event: ReactPointerEvent, onMove: (moveEvent: PointerEvent) => void, onEnd?: () => void) {
   handle.setPointerCapture(event.pointerId);
   document.body.dataset.windowDragging = "";
   const stop = () => {
@@ -17,6 +18,7 @@ function track(handle: HTMLElement, event: ReactPointerEvent, onMove: (moveEvent
     handle.removeEventListener("pointerup", stop);
     handle.removeEventListener("pointercancel", stop);
     delete document.body.dataset.windowDragging;
+    onEnd?.();
   };
   handle.addEventListener("pointermove", onMove);
   handle.addEventListener("pointerup", stop);
@@ -37,6 +39,12 @@ export function useDragHandle(id: AppId) {
       const x = Math.min(Math.max(originX + move.clientX - startX, 80 - w), window.innerWidth - 80);
       const y = Math.min(Math.max(originY + move.clientY - startY, MENU_BAR_HEIGHT), maxY);
       useDesktop.getState().move(id, x, y);
+    }, () => {
+      // 뷰포트 밖으로 나간 만큼만 제자리로 스냅한다(§3-A7).
+      const box = useDesktop.getState().windows[id];
+      const snapped = clampBox(box, window.innerWidth, window.innerHeight, APPS[id].min);
+      if (snapped.x === box.x && snapped.y === box.y) return;
+      snapTo({ x: box.x, y: box.y }, { x: snapped.x, y: snapped.y }, (x, y) => useDesktop.getState().move(id, x, y));
     });
   }, [id]);
 

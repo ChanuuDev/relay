@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { useGSAP } from "@gsap/react";
 import { Moon, Sun } from "lucide-react";
 import { APPS, APP_IDS, type AppId } from "../../lib/app-config";
 import { useDesktop } from "../../lib/desktop-store";
+import { popScale, spinIn } from "../../lib/motion";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
 import { RelayMark } from "./app-icons";
@@ -36,19 +38,49 @@ export function MenuBar({ connection, dark }: { connection: Connection; dark: bo
   const theme = useUI((state) => state.theme);
   const setTheme = useUI((state) => state.setTheme);
   const [menu, setMenu] = useState<{ kind: MenuKind; left: number; top: number } | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const leavingRef = useRef(false);
   const relayRef = useRef<HTMLButtonElement>(null);
   const windowRef = useRef<HTMLButtonElement>(null);
+  const themeRef = useRef<HTMLButtonElement>(null);
+  const dotRef = useRef<HTMLSpanElement>(null);
+  const was = useRef({ dark, connection });
   const now = useClock();
+  const openKind = leaving ? null : menu?.kind;
+
+  // F3 해·달 아이콘 회전 교체.
+  useGSAP(() => {
+    const previous = was.current.dark;
+    was.current.dark = dark;
+    if (previous !== dark) spinIn(themeRef.current?.querySelector("svg"));
+  }, { dependencies: [dark] });
+  // F4 연결 상태 점 펄스.
+  useGSAP(() => {
+    const previous = was.current.connection;
+    was.current.connection = connection;
+    if (previous !== connection) popScale(dotRef.current);
+  }, { dependencies: [connection] });
 
   function toggle(kind: MenuKind, trigger: HTMLButtonElement | null) {
-    if (menu?.kind === kind || !trigger) { setMenu(null); return; }
+    if (openKind === kind || !trigger) { close(true); return; }
     const rect = trigger.getBoundingClientRect();
+    leavingRef.current = false;
+    setLeaving(false);
     setMenu({ kind, left: rect.left, top: rect.bottom + 6 });
   }
+  /** 초점은 즉시 돌려주고(§4-1), 메뉴는 종료 트윈 뒤에 언마운트한다. */
   function close(returnFocus: boolean) {
-    const trigger = menu?.kind === "relay" ? relayRef.current : windowRef.current;
-    setMenu(null);
+    if (!menu || leavingRef.current) return;
+    const trigger = menu.kind === "relay" ? relayRef.current : windowRef.current;
+    leavingRef.current = true;
+    setLeaving(true);
     if (returnFocus) trigger?.focus();
+  }
+  function exited() {
+    if (!leavingRef.current) return;
+    leavingRef.current = false;
+    setMenu(null);
+    setLeaving(false);
   }
   function openSettings(storage: boolean) {
     useDesktop.getState().open("settings");
@@ -76,16 +108,16 @@ export function MenuBar({ connection, dark }: { connection: Connection; dark: bo
 
   return <header className="menubar material-bar" role="banner">
     <div className="menubar-left">
-      <button ref={relayRef} type="button" className="menubar-mark" aria-label="Relay 메뉴" aria-haspopup="menu" aria-expanded={menu?.kind === "relay"}
-        data-open={menu?.kind === "relay" ? "" : undefined} onClick={(event) => toggle("relay", event.currentTarget)}><RelayMark /></button>
-      <button ref={windowRef} type="button" className="menubar-app" aria-haspopup="menu" aria-expanded={menu?.kind === "window"}
-        data-open={menu?.kind === "window" ? "" : undefined} onClick={(event) => toggle("window", event.currentTarget)}>{target ? APPS[target].title : "Relay"}</button>
-      {menu && <DesktopMenu items={menu.kind === "relay" ? relayItems : windowItems} position={menu} onClose={close} />}
+      <button ref={relayRef} type="button" className="menubar-mark" aria-label="Relay 메뉴" aria-haspopup="menu" aria-expanded={openKind === "relay"}
+        data-open={openKind === "relay" ? "" : undefined} onClick={(event) => toggle("relay", event.currentTarget)}><RelayMark /></button>
+      <button ref={windowRef} type="button" className="menubar-app" aria-haspopup="menu" aria-expanded={openKind === "window"}
+        data-open={openKind === "window" ? "" : undefined} onClick={(event) => toggle("window", event.currentTarget)}>{target ? APPS[target].title : "Relay"}</button>
+      {menu && <DesktopMenu items={menu.kind === "relay" ? relayItems : windowItems} position={menu} leaving={leaving} onClose={close} onExited={exited} />}
     </div>
     <div className="menubar-right">
-      <div id="connection-state" role="status"><span className="connection-dot" data-state={connection} /><span className="connection-text">{CONNECTION_TEXT[connection]}</span></div>
+      <div id="connection-state" role="status"><span ref={dotRef} className="connection-dot" data-state={connection} /><span className="connection-text">{CONNECTION_TEXT[connection]}</span></div>
       <span className="local-label">로컬 · 읽기 전용</span>
-      <button type="button" className="menubar-icon" aria-label={dark ? "라이트 모드로 전환" : "다크 모드로 전환"} onClick={() => setTheme(dark ? "light" : "dark")}>
+      <button ref={themeRef} type="button" className="menubar-icon" aria-label={dark ? "라이트 모드로 전환" : "다크 모드로 전환"} onClick={() => setTheme(dark ? "light" : "dark")}>
         {dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
       </button>
       <button type="button" className="menubar-clock" aria-label={fullFormat.format(now)}>{clockFormat.format(now)}</button>

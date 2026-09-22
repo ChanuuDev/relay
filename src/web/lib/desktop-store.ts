@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { APPS, APP_IDS, DOCK_RESERVED, GUIDE_MIN_VIEWPORT, MAX_Z, MENU_BAR_HEIGHT, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WIDTH, type AppId, type Box } from "./app-config";
+import { captureFrame } from "./motion";
 
 export type Win = { open: boolean; minimized: boolean; maximized: boolean; x: number; y: number; w: number; h: number; z: number };
 export type Windows = Record<AppId, Win>;
@@ -63,20 +64,27 @@ function restore(W: number, H: number, mobile: boolean): Windows {
   return windows;
 }
 
-const topmost = (windows: Windows, skip?: AppId): AppId | null => {
-  const visible = APP_IDS.filter((id) => id !== skip && windows[id].open && !windows[id].minimized);
+const topmost = (windows: Windows, busy: Record<string, Partial<Record<AppId, boolean>>>, skip?: AppId): AppId | null => {
+  const visible = APP_IDS.filter((id) => id !== skip && !busy.closing[id] && !busy.minimizing[id] && windows[id].open && !windows[id].minimized);
   return visible.length ? visible.reduce((best, id) => (windows[id].z > windows[best].z ? id : best)) : null;
 };
+
+/** 종료·최소화 애니메이션이 끝날 때까지만 켜지는 과도 상태(§1, §3-A2·A3). */
+export type Transient = Partial<Record<AppId, boolean>>;
 
 interface DesktopState {
   windows: Windows;
   focused: AppId | null;
   nextZ: number;
   mobile: boolean;
+  closing: Transient;
+  minimizing: Transient;
   open: (id: AppId) => void;
   close: (id: AppId) => void;
+  finalizeClose: (id: AppId) => void;
   focus: (id: AppId) => void;
   minimize: (id: AppId) => void;
+  finalizeMinimize: (id: AppId) => void;
   toggleMaximize: (id: AppId) => void;
   move: (id: AppId, x: number, y: number) => void;
   resize: (id: AppId, w: number, h: number, x?: number, y?: number) => void;
@@ -84,6 +92,11 @@ interface DesktopState {
   setMobile: (mobile: boolean) => void;
   clampAll: (W: number, H: number) => void;
 }
+
+const without = (map: Transient, id: AppId): Transient => {
+  if (!map[id]) return map;
+  const next = { ...map }; delete next[id]; return next;
+};
 
 function raise(state: DesktopState, id: AppId, patch: Partial<Win> = {}) {
   let nextZ = state.nextZ;
@@ -95,7 +108,8 @@ function raise(state: DesktopState, id: AppId, patch: Partial<Win> = {}) {
     order.forEach((app, index) => { windows[app] = { ...windows[app], z: index + 1 }; });
     nextZ = order.length + 1;
   }
-  return { windows, nextZ, focused: id };
+  // 닫는 중·줄이는 중에 다시 열면 과도 상태를 걷어 낸다(§4-3).
+  return { windows, nextZ, focused: id, closing: without(state.closing, id), minimizing: without(state.minimizing, id) };
 }
 
 function initialState() {
@@ -103,22 +117,39 @@ function initialState() {
   const mobile = isMobileWidth(W);
   const windows = restore(W, H, mobile);
   const nextZ = Math.max(0, ...APP_IDS.map((id) => windows[id].z)) + 1;
-  return { windows, focused: "sessions" as AppId | null, nextZ, mobile };
+  return { windows, focused: "sessions" as AppId | null, nextZ, mobile, closing: {} as Transient, minimizing: {} as Transient };
 }
 
 export const useDesktop = create<DesktopState>((set, get) => ({
   ...initialState(),
   open: (id) => set((state) => raise(state, id)),
   focus: (id) => set((state) => (state.focused === id && state.windows[id].open && !state.windows[id].minimized ? state : raise(state, id))),
-  close: (id) => set((state) => {
+  // 닫기·최소화는 과도 상태만 켜고, 종료 트윈이 끝나면 컴포넌트가 finalize*를 부른다(§3-A2·A3).
+  close: (id) => set((state) => (state.closing[id] || !state.windows[id].open ? state : {
+    closing: { ...state.closing, [id]: true },
+    focused: topmost(state.windows, { closing: state.closing, minimizing: state.minimizing }, id),
+  })),
+  finalizeClose: (id) => set((state) => {
+    if (!state.closing[id]) return state;
     const windows: Windows = { ...state.windows, [id]: { ...state.windows[id], open: false, minimized: false, z: 0 } };
-    return { windows, focused: topmost(windows) };
+    const closing = without(state.closing, id);
+    return { windows, closing, focused: topmost(windows, { closing, minimizing: state.minimizing }) };
   }),
   minimize: (id) => set((state) => {
-    const windows: Windows = { ...state.windows, [id]: { ...state.windows[id], minimized: true } };
-    return { windows, focused: topmost(windows) };
+    const win = state.windows[id];
+    if (!win.open || win.minimized || state.minimizing[id] || state.closing[id]) return state;
+    return {
+      minimizing: { ...state.minimizing, [id]: true },
+      focused: topmost(state.windows, { closing: state.closing, minimizing: state.minimizing }, id),
+    };
   }),
-  toggleMaximize: (id) => set((state) => raise(state, id, { maximized: !state.windows[id].maximized })),
+  finalizeMinimize: (id) => set((state) => {
+    if (!state.minimizing[id]) return state;
+    const windows: Windows = { ...state.windows, [id]: { ...state.windows[id], minimized: true } };
+    const minimizing = without(state.minimizing, id);
+    return { windows, minimizing, focused: topmost(windows, { closing: state.closing, minimizing }) };
+  }),
+  toggleMaximize: (id) => { captureFrame(id); set((state) => raise(state, id, { maximized: !state.windows[id].maximized })); },
   move: (id, x, y) => set((state) => ({ windows: { ...state.windows, [id]: { ...state.windows[id], x: Math.round(x), y: Math.round(y) } } })),
   resize: (id, w, h, x, y) => set((state) => ({ windows: { ...state.windows, [id]: {
     ...state.windows[id], w: Math.round(w), h: Math.round(h),
@@ -127,7 +158,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     try { localStorage.removeItem(STORE_KEY); } catch { /* 저장소가 없어도 기본 배치는 적용된다. */ }
     const mobile = get().mobile;
     const windows = defaults(window.innerWidth, window.innerHeight, mobile);
-    return { windows, focused: "sessions", nextZ: 3, mobile };
+    return { windows, focused: "sessions", nextZ: 3, mobile, closing: {}, minimizing: {} };
   }),
   setMobile: (mobile) => set((state) => (state.mobile === mobile ? state : { mobile })),
   clampAll: (W, H) => set((state) => {
@@ -146,7 +177,8 @@ useDesktop.subscribe((state) => {
     const windows: Saved = {};
     for (const id of APP_IDS) {
       const { open, minimized, maximized, x, y, w, h } = state.windows[id];
-      windows[id] = { open, minimized, maximized, x, y, w, h };
+      // 종료·최소화 트윈 중인 창은 최종 상태로 저장한다.
+      windows[id] = { open: open && !state.closing[id], minimized: minimized || Boolean(state.minimizing[id]), maximized, x, y, w, h };
     }
     try { localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, windows })); } catch { /* 저장 실패는 화면 동작에 영향이 없다. */ }
   }, 200);

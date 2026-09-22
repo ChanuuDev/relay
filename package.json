@@ -17,10 +17,12 @@
     "pretest": "npm run build:web"
   },
   "dependencies": {
+    "@gsap/react": "2.1.2",
     "@tanstack/react-query": "5.102.8",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "commander": "15.0.0",
+    "gsap": "3.15.0",
     "lucide-react": "1.46.0",
     "radix-ui": "1.6.7",
     "react": "19.3.0",

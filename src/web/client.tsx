@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { useGSAP } from "@gsap/react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Check, X } from "lucide-react";
 import { Button } from "./components/ui/button";
@@ -15,6 +16,7 @@ import { SettingsWindow } from "./components/apps/settings-window";
 import { resource, type BriefSession, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
+import { enter, enterToast, exit, exitToast } from "./lib/motion";
 import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
 
 const queryClient = new QueryClient();
@@ -39,9 +41,13 @@ function App() {
   const theme = useUI((state) => state.theme);
   const mobile = useDesktop((state) => state.mobile);
   const [dark, setDark] = useState(() => isDark(theme));
-  const [copyStatus, setCopyStatus] = useState("");
+  const [toast, setToast] = useState<{ text: string; id: number } | null>(null);
+  const [toastLeaving, setToastLeaving] = useState(false);
   const [fallback, setFallback] = useState<{ value: string } | null>(null);
+  const [fallbackLeaving, setFallbackLeaving] = useState(false);
   const copyRef = useRef<HTMLTextAreaElement>(null);
+  const toastRef = useRef<HTMLDivElement>(null);
+  const fallbackRef = useRef<HTMLElement>(null);
   const copyTriggerRef = useRef<HTMLElement | null>(null);
   const selectedRef = useRef<string | undefined>(undefined);
 
@@ -97,16 +103,43 @@ function App() {
       }
     }
   }, [id, detail.data?.session.sessionName, currentLocation]);
-  useEffect(() => { if (fallback !== null) { copyRef.current?.focus(); copyRef.current?.select(); } }, [fallback]);
-  useEffect(() => { if (copyStatus) { const timer = setTimeout(() => setCopyStatus(""), 3000); return () => clearTimeout(timer); } }, [copyStatus]);
+  useEffect(() => { if (fallback !== null && !fallbackLeaving) { copyRef.current?.focus(); copyRef.current?.select(); } }, [fallback, fallbackLeaving]);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToastLeaving(true), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+  // D3 토스트: 등장은 back.out으로 튀어오르고, 3초 뒤 종료 트윈이 끝나면 언마운트한다.
+  useGSAP(() => {
+    const element = toastRef.current;
+    if (!toast || !element) return;
+    if (!toastLeaving) { enterToast(element); return; }
+    const { id } = toast;
+    void exitToast(element).then(() => {
+      setToast((current) => (current && current.id === id ? null : current));
+      setToastLeaving(false);
+    });
+  }, { dependencies: [toast?.id, toastLeaving] });
+  // D4 복사 폴백: 오른쪽에서 들어오고, Esc 종료 트윈 뒤 언마운트한다.
+  useGSAP(() => {
+    const element = fallbackRef.current;
+    if (!fallback || !element) return;
+    if (!fallbackLeaving) { enter(element, { x: 16, y: 0 }); return; }
+    void exit(element).then(() => { setFallback(null); setFallbackLeaving(false); });
+  }, { dependencies: [fallback, fallbackLeaving] });
 
   async function copy(value: string) {
     copyTriggerRef.current = document.activeElement as HTMLElement | null;
-    try { await navigator.clipboard.writeText(value); setFallback(null); setCopyStatus("복사했습니다."); }
-    catch { setFallback({ value }); }
+    try {
+      await navigator.clipboard.writeText(value);
+      setFallback(null); setFallbackLeaving(false);
+      setToastLeaving(false); setToast({ text: "복사했습니다.", id: Date.now() });
+    } catch { setFallbackLeaving(false); setFallback({ value }); }
   }
   function closeFallback() {
-    setFallback(null);
+    if (fallbackLeaving) return;
+    setFallbackLeaving(true);
+    // 초점은 애니메이션과 무관하게 즉시 돌려준다(§4-1).
     copyTriggerRef.current?.focus({ preventScroll: true });
   }
   function listPage(offset: number) {
@@ -130,8 +163,10 @@ function App() {
       <SettingsWindow health={health.data} healthError={health.error} connection={connection} />
     </main>
     <Dock />
-    {copyStatus && <div id="copy-status" className="copy-toast material-toast" role="status"><Check />{copyStatus}</div>}
-    {fallback !== null && <section id="copy-fallback" className="copy-fallback material-menu" aria-labelledby="copy-label" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeFallback(); } }}><div><label id="copy-label" htmlFor="copy-text">자동 복사 실패 — 아래 원문을 선택하여 복사하세요.</label><Button variant="ghost" size="icon-sm" aria-label="복사 원문 닫기" onClick={closeFallback}><X /></Button></div><Textarea id="copy-text" ref={copyRef} value={fallback.value} readOnly /></section>}
+    {toast && <div id="copy-status" className="copy-toast material-toast" role="status" ref={toastRef} data-leaving={toastLeaving ? "" : undefined}><Check />{toast.text}</div>}
+    {fallback !== null && <section id="copy-fallback" className="copy-fallback material-menu" aria-labelledby="copy-label" ref={fallbackRef}
+      data-leaving={fallbackLeaving ? "" : undefined}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeFallback(); } }}><div><label id="copy-label" htmlFor="copy-text">자동 복사 실패 — 아래 원문을 선택하여 복사하세요.</label><Button variant="ghost" size="icon-sm" aria-label="복사 원문 닫기" onClick={closeFallback}><X /></Button></div><Textarea id="copy-text" ref={copyRef} value={fallback.value} readOnly /></section>}
   </div>;
 }
 

@@ -1,5 +1,7 @@
-import type { ComponentProps, ReactNode } from "react";
+import { useRef, type ComponentProps, type ReactNode } from "react";
+import { useGSAP } from "@gsap/react";
 import { ArrowLeft, ArrowRight, CircleAlert, Copy, Inbox } from "lucide-react";
+import { enter } from "../lib/motion";
 import type { Page } from "../../session/session.types";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -32,8 +34,11 @@ export function CopyButton({ value, copy, label }: { value: string | (() => stri
 }
 
 export function ErrorNotice({ id, error }: { id: string; error: Error | null }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // B5 알림 등장.
+  useGSAP(() => { if (error) enter(ref.current, { y: 6 }); }, { dependencies: [Boolean(error)] });
   if (!error) return null;
-  return <Alert variant="destructive" id={id}><CircleAlert /><AlertTitle>조회하지 못했습니다</AlertTitle>
+  return <Alert ref={ref} variant="destructive" id={id}><CircleAlert /><AlertTitle>조회하지 못했습니다</AlertTitle>
     <AlertDescription>{error.message}. 마지막 성공 데이터가 있으면 유지하며 자동으로 다시 시도합니다.</AlertDescription></Alert>;
 }
 
