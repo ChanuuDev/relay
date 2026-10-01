@@ -16,6 +16,9 @@ describe("Local read-only HTTP API", () => {
 
   test("health, DTO contract, internal IDs, parent, children and history", async () => {
     const health = await request("/api/v1/health").json(); expect(health.databasePath).toBe(f.config.databasePath);
+    // 모든 응답이 서버 PID를 알려 준다. relay web --close가 이 값으로 끝낼 서버를 찾는다.
+    expect(request("/api/v1/health").headers.get("Relay-Pid")).toBe(String(process.pid));
+    expect(request("/missing").headers.get("Relay-Pid")).toBe(String(process.pid));
     const a = f.service.record(input("provider-a")).session;
     f.service.update("provider-a", "다음 대화에 필요한 맥락");
     const child = f.service.record(input("provider-b", { provider: "anthropic", agent: "claude-code" }), "provider-a").session;

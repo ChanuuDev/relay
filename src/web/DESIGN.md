@@ -7,7 +7,7 @@ Relay 웹 화면은 macOS 데스크톱 메타포를 따릅니다. 참고 디자�
 
 ```
 div.desktop (fixed inset-0)
-├─ div.wallpaper (배경화면 이미지 2장 + 토큰 그라디언트, aria-hidden)
+├─ div.wallpaper (토큰 그라디언트 또는 색상 프리셋 + 기본 사진 2장 + 고른 사진, aria-hidden)
 ├─ header.menubar (28px, z 70)
 ├─ main#desktop (창 레이어, z 1–50)
 │   └─ section.window[data-window] × 4  — 세션 / 가이드 / 명령 / 설정
@@ -15,6 +15,7 @@ div.desktop (fixed inset-0)
 ```
 
 창은 드래그·리사이즈·최소화·최대화·닫기가 가능하며 배치는 `localStorage["relay-desktop-v1"]`에 저장합니다.
+배경화면 선택은 `localStorage["relay-wallpaper"]`에, 내 사진은 IndexedDB `relay-desktop/wallpaper`에 Blob으로 둡니다.
 뷰포트 760px 이하는 모바일 모드로, 창은 항상 최대화되고 한 번에 하나만 보이며 Dock은 탭바가 됩니다.
 창 내부 배치는 뷰포트가 아니라 **컨테이너 쿼리**(`container-name: sessions`)로 바뀝니다 — 창을 리사이즈해도 목록·상세 2단이 올바르게 접힙니다.
 

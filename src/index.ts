@@ -15,6 +15,7 @@ import { HOOK_SUMMARY, PROVIDERS, SessionService } from "./session/session.servi
 import type { NewSession, Session } from "./session/session.types";
 import { directory } from "./validation";
 import { sessionCommand } from "./web/lib/session-context";
+import { startDetached, stopServer } from "./web/control";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
 
@@ -152,26 +153,45 @@ program.command("install-hooks").description("Claude/Grok/Codex SessionStart·Se
     process.stdout.write(render(result).map(line => line.text).join("\n") + "\n");
   });
 
-program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C로 종료)")
+program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C 또는 --close로 종료)")
   .option("--port <number>", "HTTP 포트 (기본 7474)").option("--open", "기본 브라우저 열기")
+  .option("--headless", "터미널과 분리해 백그라운드로 실행 (터미널을 닫아도 유지)")
+  .option("--close", "실행 중인 서버 종료")
   .action(async (o, c: Command) => {
     if (c.optsWithGlobals().json) invalid("web은 --json을 지원하지 않습니다.");
+    if (o.close && (o.headless || o.open)) invalid("--close는 --headless, --open과 함께 쓸 수 없습니다.");
     const config = loadConfig(c.optsWithGlobals().dataDir, o.port);
-    const running = startServer(config);
     const url = `http://${config.webHost}:${config.webPort}`;
-    process.stderr.write(`Relay ${version}: ${url}\n저장소: ${config.databasePath}\n종료: Ctrl+C\n`);
+    if (o.close) {
+      const stopped = await stopServer(url, config.webPort);
+      process.stderr.write(stopped ? `Relay 웹 서버를 종료했습니다: ${url} (PID ${stopped.pid})\n` : `실행 중인 Relay 웹 서버가 없습니다: ${url}\n`);
+      return;
+    }
+    if (o.headless) {
+      // 자식에게 포트와 저장소를 명시해 부모와 같은 설정으로 띄운다. 자식은 터미널 없이 돌고 --close로 끝난다.
+      const started = await startDetached(url, ["web", "--port", String(config.webPort), "--data-dir", config.dataDirectory]);
+      process.stderr.write(started.already ? `Relay 웹 서버가 이미 실행 중입니다: ${url} (PID ${started.pid})\n` :
+        `Relay ${version}: ${url} (백그라운드 · PID ${started.pid})\n저장소: ${config.databasePath}\n`);
+      process.stderr.write("종료: relay web --close\n");
+      if (o.open) await openBrowser(url);
+      return;
+    }
+    const running = startServer(config);
+    process.stderr.write(`Relay ${version}: ${url}\n저장소: ${config.databasePath}\n종료: Ctrl+C 또는 relay web --close\n`);
     const stop = async () => { await running.stop(); process.off("SIGINT", stop); process.off("SIGTERM", stop); };
     process.on("SIGINT", stop); process.on("SIGTERM", stop);
-    if (o.open) {
-      try {
-        // Only the generated loopback URL reaches the OS opener, never stored session text.
-        const command = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", `Start-Process -FilePath '${url}' -ErrorAction Stop`] :
-          process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
-        const child = Bun.spawn(command, { stdout: "ignore", stderr: "ignore" });
-        if (await child.exited !== 0) throw new Error();
-      } catch { process.stderr.write(`브라우저를 열지 못했습니다. 직접 접속하세요: ${url}\n`); }
-    }
+    if (o.open) await openBrowser(url);
   });
+
+/** OS 기본 브라우저에는 생성한 루프백 주소만 넘기고, 저장된 세션 텍스트는 절대 넘기지 않는다. */
+async function openBrowser(url: string) {
+  try {
+    const command = process.platform === "win32" ? ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", `Start-Process -FilePath '${url}' -ErrorAction Stop`] :
+      process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
+    const child = Bun.spawn(command, { stdout: "ignore", stderr: "ignore" });
+    if (await child.exited !== 0) throw new Error();
+  } catch { process.stderr.write(`브라우저를 열지 못했습니다. 직접 접속하세요: ${url}\n`); }
+}
 
 try {
   autoInstallHostHooks();

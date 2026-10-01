@@ -4,6 +4,10 @@ import js from "./generated/app.js" with { type: "text" };
 import css from "./generated/style.css" with { type: "text" };
 import wallpaperDark from "./public/wallpaper-dark.jpg" with { type: "file" };
 import wallpaperLight from "./public/wallpaper-light.jpg" with { type: "file" };
+import wallpaperAurora from "./public/wallpapers/aurora.jpg" with { type: "file" };
+import wallpaperDunes from "./public/wallpapers/dunes.jpg" with { type: "file" };
+import wallpaperWaves from "./public/wallpapers/waves.jpg" with { type: "file" };
+import wallpaperForest from "./public/wallpapers/forest.jpg" with { type: "file" };
 import iconSessions from "./public/icons/sessions.png" with { type: "file" };
 import iconGuide from "./public/icons/guide.png" with { type: "file" };
 import iconCommand from "./public/icons/command.png" with { type: "file" };
@@ -24,6 +28,10 @@ export const assets = new Map<string, Asset>([
   ["/style.css", { body: css, type: "text/css; charset=utf-8" }],
   ["/wallpaper-dark.jpg", image(wallpaperDark, "image/jpeg")],
   ["/wallpaper-light.jpg", image(wallpaperLight, "image/jpeg")],
+  ["/wallpapers/aurora.jpg", image(wallpaperAurora, "image/jpeg")],
+  ["/wallpapers/dunes.jpg", image(wallpaperDunes, "image/jpeg")],
+  ["/wallpapers/waves.jpg", image(wallpaperWaves, "image/jpeg")],
+  ["/wallpapers/forest.jpg", image(wallpaperForest, "image/jpeg")],
   ["/icons/sessions.png", image(iconSessions, "image/png")],
   ["/icons/guide.png", image(iconGuide, "image/png")],
   ["/icons/command.png", image(iconCommand, "image/png")],

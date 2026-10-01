@@ -41,7 +41,7 @@ test("기본 테마는 다크, 토글과 시스템 모드가 저장된다", asyn
 test("배경화면·Dock 아이콘·서체가 실행 파일에서 제공된다", async ({ page }) => {
   record("assets", "자산 확인");
   await ready(page);
-  for (const [path, type] of [["/wallpaper-dark.jpg", "image/jpeg"], ["/wallpaper-light.jpg", "image/jpeg"],
+  for (const [path, type] of [["/wallpaper-dark.jpg", "image/jpeg"], ["/wallpaper-light.jpg", "image/jpeg"], ["/wallpapers/aurora.jpg", "image/jpeg"],
     ["/icons/sessions.png", "image/png"], ["/fonts/PretendardVariable.woff2", "font/woff2"]] as const) {
     const response = await page.request.get(env.url + path);
     expect(response.status(), path).toBe(200);
@@ -246,4 +246,44 @@ test("감사용 스크린샷: 다크·라이트·상세·모바일", async ({ pa
   await page.waitForTimeout(300);
   await page.screenshot({ path: test.info().outputPath("mobile-dark.png") });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("설정의 바탕화면에서 사진·색상·내 사진을 고르면 즉시 바뀌고 다시 열어도 유지된다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  record("wallpaper", "바탕화면 확인");
+  await ready(page);
+  // 창 배치 저장은 200ms 뒤에 이뤄지므로, 새로고침 뒤에는 메뉴로 설정 창을 다시 연다.
+  const openPicker = async () => {
+    await page.locator(".menubar-mark").click();
+    await page.getByRole("menuitem", { name: "바탕화면 변경…" }).click();
+    await expect(picker).toBeVisible();
+  };
+  const picker = page.getByRole("radiogroup", { name: "바탕화면" });
+  await openPicker();
+  await expect(picker.getByRole("radio", { name: "기본" })).toHaveAttribute("aria-checked", "true");
+  await picker.getByRole("radio", { name: "오로라" }).click();
+  await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", "/wallpapers/aurora.jpg");
+  await expect(page.locator(".wallpaper-image[data-layer][data-active]")).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("relay-wallpaper"))).toBe('{"kind":"preset","id":"aurora"}');
+  await page.reload();
+  await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", "/wallpapers/aurora.jpg");
+  await openPicker();
+  await picker.getByRole("radio", { name: "미드나이트" }).click();
+  await expect(page.locator(".wallpaper")).toHaveAttribute("data-color", "midnight");
+  await expect(page.locator(".wallpaper-photo")).toHaveCount(0);
+  // 1×1 PNG를 내 사진으로 올리면 blob: 주소로 보이고, 브라우저 저장소에 남아 새로 열어도 유지된다.
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+  await page.locator("#wallpaper-file").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png });
+  await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", /^blob:/);
+  await expect(picker.getByRole("radio", { name: "내 사진" })).toHaveAttribute("aria-checked", "true");
+  await page.reload();
+  await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", /^blob:/);
+  await openPicker();
+  await page.locator("#wallpaper-file").setInputFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+  await expect(page.locator(".settings-error")).toContainText("이미지 파일만");
+  await page.getByRole("button", { name: "사진 지우기" }).click();
+  await expect(page.locator(".wallpaper-image[data-layer=dark][data-active]")).toHaveCount(1);
+  await expect(picker.getByRole("radio", { name: "내 사진" })).toHaveCount(0);
+  await expect(picker.getByRole("radio", { name: "기본" })).toHaveAttribute("aria-checked", "true");
+  expect(errors).toEqual([]);
 });

@@ -14,15 +14,16 @@
 | 1 | 세션 | 열림·포커스 | 상단바 툴바(검색·Provider·상세 필터·검색), 필터 칩, 목록 패널, 상세 패널, 상태바(총 건수·저장소 경로·버전·마지막 조회) |
 | 2 | 가이드 | 뷰포트 ≥ 1280일 때 열림 | 맥락 전달 안내와 `이전 기록 찾기`(세션 창을 앞으로 가져와 검색에 초점) |
 | 3 | 명령 | 닫힘 | 선택한 세션의 `relay show …` 명령과 다음 대화에 붙여넣을 한 줄, 셸 선택, 복사 |
-| 4 | 설정 | 닫힘 | 테마(다크/라이트/시스템), 셸 종류, 창 배치 초기화, 저장소 정보(`#storage-info`) |
+| 4 | 설정 | 닫힘 | 테마(다크/라이트/시스템), 바탕화면(`#wallpaper-settings`: 기본·사진 4종·색상 5종·내 사진), 셸 종류, 창 배치 초기화, 저장소 정보(`#storage-info`) |
 
-메뉴바 Relay 마크 메뉴에 `Relay 정보…`·`설정…`·테마 라디오·`창 배치 초기화`, 앱명 옆 `창` 메뉴에 최소화·최대화·닫기·열린 창 목록을 둡니다(키보드 대체 수단).
+메뉴바 Relay 마크 메뉴에 `Relay 정보…`·`설정…`·`바탕화면 변경…`·테마 라디오·`창 배치 초기화`, 앱명 옆 `창` 메뉴에 최소화·최대화·닫기·열린 창 목록을 둡니다(키보드 대체 수단).
 
 ## 파일
 
 - `client.tsx`: 조회 구성(React Query 3초 폴링), URL 이동, 클립보드 피드백, `/` 단축키, 초점 복귀, 테마 구독, 뷰포트 클램프.
 - `lib/desktop-store.ts`: 창 상태(열림·최소화·최대화·좌표·z)와 `localStorage` 영속화. `lib/app-config.ts`: 앱 목록과 기본 배치·최소 크기.
 - `lib/theme.ts` + `public/theme.js`: 테마 읽기·적용·시스템 구독. CSP가 인라인 스크립트를 막으므로 선적용 스크립트는 별도 자산으로 `<head>`에서 동기 로드합니다.
+- `lib/wallpaper.ts`: 바탕화면 선택(기본·사진·색상·내 사진)의 저장과 내 사진의 IndexedDB 보관·축소. 사진 교체는 `components/desktop/wallpaper.tsx`가 로드 뒤 크로스페이드합니다.
 - `components/desktop/*`: 배경화면, 메뉴바, 드롭다운, 창·상단바·신호등, 드래그/리사이즈 훅, Dock, Relay 마크.
 - `components/apps/*`: 세션·가이드·명령·설정 창 본문. 목록·상세·필터·안내는 기존 컴포넌트를 재사용합니다.
 - `lib/session-context.ts`: 목록·상세·명령 창이 같은 맥락 텍스트와 조회 명령을 만듭니다.
@@ -30,7 +31,7 @@
 
 ## 자산
 
-배경화면 2종과 Dock 아이콘 4종은 로컬 Grok Imagine으로 생성해 `src/web/public/`에 두고, Bun의 `with { type: "file" }` 임포트로 `relay.exe`에 포함합니다.
+기본 배경화면 2종(낮·밤), 프리셋 배경화면 4종(`public/wallpapers/`), Dock 아이콘 4종은 로컬 Grok Imagine으로 생성해 `src/web/public/`에 두고, Bun의 `with { type: "file" }` 임포트로 `relay.exe`에 포함합니다.
 Pretendard Variable도 같은 방식이며 라이선스(`OFL.txt`)를 함께 둡니다. 파비콘과 메뉴바 마크는 인라인 SVG입니다.
 이미지·폰트만 `Cache-Control: public, max-age=…`를 쓰고 나머지 응답은 `no-store`를 유지합니다. 외부 CDN·원격 폰트·Apple 자산은 없습니다.
 
@@ -45,4 +46,4 @@ Pretendard Variable도 같은 방식이며 라이선스(`OFL.txt`)를 함께 둡
 ## 검증
 
 `npm run typecheck`, `npm test`, `npm run build`, `npm run test:web`를 씁니다. Playwright는 `tests/web.spec.ts`(조회 기능 회귀)와
-`tests/desktop.spec.ts`(테마·자산·기본 배치·창 조작·드래그·가이드·명령 창·메뉴·모바일·감사용 스크린샷)를 실행하며 공용 헬퍼는 `tests/web-helpers.ts`입니다.
+`tests/desktop.spec.ts`(테마·자산·바탕화면·기본 배치·창 조작·드래그·가이드·명령 창·메뉴·모바일·감사용 스크린샷), `tests/cli-web.spec.ts`(실행 파일의 `web --headless`/`--close`)를 실행하며 공용 헬퍼는 `tests/web-helpers.ts`입니다.

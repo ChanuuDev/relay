@@ -294,3 +294,67 @@ describe("CLI processes", () => {
     } finally { cleanup(other); }
   });
 });
+
+describe("web server control", () => {
+  let dir: string;
+  let port: number;
+  const index = path.join(root, "src/index.ts");
+  const url = () => `http://127.0.0.1:${port}`;
+  // web은 --json을 받지 않으므로 평문 출력을 그대로 본다. 훅 설치는 건너뛴다.
+  const plain = (args: string[]) => {
+    const result = Bun.spawnSync([process.execPath, index, ...args, "--data-dir", dir],
+      { cwd: root, env: { ...process.env, RELAY_DATA_DIR: dir, RELAY_SKIP_HOOK_INSTALL: "1" }, stdout: "pipe", stderr: "pipe" });
+    return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+  };
+  const health = async () => {
+    try { return await fetch(`${url()}/api/v1/health`, { signal: AbortSignal.timeout(2000) }); } catch { return null; }
+  };
+  beforeEach(() => {
+    dir = temporary();
+    const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    port = reservation.port!; reservation.stop(true);
+  });
+  afterEach(async () => {
+    // 남은 백그라운드 서버는 테스트가 끝나며 반드시 걷는다.
+    const pid = Number((await health())?.headers.get("Relay-Pid"));
+    if (pid) try { process.kill(pid); } catch { /* 이미 끝났다 */ }
+    cleanup(dir);
+  });
+
+  test("--headless keeps serving after the CLI exits and --close stops exactly that server", async () => {
+    const started = plain(["web", "--headless", "--port", String(port)]);
+    expect(started.code).toBe(0); expect(started.stdout).toBe("");
+    expect(started.stderr).toContain(url()); expect(started.stderr).toContain("relay web --close");
+    const response = await health();
+    expect(response?.status).toBe(200);
+    const pid = Number(response!.headers.get("Relay-Pid"));
+    expect(pid).toBeGreaterThan(0); expect(pid).not.toBe(process.pid);
+    expect(started.stderr).toContain(`PID ${pid}`);
+    expect((await response!.json()).databasePath).toContain("relay.db");
+    const again = plain(["web", "--headless", "--port", String(port)]);
+    expect(again.code).toBe(0); expect(again.stderr).toContain("이미 실행 중"); expect(again.stderr).toContain(`PID ${pid}`);
+    const closed = plain(["web", "--close", "--port", String(port)]);
+    expect(closed.code).toBe(0); expect(closed.stderr).toContain(`PID ${pid}`);
+    expect(await health()).toBeNull();
+    const none = plain(["web", "--close", "--port", String(port)]);
+    expect(none.code).toBe(0); expect(none.stderr).toContain("실행 중인 Relay 웹 서버가 없습니다");
+  });
+
+  test("--close leaves a foreign server alone and option conflicts fail before anything runs", async () => {
+    const foreign = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response("other") });
+    try {
+      const close = plain(["web", "--close", "--port", String(port)]);
+      expect(close.code).toBe(6); expect(close.stderr).toStartWith("SERVER_FOREIGN:");
+      expect(await (await fetch(`${url()}/`)).text()).toBe("other");
+      const headless = plain(["web", "--headless", "--port", String(port)]);
+      expect(headless.code).toBe(6); expect(headless.stderr).toStartWith("PORT_IN_USE:");
+    } finally { foreign.stop(true); }
+    for (const args of [["web", "--close", "--headless"], ["web", "--close", "--open"]]) {
+      const result = plain([...args, "--port", String(port)]);
+      expect(result.code).toBe(2); expect(result.stderr).toStartWith("INVALID_ARGUMENT:");
+    }
+    const json = plain(["web", "--headless", "--json", "--port", String(port)]);
+    expect(json.code).toBe(2); expect(JSON.parse(json.stderr).error.code).toBe("INVALID_ARGUMENT");
+    expect(await health()).toBeNull();
+  });
+});

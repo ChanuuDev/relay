@@ -82,14 +82,15 @@ export function MenuBar({ connection, dark }: { connection: Connection; dark: bo
     setMenu(null);
     setLeaving(false);
   }
-  function openSettings(storage: boolean) {
+  function openSettings(anchor?: string) {
     useDesktop.getState().open("settings");
-    if (storage) requestAnimationFrame(() => document.getElementById("storage-info")?.scrollIntoView({ block: "start" }));
+    if (anchor) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" }));
   }
   const themeItem = (id: Theme, label: string): MenuEntry => ({ kind: "radio", id, label, checked: theme === id, onSelect: () => setTheme(id) });
   const relayItems: MenuEntry[] = [
-    { kind: "item", id: "about", label: "Relay 정보…", onSelect: () => openSettings(true) },
-    { kind: "item", id: "settings", label: "설정…", onSelect: () => openSettings(false) },
+    { kind: "item", id: "about", label: "Relay 정보…", onSelect: () => openSettings("storage-info") },
+    { kind: "item", id: "settings", label: "설정…", onSelect: () => openSettings() },
+    { kind: "item", id: "wallpaper", label: "바탕화면 변경…", onSelect: () => openSettings("wallpaper-settings") },
     { kind: "separator", id: "sep-1" },
     themeItem("dark", "다크"), themeItem("light", "라이트"), themeItem("system", "시스템"),
     { kind: "separator", id: "sep-2" },

@@ -5,7 +5,11 @@ import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
 import { api } from "./api";
 import { assets } from "./assets";
+import { PID_HEADER } from "./control";
 import { checkRequest, securityHeaders } from "./security";
+
+// 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
+const headers = { ...securityHeaders, [PID_HEADER]: String(process.pid) };
 
 export function handler(service: SessionService, config: Config) {
   return (request: Request): Response => {
@@ -13,15 +17,15 @@ export function handler(service: SessionService, config: Config) {
       checkRequest(request, config.webPort);
       if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", "GET 조회만 허용합니다.", 2, 405);
       const url = new URL(request.url);
-      if (url.pathname.startsWith("/api/")) return Response.json(api(url, service, config), { headers: securityHeaders });
+      if (url.pathname.startsWith("/api/")) return Response.json(api(url, service, config), { headers });
       const asset = assets.get(/^\/sessions\/[^/]+$/.test(url.pathname) ? "/" : url.pathname);
       if (!asset) throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);
-      if ("file" in asset) return new Response(Bun.file(asset.file), { headers: { ...securityHeaders, "Content-Type": asset.type, "Cache-Control": asset.cache } });
-      return new Response(asset.body, { headers: { ...securityHeaders, "Content-Type": asset.type } });
+      if ("file" in asset) return new Response(Bun.file(asset.file), { headers: { ...headers, "Content-Type": asset.type, "Cache-Control": asset.cache } });
+      return new Response(asset.body, { headers: { ...headers, "Content-Type": asset.type } });
     } catch (error) {
       const failure = error instanceof RelayError ? error : new RelayError("INTERNAL_ERROR", "요청 처리 중 오류가 발생했습니다.", 5, 500);
       return Response.json(errorBody(failure), { status: failure.httpStatus,
-        headers: { ...securityHeaders, ...(failure.code === "DB_BUSY" ? { "Retry-After": "3" } : {}),
+        headers: { ...headers, ...(failure.code === "DB_BUSY" ? { "Retry-After": "3" } : {}),
           ...(failure.httpStatus === 405 ? { Allow: "GET" } : {}) } });
     }
   };

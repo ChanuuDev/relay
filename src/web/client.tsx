@@ -18,6 +18,7 @@ import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
 import { enter, enterToast, exit, exitToast } from "./lib/motion";
 import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
+import { loadCustomImage } from "./lib/wallpaper";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,12 @@ function App() {
     if (theme !== "system") return;
     return watchSystemTheme(() => { applyTheme("system"); setDark(isDark("system")); });
   }, [theme]);
+  // 내 사진은 브라우저 저장소에서 한 번 읽어 둔다. 없으면 기본 사진이 그대로 보인다.
+  useEffect(() => {
+    let cancelled = false;
+    void loadCustomImage().then((blob) => { if (blob && !cancelled) useUI.getState().setCustomImage(URL.createObjectURL(blob)); });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     const resize = () => {
       const desktop = useDesktop.getState();

@@ -157,8 +157,14 @@
 /* ── 데스크톱 셸 ─────────────────────────────────────────── */
 .desktop { position: fixed; inset: 0; overflow: hidden; }
 .wallpaper { position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(180deg, var(--wp-sky-1) 0%, var(--wp-sky-2) 55%, var(--wp-glow) 100%); }
-.wallpaper-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .2s ease-out; }
+.wallpaper-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s ease-out; }
 .wallpaper-image[data-active] { opacity: 1; }
+/* 색상 프리셋: 바닥 그라디언트를 바꾼다. 설정 창의 견본(.wallpaper-swatch)도 같은 값을 쓴다. */
+.wallpaper[data-color="graphite"], .wallpaper-swatch[data-color="graphite"] { background: radial-gradient(90% 70% at 80% 0%, rgba(255, 255, 255, .16), transparent 60%), linear-gradient(160deg, #55555e 0%, #2c2c32 55%, #141417 100%); }
+.wallpaper[data-color="midnight"], .wallpaper-swatch[data-color="midnight"] { background: radial-gradient(70% 55% at 80% 100%, rgba(120, 90, 220, .35), transparent 70%), radial-gradient(120% 90% at 18% 0%, #3d5ab8 0%, #1c2d74 36%, #0d153f 68%, #070a1e 100%); }
+.wallpaper[data-color="lavender"], .wallpaper-swatch[data-color="lavender"] { background: radial-gradient(80% 60% at 20% 10%, rgba(255, 255, 255, .55), transparent 60%), linear-gradient(135deg, #efe2ff 0%, #c9b1f6 50%, #8a72e4 100%); }
+.wallpaper[data-color="sunset"], .wallpaper-swatch[data-color="sunset"] { background: radial-gradient(70% 60% at 75% 20%, rgba(255, 236, 200, .6), transparent 60%), linear-gradient(165deg, #ffd7a3 0%, #ff8d79 48%, #6a3ea6 100%); }
+.wallpaper[data-color="mint"], .wallpaper-swatch[data-color="mint"] { background: radial-gradient(80% 60% at 20% 0%, rgba(255, 255, 255, .5), transparent 60%), linear-gradient(135deg, #e2fbf0 0%, #9ce2c5 50%, #2b9b78 100%); }
 #desktop { position: absolute; inset: 0; z-index: 1; }
 .skip-link { z-index: 110; position: fixed; left: 12px; top: -80px; height: 32px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); }
 .skip-link:focus { top: 36px; }
@@ -455,6 +461,23 @@ body[data-window-dragging] .window-frame { transition: none; }
 .theme-option { display: inline-flex; align-items: center; gap: 6px; }
 .theme-option input { accent-color: var(--primary); margin: 0; }
 .theme-option label { font-size: 13px; line-height: 1; }
+/* 바탕화면 선택: 16:9 견본 격자. 고른 것은 시스템 블루 링, 기본 견본은 낮·밤을 대각선으로 나눠 보여 준다. */
+.wallpaper-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 12px 10px; padding: 12px 16px 10px; border-top: 1px solid var(--border); }
+.wallpaper-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 0; border: 0; background: none; color: var(--muted-foreground); font: inherit; font-size: 11px; line-height: 1; cursor: pointer; }
+.wallpaper-tile:focus-visible { outline: none; }
+.wallpaper-thumb { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--glass-control-border), 0 1px 2px rgba(0, 0, 0, .12); transition: transform .15s ease-out, box-shadow .15s ease-out; }
+.wallpaper-thumb img, .wallpaper-swatch { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.wallpaper-thumb img[data-layer="dark"] { clip-path: polygon(0 0, 100% 0, 0 100%); }
+.wallpaper-tile:hover .wallpaper-thumb { transform: scale(1.04); box-shadow: inset 0 0 0 1px var(--glass-control-border), 0 4px 10px rgba(0, 0, 0, .18); }
+.wallpaper-tile[aria-checked="true"] .wallpaper-thumb, .wallpaper-tile:focus-visible .wallpaper-thumb, .wallpaper-tile-add:has(input:focus-visible) .wallpaper-thumb { outline: 2px solid var(--primary); outline-offset: 2px; }
+.wallpaper-tile[aria-checked="true"] { color: var(--foreground); font-weight: 500; }
+.wallpaper-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wallpaper-tile-add input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.wallpaper-tile-add .wallpaper-thumb { background: var(--glass-control-fill); box-shadow: none; border: 1.5px dashed var(--input); }
+.wallpaper-tile-add .wallpaper-thumb svg { width: 18px; height: 18px; color: var(--muted-foreground); }
+.wallpaper-tile-add[data-busy] { opacity: .6; pointer-events: none; }
+.settings-error { color: var(--destructive); }
 
 /* 토스트와 복사 폴백 */
 .copy-toast { z-index: 100; position: fixed; bottom: 104px; left: 50%; translate: -50%; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: 999px; color: var(--foreground); font-size: 13px; }

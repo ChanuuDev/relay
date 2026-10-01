@@ -1,3 +1,5 @@
+import { useState, type ChangeEvent, type ReactNode } from "react";
+import { Plus } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
@@ -6,6 +8,7 @@ import { ErrorNotice } from "../session-common";
 import { useDesktop } from "../../lib/desktop-store";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
+import { COLORS, PRESETS, deleteCustomImage, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
 import type { Connection } from "../desktop/menu-bar";
 import type { HealthData } from "../../lib/queries";
 
@@ -33,6 +36,7 @@ export function SettingsWindow({ health, healthError, connection }: {
       </div>
       <p className="settings-note">시스템을 고르면 운영체제의 밝기 설정을 따릅니다.</p>
     </section>
+    <WallpaperSettings />
     <section className="settings-group">
       <h3>명령</h3>
       <div className="settings-row">
@@ -57,4 +61,56 @@ export function SettingsWindow({ health, healthError, connection }: {
       <p className="settings-note">127.0.0.1에서만 열리는 읽기 전용 로컬 서버입니다.</p>
     </section>
   </Window>;
+}
+
+/** macOS 배경화면 패널처럼 16:9 견본을 격자로 늘어놓는다. 고른 것은 시스템 블루 링이고, 기본 견본은 낮·밤을 대각선으로 나눠 보여 준다. */
+function WallpaperSettings() {
+  const wallpaper = useUI((state) => state.wallpaper);
+  const setWallpaper = useUI((state) => state.setWallpaper);
+  const custom = useUI((state) => state.customImage);
+  const setCustomImage = useUI((state) => state.setCustomImage);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const tile = (choice: WallpaperChoice, label: string, thumb: ReactNode) =>
+    <button key={"id" in choice ? `${choice.kind}-${choice.id}` : choice.kind} type="button" role="radio" aria-checked={sameChoice(wallpaper, choice)}
+      className="wallpaper-tile" onClick={() => setWallpaper(choice)}>
+      <span className="wallpaper-thumb">{thumb}</span><span className="wallpaper-label">{label}</span>
+    </button>;
+
+  async function pick(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true); setError(null);
+    try {
+      const blob = await prepareImage(file);
+      await storeCustomImage(blob);
+      setCustomImage(URL.createObjectURL(blob));
+      setWallpaper({ kind: "custom" });
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "사진을 저장할 수 없습니다."); }
+    finally { setBusy(false); }
+  }
+  async function remove() {
+    await deleteCustomImage();
+    setCustomImage(null);
+    if (wallpaper.kind === "custom") setWallpaper({ kind: "dynamic" });
+  }
+
+  return <section className="settings-group" id="wallpaper-settings">
+    <h3>바탕화면</h3>
+    <div className="wallpaper-picker" role="radiogroup" aria-label="바탕화면">
+      {tile({ kind: "dynamic" }, "기본", <><img src="/wallpaper-light.jpg" alt="" data-layer="light" /><img src="/wallpaper-dark.jpg" alt="" data-layer="dark" /></>)}
+      {PRESETS.map((preset) => tile({ kind: "preset", id: preset.id }, preset.label, <img src={presetUrl(preset.id)} alt="" loading="lazy" />))}
+      {COLORS.map((color) => tile({ kind: "color", id: color.id }, color.label, <span className="wallpaper-swatch" data-color={color.id} />))}
+      {custom && tile({ kind: "custom" }, "내 사진", <img src={custom} alt="" />)}
+      <label className="wallpaper-tile wallpaper-tile-add" data-busy={busy ? "" : undefined}>
+        <input id="wallpaper-file" type="file" accept="image/*" onChange={pick} disabled={busy} />
+        <span className="wallpaper-thumb"><Plus aria-hidden="true" /></span><span className="wallpaper-label">{busy ? "저장 중…" : "사진 선택…"}</span>
+      </label>
+    </div>
+    {error && <p className="settings-note settings-error" role="alert">{error}</p>}
+    <p className="settings-note">기본은 테마에 따라 낮·밤 사진이 바뀝니다. 내 사진은 이 브라우저에만 저장되며 서버로 보내지 않습니다.</p>
+    {custom && <div className="settings-row"><span>내 사진</span><Button size="sm" variant="outline" onClick={remove}>사진 지우기</Button></div>}
+  </section>;
 }
