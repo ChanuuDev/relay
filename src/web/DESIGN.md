@@ -94,3 +94,14 @@ React Query의 structural sharing 덕에 내용이 같은 폴링에서는 아무
 초점 링은 2px 시스템 블루, 스크롤바는 얇은 오버레이입니다.
 랜드마크는 `header`(메뉴바) · `main#desktop` · `nav[aria-label=Dock]` · 창마다 `section[role=region]`이며,
 드래그·리사이즈는 포인터 전용이라 `창` 메뉴·Dock·설정의 `창 배치 초기화`가 키보드 대체 수단입니다.
+
+## 7. 바탕화면
+
+`div.wallpaper`는 세 겹입니다: 토큰 그라디언트(색상 프리셋을 고르면 `data-color`의 그라디언트) → 테마별 기본 사진 2장(불투명도로 전환) → 고른 사진.
+선택지는 `lib/wallpaper.ts`의 `WallpaperChoice`로 기본 · 사진 4종(`/wallpapers/*.jpg`, 1280×720) · 색상 5종 · 내 사진이며, 선택은 `localStorage["relay-wallpaper"]`에 둡니다.
+
+- **전환**: `.wallpaper-image`는 `opacity .3s ease-out`. 고른 사진은 로드가 끝난 뒤에만 켜고, 가려진 이전 사진은 360ms 뒤 제거합니다(`loading → shown → leaving`). 색상을 고르면 사진이 걷히고 바닥 그라디언트만 남습니다.
+- **설정 피커**: `repeat(auto-fill, minmax(88px, 1fr))` 격자, 16:9 견본, 모서리 8px, 선택은 시스템 블루 2px 링(`outline-offset: 2px`), 호버는 `scale(1.04)`.
+  기본 견본은 낮·밤 사진을 대각선(`clip-path`)으로 나눠 보여 주고, 내 사진 추가 타일은 점선 테두리에 `+`입니다. 견본은 `role=radio`, 격자는 `role=radiogroup`입니다.
+- **색상**: 그래파이트 · 미드나이트 · 라벤더 · 선셋 · 민트. 각각 방향 그라디언트 위에 radial 하이라이트 한 겹을 얹어 평면적으로 보이지 않게 합니다. 값은 `styles.css`의 `[data-color]` 규칙 한 곳에 두고 바닥과 견본이 공유합니다.
+- **내 사진**: 25MB 이하의 이미지만 받고 긴 변이 2560px을 넘으면 캔버스로 줄여 JPEG로 저장합니다. IndexedDB `relay-desktop/wallpaper`의 Blob을 `blob:` URL로 그리므로 CSP에 `img-src 'self' blob:`이 있습니다. 서버로는 보내지 않습니다.
