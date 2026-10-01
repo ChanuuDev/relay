@@ -15,7 +15,7 @@ div.desktop (fixed inset-0)
 ```
 
 창은 드래그·리사이즈·최소화·최대화·닫기가 가능하며 배치는 `localStorage["relay-desktop-v1"]`에 저장합니다.
-배경화면 선택은 `localStorage["relay-wallpaper"]`에, 내 사진은 IndexedDB `relay-desktop/wallpaper`에 Blob으로 둡니다.
+배경화면 선택은 `localStorage["relay-wallpaper"]`에, 내 사진은 IndexedDB `relay-desktop/wallpaper`에 사진마다 한 레코드(`{ blob, name, addedAt }`)로 둡니다.
 뷰포트 760px 이하는 모바일 모드로, 창은 항상 최대화되고 한 번에 하나만 보이며 Dock은 탭바가 됩니다.
 창 내부 배치는 뷰포트가 아니라 **컨테이너 쿼리**(`container-name: sessions`)로 바뀝니다 — 창을 리사이즈해도 목록·상세 2단이 올바르게 접힙니다.
 
@@ -103,5 +103,7 @@ React Query의 structural sharing 덕에 내용이 같은 폴링에서는 아무
 - **전환**: `.wallpaper-image`는 `opacity .3s ease-out`. 고른 사진은 로드가 끝난 뒤에만 켜고, 가려진 이전 사진은 360ms 뒤 제거합니다(`loading → shown → leaving`). 색상을 고르면 사진이 걷히고 바닥 그라디언트만 남습니다.
 - **설정 피커**: `repeat(auto-fill, minmax(88px, 1fr))` 격자, 16:9 견본, 모서리 8px, 선택은 시스템 블루 2px 링(`outline-offset: 2px`), 호버는 `scale(1.04)`.
   기본 견본은 낮·밤 사진을 대각선(`clip-path`)으로 나눠 보여 주고, 내 사진 추가 타일은 점선 테두리에 `+`입니다. 견본은 `role=radio`, 격자는 `role=radiogroup`입니다.
+  내 사진 견본에는 모서리에 20px 유리 `×` 버튼(`aria-label="<이름> 지우기"`)이 있어 호버·초점에서 나타나고, 호버가 없는 기기에서는 24px로 늘 보입니다.
 - **색상**: 그래파이트 · 미드나이트 · 라벤더 · 선셋 · 민트. 각각 방향 그라디언트 위에 radial 하이라이트 한 겹을 얹어 평면적으로 보이지 않게 합니다. 값은 `styles.css`의 `[data-color]` 규칙 한 곳에 두고 바닥과 견본이 공유합니다.
-- **내 사진**: 25MB 이하의 이미지만 받고 긴 변이 2560px을 넘으면 캔버스로 줄여 JPEG로 저장합니다. IndexedDB `relay-desktop/wallpaper`의 Blob을 `blob:` URL로 그리므로 CSP에 `img-src 'self' blob:`이 있습니다. 서버로는 보내지 않습니다.
+- **내 사진**: 여러 장(최대 20장)을 넣은 순서대로 보여 주고 견본 아래에는 확장자를 뗀 파일 이름을 씁니다. 25MB 이하의 이미지만 받고 긴 변이 2560px을 넘으면 캔버스로 줄여 JPEG로 저장합니다.
+  IndexedDB의 Blob을 `blob:` URL로 그리므로 CSP에 `img-src 'self' blob:`이 있습니다. 보고 있던 사진을 지우면 기본으로 돌아갑니다. 첫 버전이 `custom` 키에 두던 한 장은 그대로 한 장으로 읽습니다. 서버로는 보내지 않습니다.

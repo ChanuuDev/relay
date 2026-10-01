@@ -3,6 +3,7 @@ import { applyTheme, readTheme, type Theme } from "./theme";
 import { readWallpaper, writeWallpaper, type WallpaperChoice } from "./wallpaper";
 
 export type DetailTab = "overview" | "history" | "connections";
+export type CustomImage = { id: string; url: string; name: string };
 export type FilterDraft = { q: string; provider: string; agent: string; cwd: string; limit: string };
 
 export function listLocation() {
@@ -25,15 +26,17 @@ interface UIState {
   shell: "powershell" | "bash";
   theme: Theme;
   wallpaper: WallpaperChoice;
-  /** 내 사진의 object URL. 브라우저 저장소에서 읽어 오기 전이거나 없으면 null. */
-  customImage: string | null;
+  /** 내 사진 목록. url은 object URL이며, 브라우저 저장소에서 읽어 오기 전에는 비어 있다. */
+  customImages: CustomImage[];
   setDraft: (patch: Partial<FilterDraft>) => void;
   setAdvanced: (open: boolean) => void;
   setTab: (tab: DetailTab) => void;
   setShell: (shell: "powershell" | "bash") => void;
   setTheme: (theme: Theme) => void;
   setWallpaper: (choice: WallpaperChoice) => void;
-  setCustomImage: (url: string | null) => void;
+  setCustomImages: (images: CustomImage[]) => void;
+  addCustomImage: (image: CustomImage) => void;
+  removeCustomImage: (id: string) => void;
   syncLocation: () => void;
 }
 
@@ -42,14 +45,20 @@ export const useUI = create<UIState>((set) => ({
   draft: readDraft(), advanced: Boolean(readDraft().agent || readDraft().cwd), tab: "overview",
   shell: navigator.platform.startsWith("Win") ? "powershell" : "bash",
   theme: readTheme(),
-  wallpaper: readWallpaper(), customImage: null,
+  wallpaper: readWallpaper(), customImages: [],
   setDraft: (patch) => set((state) => ({ draft: { ...state.draft, ...patch } })),
   setAdvanced: (advanced) => set({ advanced }), setTab: (tab) => set({ tab }), setShell: (shell) => set({ shell }),
   setTheme: (theme) => { applyTheme(theme); set({ theme }); },
   setWallpaper: (wallpaper) => { writeWallpaper(wallpaper); set({ wallpaper }); },
-  setCustomImage: (url) => set((state) => {
-    if (state.customImage && state.customImage !== url) URL.revokeObjectURL(state.customImage);
-    return { customImage: url };
+  setCustomImages: (images) => set((state) => {
+    for (const old of state.customImages) if (!images.some((image) => image.url === old.url)) URL.revokeObjectURL(old.url);
+    return { customImages: images };
+  }),
+  addCustomImage: (image) => set((state) => ({ customImages: [...state.customImages, image] })),
+  removeCustomImage: (id) => set((state) => {
+    const gone = state.customImages.find((image) => image.id === id);
+    if (gone) URL.revokeObjectURL(gone.url);
+    return { customImages: state.customImages.filter((image) => image.id !== id) };
   }),
   syncLocation: () => set((state) => {
     const next = location.pathname + location.search;

@@ -19,8 +19,9 @@ const prune = (layers: Layer[]) => {
  *  기본 사진은 불투명도로 테마를 오가고, 고른 사진은 로드가 끝난 뒤 크로스페이드한다. */
 export function Wallpaper({ dark }: { dark: boolean }) {
   const choice = useUI((state) => state.wallpaper);
-  const custom = useUI((state) => state.customImage);
-  const photo = choice.kind === "preset" ? presetUrl(choice.id) : choice.kind === "custom" ? custom : null;
+  const images = useUI((state) => state.customImages);
+  const custom = choice.kind === "custom" ? images.find((image) => image.id === choice.id)?.url ?? null : null;
+  const photo = choice.kind === "preset" ? presetUrl(choice.id) : custom;
   // 내 사진을 골랐지만 아직(또는 더는) 없으면 기본 사진으로 돌아간다.
   const dynamic = choice.kind === "dynamic" || (choice.kind === "custom" && !custom);
   return <div className="wallpaper" aria-hidden="true" data-color={choice.kind === "color" ? choice.id : undefined}>

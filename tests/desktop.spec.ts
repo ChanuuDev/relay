@@ -271,19 +271,33 @@ test("설정의 바탕화면에서 사진·색상·내 사진을 고르면 즉�
   await picker.getByRole("radio", { name: "미드나이트" }).click();
   await expect(page.locator(".wallpaper")).toHaveAttribute("data-color", "midnight");
   await expect(page.locator(".wallpaper-photo")).toHaveCount(0);
-  // 1×1 PNG를 내 사진으로 올리면 blob: 주소로 보이고, 브라우저 저장소에 남아 새로 열어도 유지된다.
+  // 1×1 PNG 두 장을 내 사진으로 올리면 마지막 장이 blob: 주소로 보이고, 브라우저 저장소에 남아 새로 열어도 둘 다 유지된다.
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
-  await page.locator("#wallpaper-file").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png });
-  await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", /^blob:/);
-  await expect(picker.getByRole("radio", { name: "내 사진" })).toHaveAttribute("aria-checked", "true");
+  await page.locator("#wallpaper-file").setInputFiles([{ name: "first.png", mimeType: "image/png", buffer: png }, { name: "second.png", mimeType: "image/png", buffer: png }]);
+  await expect(picker.getByRole("radio", { name: "second" })).toHaveAttribute("aria-checked", "true");
+  await expect(picker.getByRole("radio", { name: "first" })).toHaveAttribute("aria-checked", "false");
+  // 크로스페이드 중에는 이전 사진도 잠시 켜져 있으므로 맨 위 레이어만 본다.
+  await expect(page.locator(".wallpaper-photo[data-active]").last()).toHaveAttribute("src", /^blob:/);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("relay-wallpaper")!))).toMatchObject({ kind: "custom", id: expect.stringMatching(/^img-/) });
   await page.reload();
   await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", /^blob:/);
   await openPicker();
+  await expect(picker.getByRole("radio", { name: "first" })).toHaveCount(1);
+  await expect(picker.getByRole("radio", { name: "second" })).toHaveAttribute("aria-checked", "true");
+  await picker.getByRole("radio", { name: "first" }).click();
+  await expect(picker.getByRole("radio", { name: "first" })).toHaveAttribute("aria-checked", "true");
   await page.locator("#wallpaper-file").setInputFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
   await expect(page.locator(".settings-error")).toContainText("이미지 파일만");
-  await page.getByRole("button", { name: "사진 지우기" }).click();
+  // 보고 있던 사진을 지우면 기본으로 돌아가고, 다른 사진은 남는다.
+  await page.getByRole("button", { name: "first 지우기" }).click();
+  await expect(picker.getByRole("radio", { name: "first" })).toHaveCount(0);
+  await expect(picker.getByRole("radio", { name: "second" })).toHaveCount(1);
   await expect(page.locator(".wallpaper-image[data-layer=dark][data-active]")).toHaveCount(1);
-  await expect(picker.getByRole("radio", { name: "내 사진" })).toHaveCount(0);
   await expect(picker.getByRole("radio", { name: "기본" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "second 지우기" }).click();
+  await expect(picker.getByRole("radio", { name: "second" })).toHaveCount(0);
+  await page.reload();
+  await openPicker();
+  await expect(picker.getByRole("radio", { name: /first|second/ })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
