@@ -137,6 +137,30 @@ test("상단바 드래그로 창을 옮기면 위치가 저장되고, 입력에�
   await expect(page.locator(win("sessions"))).not.toHaveAttribute("data-maximized", "");
 });
 
+test("상세 패널이 있어도 우측 테두리 안팎에서 창 너비를 조절하고 저장한다", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  record("resize", "우측 크기 조절 확인");
+  await ready(page);
+  await page.getByRole("link", { name: "우측 크기 조절 확인", exact: true }).click();
+  await expect(page.locator(".detail-header h2")).toHaveText("우측 크기 조절 확인");
+  for (const offset of [-2, 8]) {
+    const before = await box(page, win("sessions"));
+    const x = before.x + before.width + offset, y = before.y + before.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 60, y, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(async () => Math.round((await box(page, win("sessions"))).width - before.width)).toBe(60);
+    const after = await box(page, win("sessions"));
+    expect({ x: after.x, y: after.y, height: after.height }).toEqual({ x: before.x, y: before.y, height: before.height });
+  }
+  const resized = await box(page, win("sessions"));
+  await page.waitForTimeout(400); // 배치 저장 디바운스
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  expect(Math.round((await box(page, win("sessions"))).width)).toBe(Math.round(resized.width));
+});
+
 test("가이드 창의 버튼과 / 단축키가 세션 창을 앞으로 가져온다", async ({ page }) => {
   record("guide", "가이드 확인");
   await ready(page);

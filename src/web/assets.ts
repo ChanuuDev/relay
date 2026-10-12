@@ -12,6 +12,9 @@ import iconSessions from "./public/icons/sessions.png" with { type: "file" };
 import iconGuide from "./public/icons/guide.png" with { type: "file" };
 import iconCommand from "./public/icons/command.png" with { type: "file" };
 import iconSettings from "./public/icons/settings.png" with { type: "file" };
+import iconOpenAI from "./public/icons/providers/openai.png" with { type: "file" };
+import iconAnthropic from "./public/icons/providers/anthropic.png" with { type: "file" };
+import iconXAI from "./public/icons/providers/xai.png" with { type: "file" };
 import pretendard from "./public/fonts/PretendardVariable.woff2" with { type: "file" };
 
 // 텍스트 자산은 문자열로, 이미지 자산은 실행 파일에 포함된 파일 경로로 둔다.
@@ -36,5 +39,8 @@ export const assets = new Map<string, Asset>([
   ["/icons/guide.png", image(iconGuide, "image/png")],
   ["/icons/command.png", image(iconCommand, "image/png")],
   ["/icons/settings.png", image(iconSettings, "image/png")],
+  ["/icons/providers/openai.png", image(iconOpenAI, "image/png")],
+  ["/icons/providers/anthropic.png", image(iconAnthropic, "image/png")],
+  ["/icons/providers/xai.png", image(iconXAI, "image/png")],
   ["/fonts/PretendardVariable.woff2", { file: pretendard, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
 ]);

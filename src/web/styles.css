@@ -216,12 +216,13 @@
 .resize-handle { position: absolute; }
 .resize-handle[data-window-resize-handle="n"] { top: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
 .resize-handle[data-window-resize-handle="s"] { bottom: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
-.resize-handle[data-window-resize-handle="e"] { right: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+/* 우측은 상세 패널 위에서 잡히며, 스크롤바를 덜 가리도록 바깥으로 넓힌다. */
+.resize-handle[data-window-resize-handle="e"] { right: -10px; top: 12px; bottom: 12px; width: 12px; z-index: 7; cursor: ew-resize; }
 .resize-handle[data-window-resize-handle="w"] { left: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
 .resize-handle[data-window-resize-handle="nw"] { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
-.resize-handle[data-window-resize-handle="ne"] { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.resize-handle[data-window-resize-handle="ne"] { top: 0; right: -10px; width: 22px; height: 12px; z-index: 7; cursor: nesw-resize; }
 .resize-handle[data-window-resize-handle="sw"] { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
-.resize-handle[data-window-resize-handle="se"] { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.resize-handle[data-window-resize-handle="se"] { bottom: 0; right: -10px; width: 22px; height: 12px; z-index: 7; cursor: nwse-resize; }
 body[data-window-dragging] { user-select: none; }
 body[data-window-dragging] .window-frame { transition: none; }
 
@@ -292,8 +293,7 @@ body[data-window-dragging] .window-frame { transition: none; }
   transform: scaleY(0); transform-origin: 50% 0; pointer-events: none; }
 .selected-row > .row-accent { transform: scaleY(1); }
 .agent-avatar { display: inline-flex; flex-shrink: 0; width: 28px; height: 28px; margin-top: 1px; align-items: center; justify-content: center; background: var(--glass-control-fill); border-radius: 8px; color: var(--foreground); font-size: 16px; line-height: 1; }
-.agent-avatar svg { width: 15px; height: 15px; }
-.agent-avatar[data-provider="anthropic"] { background: var(--provider-anthropic-bg); color: var(--provider-anthropic); }
+img.agent-avatar { background: transparent; object-fit: contain; }
 .row-main { flex: 1; min-width: 0; }
 .session-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 20px; }
 .session-name { font-size: 13px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }

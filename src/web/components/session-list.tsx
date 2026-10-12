@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useGSAP } from "@gsap/react";
-import { ArrowDown, Folder, Layers, Terminal } from "lucide-react";
+import { ArrowDown, Folder, Layers } from "lucide-react";
 import type { Session } from "../../session/session.types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -16,6 +16,18 @@ import { sessionContext } from "../lib/session-context";
 const ROWS = "#list-content .session-row";
 /** 행이 실제로 바뀌었는지 판단하는 값(폴링 갱신 감지용). */
 const signature = (session: Session) => `${session.summary}\u0000${session.updatedAt}\u0000${session.endedAt ?? ""}`;
+
+const PROVIDER_ICONS = new Map([
+  ["openai", "/icons/providers/openai.png"],
+  ["anthropic", "/icons/providers/anthropic.png"],
+  ["xai", "/icons/providers/xai.png"],
+]);
+
+function ProviderAvatar({ provider, agent }: Pick<Session, "provider" | "agent">) {
+  const icon = PROVIDER_ICONS.get(provider);
+  return icon ? <img className="agent-avatar" data-provider={provider} src={icon} alt="" width={28} height={28} title={provider} draggable={false} decoding="async" />
+    : <span className="agent-avatar" data-provider={provider} title={provider}>{agent.slice(0, 1).toUpperCase()}</span>;
+}
 
 export function SessionList({ list, selectedId, activeFilters, storeDirectory, copy, onPage, listKey }: {
   list: QueryResult<ListData>; selectedId?: string; activeFilters: string[]; listKey: string;
@@ -66,7 +78,7 @@ export function SessionList({ list, selectedId, activeFilters, storeDirectory, c
               if (!(event.target as HTMLElement).closest("a,button") && !window.getSelection()?.toString()) navigate(sessionUrl(session.id));
             }}>
             <span className="row-accent" aria-hidden="true" />
-            <span className="agent-avatar" data-provider={session.provider}>{session.provider === "anthropic" ? "✳" : session.provider === "openai" ? <Terminal /> : session.agent.slice(0, 1).toUpperCase()}</span>
+            <ProviderAvatar provider={session.provider} agent={session.agent} />
             <div className="row-main">
               <div className="session-title-line"><SessionLink session={session} />{session.endedAt && <Badge variant="outline" className="ended-badge" title={`세션 종료 ${endLabel(session)}`}>종료</Badge>}</div>
               <p className="row-summary">{session.summary}</p>
