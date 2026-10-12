@@ -21,6 +21,7 @@
 ## 파일
 
 - `client.tsx`: 조회 구성(React Query 3초 폴링), URL 이동, 클립보드 피드백, `/` 단축키, 초점 복귀, 테마 구독, 뷰포트 클램프.
+- `lib/store.ts`: 조회 UI 상태(현재 URL, 필터 초안, 상세 탭, 셸, 테마, 바탕화면)와 `navigate`. 상세 탭은 세션이 바뀌어도 그대로 두고, 기록 이력·세션 연결의 페이지만 새 세션의 URL을 따릅니다.
 - `lib/desktop-store.ts`: 창 상태(열림·최소화·최대화·좌표·z)와 `localStorage` 영속화. `lib/app-config.ts`: 앱 목록과 기본 배치·최소 크기.
 - `lib/theme.ts` + `public/theme.js`: 테마 읽기·적용·시스템 구독. CSP가 인라인 스크립트를 막으므로 선적용 스크립트는 별도 자산으로 `<head>`에서 동기 로드합니다.
 - `lib/wallpaper.ts`: 바탕화면 선택(기본·사진·색상·내 사진)의 저장과 내 사진 여러 장의 IndexedDB 보관·축소. 사진 교체는 `components/desktop/wallpaper.tsx`가 로드 뒤 크로스페이드합니다.
@@ -41,9 +42,10 @@ Pretendard Variable도 같은 방식이며 라이선스(`OFL.txt`)를 함께 둡
 640–899px에서 목록에 Agent·프로젝트·시각 열을 더 보여 줍니다. 뷰포트 760px 이하는 모바일 모드입니다.
 
 `/`로 검색에 초점을 보냅니다(입력 중·IME 조합 중 제외, 세션 창이 최소화돼 있으면 먼저 복원). 세션을 열면 상세, 목록으로 돌아오면 원래 링크에 초점을 돌립니다.
+상세의 개요·기록 이력·세션 연결 탭은 목록에서 다른 세션을 골라도, 연결 세션으로 이동해도, 목록으로 돌아갔다 다시 골라도 유지됩니다.
 복사 권한이 없으면 원문을 선택할 수 있고 Escape로 닫아 복사 버튼으로 돌아갑니다. 드롭다운 메뉴는 ↑↓·Home/End·Esc를 지원합니다.
 
 ## 검증
 
-`npm run typecheck`, `npm test`, `npm run build`, `npm run test:web`를 씁니다. Playwright는 `tests/web.spec.ts`(조회 기능 회귀)와
-`tests/desktop.spec.ts`(테마·자산·바탕화면·기본 배치·창 조작·드래그·가이드·명령 창·메뉴·모바일·감사용 스크린샷), `tests/cli-web.spec.ts`(실행 파일의 `web --headless`/`--close`)를 실행하며 공용 헬퍼는 `tests/web-helpers.ts`입니다.
+`npm run typecheck`, `npm test`, `npm run build`, `npm run test:web`를 씁니다. Playwright는 `tests/web.spec.ts`(조회 기능 회귀: 필터·페이지·상세 탭 유지·복사·폴링·오류 복구)와
+`tests/desktop.spec.ts`(테마·자산·바탕화면·기본 배치·창 조작·드래그·가이드·명령 창·메뉴·모바일·감사용 스크린샷), `tests/motion.spec.ts`(전환 애니메이션·reduced-motion), `tests/cli-web.spec.ts`(실행 파일의 `web --headless`/`--close`)를 실행하며 공용 헬퍼는 `tests/web-helpers.ts`입니다.

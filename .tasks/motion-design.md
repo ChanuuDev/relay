@@ -79,7 +79,7 @@ reduced-motion: 위 모든 값 0(즉시). 단 opacity 페이드는 80ms까지 �
 
 | # | 전환 | 명세 |
 |---|---|---|
-| C1 | 세션 교체(A→B) 및 목록→상세·상세→플레이스홀더 | **클론 오버레이 크로스페이드**: 이전 `.detail-panel`(또는 플레이스홀더)을 클론해 같은 위치에 덮고 opacity 1→0·x 0→−10 (`fast`·`power2.in`), 새 패널은 opacity 0→1·x 12→0 (`base`·`power3.out`). 새 패널의 헤더(제목·프로젝트·액션)는 20ms씩 stagger. 스크롤 위치는 새 패널 0. 초점 규칙(`.detail-panel` 포커스)은 애니메이션과 무관하게 즉시. |
+| C1 | 세션 교체(A→B) 및 목록→상세·상세→플레이스홀더 | **클론 오버레이 크로스페이드**: 이전 `.detail-panel`(또는 플레이스홀더)을 클론해 같은 위치에 덮고 opacity 1→0·x 0→−10 (`fast`·`power2.in`), 새 패널은 opacity 0→1·x 12→0 (`base`·`power3.out`). 새 패널의 헤더(제목·프로젝트·액션)는 20ms씩 stagger. 스크롤 위치는 새 패널 0. 초점 규칙(`.detail-panel` 포커스)은 애니메이션과 무관하게 즉시. 탭 선택은 교체 전과 같고, 새 패널의 `.tabs-thumb`은 Flip 없이 활성 탭 위에 바로 놓인다. |
 | C2 | 탭 전환(개요/기록 이력/세션 연결) | 콘텐츠 opacity 0→1·y 6→0 (`fast`). 세그먼트 컨트롤의 활성 배경은 별도 `.tabs-thumb` 요소를 두고 Flip으로 좌우 이동(`fast`·`move`). Radix `TabsTrigger`의 `data-state=active` 배경은 투명으로 바꾸고 thumb이 대신한다. |
 | C3 | 요약(`.summary`)이 폴링으로 바뀜 | `pulse(summary)` + 텍스트 즉시 교체. 기록 이력 탭이 열려 있으면 새 타임라인 항목이 맨 위에 삽입되며 y −8→0·opacity 진입, 나머지는 Flip으로 아래로 밀림. |
 | C4 | 세션 식별자 `details` 펼침 | 내용 opacity·y 진입(`fast`). 닫힘은 즉시(브라우저 기본). |
