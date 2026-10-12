@@ -1,6 +1,6 @@
 # Relay 디자인 적용 기준
 
-`DESIGN.md`의 macOS 데스크톱 디자인 시스템을 Relay의 로컬 세션 조회 화면에 적용한 결정을 적습니다. 설계 근거와 관찰값은 `.tasks/desktop-design.md`입니다.
+`DESIGN.md`의 데스크톱 디자인 시스템을 Relay의 로컬 세션 조회 화면에 적용한 결정을 적습니다. 초기 설계 근거와 관찰값은 `.tasks/desktop-design.md`입니다.
 
 ## 목적
 
@@ -25,7 +25,7 @@
 - `lib/desktop-store.ts`: 창 상태(열림·최소화·최대화·좌표·z)와 `localStorage` 영속화. `lib/app-config.ts`: 앱 목록과 기본 배치·최소 크기.
 - `lib/theme.ts` + `public/theme.js`: 테마 읽기·적용·시스템 구독. CSP가 인라인 스크립트를 막으므로 선적용 스크립트는 별도 자산으로 `<head>`에서 동기 로드합니다.
 - `lib/wallpaper.ts`: 바탕화면 선택(기본·사진·색상·내 사진)의 저장과 내 사진 여러 장의 IndexedDB 보관·축소. 사진 교체는 `components/desktop/wallpaper.tsx`가 로드 뒤 크로스페이드합니다.
-- `components/desktop/*`: 배경화면, 메뉴바, 드롭다운, 창·상단바·신호등, 드래그/리사이즈 훅, Dock, Relay 마크.
+- `components/desktop/*`: 배경화면, 메뉴바, 드롭다운, 창·상단바·조작 버튼, 드래그/리사이즈 훅, Dock, Relay 마크.
 - `components/apps/*`: 세션·가이드·명령·설정 창 본문. 목록·상세·필터·안내는 기존 컴포넌트를 재사용합니다.
 - `lib/session-context.ts`: 목록·상세·명령 창이 같은 맥락 텍스트와 조회 명령을 만듭니다.
 - `components/ui/`: shadcn/Radix 프리미티브는 그대로 두고 `styles.css`의 `[data-slot=…]` 오버라이드로 치수를 맞춥니다.
@@ -38,6 +38,8 @@ Pretendard Variable도 같은 방식이며 라이선스(`OFL.txt`)를 함께 둡
 이미지·폰트만 `Cache-Control: public, max-age=…`를 쓰고 나머지 응답은 `no-store`를 유지합니다. 외부 CDN·원격 폰트·Apple 자산은 없습니다.
 
 ## 반응형과 접근성
+
+창 상단바는 왼쪽에 앱 아이콘·제목, 가운데 검색·필터, 오른쪽에 최소화·최대화/복원·닫기를 배치합니다. 조작 버튼은 30×28px의 중립색 사각 버튼이며 아이콘을 항상 표시하고 닫기에 마우스를 올리면 빨간색으로 강조합니다. 모바일에서는 동작하지 않는 최소화·최대화 버튼을 숨깁니다.
 
 창 안쪽은 컨테이너 쿼리로 반응합니다. 세션 창 컨테이너가 900px 이상이면 목록·상세 2단, 미만이면 단일 패널(상세가 목록을 대체)이고
 640–899px에서 목록에 Agent·프로젝트·시각 열을 더 보여 줍니다. 뷰포트 760px 이하는 모바일 모드입니다.

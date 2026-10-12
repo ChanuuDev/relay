@@ -57,7 +57,7 @@ test("창 닫기는 종료 트윈을 재생한 뒤 DOM에서 사라진다", asyn
   await page.locator(dock("설정")).click();
   await expect(page.locator(win("settings"))).toBeVisible();
   const closing = await clickAndCount(page,
-    `${win("settings")} .traffic-light[data-light="close"]`, `${win("settings")}[data-closing]`);
+    `${win("settings")} .window-control[data-window-action="close"]`, `${win("settings")}[data-closing]`);
   expect(closing).toBe(1);
   await expect(page.locator(win("settings"))).toHaveCount(0, { timeout: 500 });
   // reduced-motion에서는 과도 상태 없이 즉시 사라져도 통과한다.
@@ -74,7 +74,7 @@ test("최소화는 Dock으로 접히고 복원은 원래 자리로 되돌린다"
   await ready(page);
   const before = await boxOf(page, win("sessions"));
   const minimizing = await clickAndCount(page,
-    `${win("sessions")} .traffic-light[data-light="minimize"]`, `${win("sessions")}[data-minimizing]`);
+    `${win("sessions")} .window-control[data-window-action="minimize"]`, `${win("sessions")}[data-minimizing]`);
   expect(minimizing).toBe(1);
   await expect(page.locator(win("sessions"))).toHaveAttribute("data-minimized", "", { timeout: 600 });
   await expect(page.locator(dock("세션"))).toHaveAttribute("data-open", "");

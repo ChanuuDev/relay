@@ -1,6 +1,6 @@
-# macOS 데스크톱 셸 디자인 시스템
+# Relay 데스크톱 셸 디자인 시스템
 
-Relay 웹 화면은 macOS 데스크톱 메타포를 따릅니다. 참고 디자인은 21st.dev "macOS Desktop Portfolio"(작성자 alanagoyal, MIT)의 공개 화면이며,
+Relay 웹 화면은 여러 창과 Dock을 사용하는 데스크톱 메타포를 따릅니다. 창 상단바는 왼쪽 앱 아이콘·제목과 오른쪽 사각 조작 버튼으로 구성합니다. 초기 참고 디자인은 21st.dev "macOS Desktop Portfolio"(작성자 alanagoyal, MIT)의 공개 화면이며,
 관찰값과 Relay의 적용 결정은 `.tasks/desktop-design.md`에 정리돼 있습니다. Apple 저작 자산(배경화면·앱 아이콘·SF Pro)은 쓰지 않고, 외부 CDN·원격 폰트도 없습니다.
 
 ## 1. 구조
@@ -49,7 +49,7 @@ div.desktop (fixed inset-0)
 | `--terminal-bg` / `--terminal-prompt` | `#1c1c1e` / `#30d158` | 동일 |
 | `--glass-*` | §2 재질 채움·테두리·그림자 | 동일 키, 값만 다름 |
 
-모서리: 창 12px(최대화 10px), 카드·세그먼트 8px, 버튼·입력 6px, Dock 18px. 강조색은 시스템 블루 하나이며 초록·노랑·빨강은 신호등과 상태점에만 씁니다.
+모서리: 창 12px(최대화 10px), 카드·세그먼트 8px, 버튼·입력 6px, Dock 18px. 창 조작은 중립색 아이콘 버튼을 사용하고, 닫기 버튼의 hover에는 빨간색을 씁니다. 상태점은 연결 상태에 따라 색을 표시합니다.
 
 ## 4. 서체와 정렬
 
