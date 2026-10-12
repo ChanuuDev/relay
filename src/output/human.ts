@@ -145,6 +145,9 @@ function detail(data: Detail, space: number): Line[] {
 const HOOK_STATUS: Record<string, string> = {
   added: "등록함", updated: "갱신함", unchanged: "이미 등록됨", skipped: "건너뜀",
 };
+const SKILL_STATUS: Record<string, string> = {
+  added: "설치함", updated: "갱신함", unchanged: "이미 설치됨", skipped: "건너뜀",
+};
 
 /** Lines plus their owning session; `human` is the same output flattened for a non-interactive terminal. */
 
@@ -154,10 +157,17 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
     scope?: { cwd: string | null }; binDirectory?: string; executable?: string;
     wrappers?: { path: string; status: string }[];
     hosts?: { host?: string; path: string; status: string; detail?: string }[];
+    skill?: string; targets?: { host: string; path: string; status: string; detail?: string }[];
   };
+  const row = (label: string, status: string, file: string, detail?: string, names = HOOK_STATUS) =>
+    `${label}  ${names[status] ?? status}  ${file}${detail ? `  (${detail})` : ""}`;
+  if (data.targets && data.skill) {
+    return plain([
+      `스킬  ${data.skill}`,
+      ...data.targets.map(target => row(target.host, target.status, target.path, target.detail, SKILL_STATUS)),
+    ]);
+  }
   if (data.hosts && data.binDirectory) {
-    const row = (label: string, status: string, file: string, detail?: string) =>
-      `${label}  ${HOOK_STATUS[status] ?? status}  ${file}${detail ? `  (${detail})` : ""}`;
     return plain([
       `실행 파일  ${data.executable ?? ""}`,
       `훅 래퍼    ${data.binDirectory}`,

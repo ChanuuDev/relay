@@ -13,6 +13,7 @@ import { terminalWidth } from "./output/terminal";
 import { SessionRepository } from "./session/session.repository";
 import { HOOK_SUMMARY, PROVIDERS, SessionService } from "./session/session.service";
 import type { NewSession, Session } from "./session/session.types";
+import { installSkills } from "./skills/install";
 import { directory } from "./validation";
 import { sessionCommand } from "./web/lib/session-context";
 import { startDetached, stopServer } from "./web/control";
@@ -149,6 +150,14 @@ program.command("install-hooks").description("Claude/Grok/Codex SessionStart·Se
   .option("--bin-dir <path>", "relay.exe와 훅 래퍼를 둘 절대경로")
   .action((o, c: Command) => {
     const result = installHostHooks({ binDirectory: o.binDir === undefined ? undefined : directory(o.binDir, false) });
+    if (c.optsWithGlobals().json) return void process.stdout.write(JSON.stringify(result) + "\n");
+    process.stdout.write(render(result).map(line => line.text).join("\n") + "\n");
+  });
+
+program.command("install-skills").description("relay-session 스킬을 Claude/Grok/Codex 사용자 스킬 폴더에 실제 사본으로 설치 (링크는 사본으로 교체)")
+  .option("--force", "내용이 다른 기존 사본을 덮어씀")
+  .action((o: { force?: boolean }, c: Command) => {
+    const result = installSkills({ force: o.force });
     if (c.optsWithGlobals().json) return void process.stdout.write(JSON.stringify(result) + "\n");
     process.stdout.write(render(result).map(line => line.text).join("\n") + "\n");
   });

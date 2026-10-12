@@ -64,7 +64,7 @@ npm run build
 .\scripts\install-cli.ps1
 ```
 
-설치 스크립트는 `dist\relay.exe`를 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 그 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 세 도구의 SessionStart·SessionEnd 훅을 등록합니다. 이미 빌드된 실행 파일이 있다면 설치 스크립트만 실행하면 됩니다.
+설치 스크립트는 `dist\relay.exe`를 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 그 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 세 도구의 SessionStart·SessionEnd 훅을 등록하고 `relay install-skills`로 `relay-session` 스킬을 세 도구의 사용자 스킬 폴더에 둡니다. 이미 빌드된 실행 파일이 있다면 설치 스크립트만 실행하면 됩니다.
 
 ```powershell
 relay --version
@@ -84,7 +84,7 @@ npm run build
 relay web --headless
 ```
 
-설치 위치는 `-InstallDirectory <절대경로>`, PATH 등록 생략은 `-NoPath`로 지정합니다. 제거하려면 설치된 `relay.exe`와 같은 폴더의 `relay-hook-*.cmd`를 삭제하고 각 도구의 훅 설정에서 Relay 항목을 지웁니다. 데이터까지 지우려면 [저장소 폴더](#데이터와-설정)를 삭제합니다.
+설치 위치는 `-InstallDirectory <절대경로>`, PATH 등록 생략은 `-NoPath`로 지정합니다. `-Force`는 실행 파일과 함께 내용이 바뀐 스킬 사본도 교체합니다. 제거하려면 설치된 `relay.exe`와 같은 폴더의 `relay-hook-*.cmd`를 삭제하고 각 도구의 훅 설정에서 Relay 항목을 지운 뒤, 각 도구의 사용자 스킬 폴더에서 `relay-session`을 삭제합니다. 데이터까지 지우려면 [저장소 폴더](#데이터와-설정)를 삭제합니다.
 
 ## 사용 방법
 
@@ -139,11 +139,26 @@ relay continue '<이전 Agent Session ID>' --parent-provider xai --provider open
 
 ## Agent 연동
 
-Agent가 스스로 기록하게 하려면 프로젝트마다 스킬과 지침을 설치합니다. 훅은 설치 시 사용자 단위로 한 번만 등록됩니다.
+Agent가 스스로 기록하게 하려면 스킬과 프로젝트 지침을 설치합니다. 스킬과 훅은 설치 시 사용자 단위로 한 번만 등록되고, 지침은 프로젝트마다 둡니다.
 
 ### 스킬 설치
 
-[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를 담은 스킬입니다. 프로젝트 단위로 설치하며, 기존 파일 내용이 다르면 덮어쓰지 않고 중단합니다.
+[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를 담은 스킬입니다. `relay install-skills`가 이 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
+
+```powershell
+relay install-skills
+relay install-skills --force
+```
+
+| 도구 | 설치 위치 | 비고 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills/relay-session` | `argument-hint` 포함 |
+| Grok | `~/.grok/skills/relay-session` | `argument-hint` 포함 |
+| Codex | `~/.codex/skills/relay-session` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `agents/openai.yaml` 포함 |
+
+스킬 폴더는 심볼릭 링크나 정션으로 연결하지 않습니다. 링크는 가리키던 폴더가 옮겨지거나 지워지면 끊어지고, 그러면 Agent가 "심볼릭 링크 문제로 스킬을 못 쓴다"고 보고합니다. `install-skills`는 설치 위치에 링크가 있으면 링크 항목만 지우고 실제 사본으로 바꾸며, 링크가 가리키던 폴더는 건드리지 않습니다. 기존 사본의 내용이 다르면 덮어쓰지 않고 `건너뜀`으로 알리므로 확인한 뒤 `--force`로 교체합니다. Claude Code는 `~/.agents/skills`를 읽지 않으므로 그 폴더에 복사하거나 연결하는 방식은 쓰지 않습니다.
+
+특정 프로젝트에만 두려면 설치 스크립트를 사용합니다. 기존 파일 내용이 다르면 덮어쓰지 않고 중단하며, 설치 위치가 링크이면 실제 사본으로 바꿉니다.
 
 ```powershell
 .\scripts\install-skill.ps1 -Agent codex -ProjectDirectory "C:\workspace\my-project"
@@ -151,9 +166,7 @@ Agent가 스스로 기록하게 하려면 프로젝트마다 스킬과 지침을
 .\scripts\install-skill.ps1 -Agent grok -ProjectDirectory "C:\workspace\my-project"
 ```
 
-각각 `.agents/skills/relay-session`, `.claude/skills/relay-session`, `.grok/skills/relay-session`에 배치됩니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code와 Grok에서는 `/relay-session grok`으로 Grok 기록을 조회할 수 있습니다.
-
-모든 프로젝트에서 쓰려면 `skills/relay-session`을 `~/.agents/skills/relay-session`에 복사하세요. Grok과 Codex가 함께 읽는 전역 스킬 폴더입니다.
+각각 `.agents/skills/relay-session`, `.claude/skills/relay-session`, `.grok/skills/relay-session`에 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code와 Grok에서는 `/relay-session grok`으로 Grok 기록을 조회할 수 있습니다.
 
 ### 프로젝트 지침
 
@@ -161,7 +174,7 @@ Agent가 스스로 기록하게 하려면 프로젝트마다 스킬과 지침을
 
 ```text
 세션의 첫 작업 전에 relay-session 스킬을 읽고, 그 절차에 따라 현재 세션 정보를 Relay에 기록한다.
-명령을 추측하지 않는다. 스킬을 찾지 못하면 relay --help로 확인한다.
+명령을 추측하지 않는다. 스킬을 찾지 못하거나 링크 문제로 읽히지 않으면 relay --help로 확인하고, relay install-skills로 다시 설치하라고 한 줄로 알린다.
 호스트가 제공한 실제 세션 ID만 사용하고, 기존 기록을 먼저 확인해 없을 때만 생성한다.
 이전 작업을 이어받으면 continue로 출처를 연결하고, 작업 단위가 끝나면 짧은 진행 단서를 갱신한다.
 update를 한 번도 남기지 않은 세션 기록은 종료 시 삭제되므로 첫 작업 단위가 끝나면 반드시 갱신한다.
@@ -224,6 +237,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay update --session-id <ID> --summary <요약> [--provider]` | 진행 요약 갱신 |
 | `relay continue <이전 ID> --parent-provider <제공자> ...` | 이전 세션에 현재 세션 연결. 나머지 옵션은 `record`와 같음 |
 | `relay install-hooks [--bin-dir <경로>]` | SessionStart·SessionEnd 훅 등록 |
+| `relay install-skills [--force]` | `relay-session` 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
 | `relay web [--open] [--port <번호>] [--headless] [--close]` | 브라우저 조회 서버 실행, 백그라운드 실행, 종료 |
 
 전역 옵션은 `--data-dir <절대경로>`와 `--json`입니다. Agent나 스크립트에서는 `--json`을 붙이세요. 성공 결과는 stdout, 실패는 stderr에 JSON 하나로 출력됩니다. 종료 코드는 `0` 성공, `2` 입력·설정 오류, `3` 기록 없음(`SESSION_NOT_FOUND`), `4` 충돌(`PARENT_CONFLICT`, `SESSION_EXISTS`, `AMBIGUOUS_SESSION_ID`), `5` 저장소 오류, `6` 서버 시작·종료 실패입니다.
@@ -346,6 +360,7 @@ DB는 로컬 디스크에 두세요. 네트워크 드라이브나 클라우드 �
 | `SESSION_NOT_FOUND` | 출처, 조회 범위, 저장소 경로 확인. Relay에 없다는 뜻이지 원본 세션이 없다는 뜻은 아님 |
 | 엉뚱한 프로젝트의 기록이 나옴 | 기본값은 전체 프로젝트. `latest <별칭> --cwd <절대경로>`로 제한 |
 | 요약이 훅 기본 문구뿐임 | Agent가 작업 시작 후 `update`로 단서를 남겼는지, 스킬과 프로젝트 지침이 설치됐는지 확인 |
+| Agent가 "심볼릭 링크 문제로 스킬을 못 쓴다"고 함, 또는 `relay-session`이 스킬 목록에 없음 | 사용자 스킬 폴더의 `relay-session`이 끊어진 링크입니다. `relay install-skills`로 실제 사본을 설치. 프로젝트 사본은 `install-skill.ps1`로 다시 설치 |
 | 세션이 목록에서 사라짐 | 훅 자동 기록만 남은 채 종료되면 삭제됩니다. Agent가 `update`를 남겼는지 확인 |
 | 끝난 세션이 `진행 중`으로 보임 | 터미널을 강제로 닫거나 프로세스가 죽으면 종료 훅이 실행되지 않음 |
 | 오래된 기록이 사라짐 | 30일 보관 정책. 원본 도구의 기록과 프로젝트 파일은 별개 |

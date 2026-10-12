@@ -65,5 +65,15 @@ try {
 } catch {
     Write-Output 'Hook registration skipped. Run: relay install-hooks'
 }
+# The skill goes to each agent's user skill folder as a real copy; -Force also refreshes a copy whose content changed.
+try {
+    $skillArguments = @('install-skills')
+    if ($Force) { $skillArguments += '--force' }
+    $skill = & $target @skillArguments
+    if ($LASTEXITCODE -eq 0) { Write-Output $skill }
+    else { Write-Output 'Skill installation skipped. Run: relay install-skills' }
+} catch {
+    Write-Output 'Skill installation skipped. Run: relay install-skills'
+}
 if ($NoPath) { Write-Output 'PATH was not changed.' }
 else { Write-Output 'Ready: relay --codex. Reopen other terminals if the command is not found.' }

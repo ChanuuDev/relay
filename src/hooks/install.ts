@@ -70,7 +70,7 @@ export function shouldAutoInstallHooks(input: {
   return primaryCommand(input.argv ?? process.argv) !== "hook";
 }
 
-function homeDirectory(options: HookInstallOptions) {
+export function homeDirectory(options: { homeDirectory?: string }) {
   return options.homeDirectory ?? process.env.RELAY_USER_HOME ?? homedir();
 }
 
@@ -85,7 +85,7 @@ function binDirectory(options: HookInstallOptions, home: string) {
 
 // Codex reads its hooks from `$CODEX_HOME` when a host such as Orca sets it, and from `~/.codex` otherwise.
 // Both are registered so the hook runs however Codex is launched.
-function codexHomes(options: HookInstallOptions, home: string): string[] {
+export function codexHomes(options: { codexHomes?: string[] }, home: string): string[] {
   if (options.codexHomes) return options.codexHomes;
   const seen = new Set<string>();
   return [process.env.CODEX_HOME, path.join(home, ".codex")]

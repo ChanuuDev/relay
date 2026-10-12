@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, root, temporary } from "./helpers";
 
@@ -49,6 +49,32 @@ test.skipIf(process.platform !== "win32")("installer rejects a junction escaping
     expect(existsSync(path.join(outside, "relay-session"))).toBe(false);
   } finally { cleanup(outside); }
 });
+
+test.skipIf(process.platform !== "win32")("installer replaces a linked skill folder with a real copy and leaves the link target alone", () => {
+  const outside = temporary();
+  try {
+    writeFileSync(path.join(outside, "keep.txt"), "keep");
+    mkdirSync(path.join(dir, ".claude/skills"), { recursive: true });
+    const target = path.join(dir, ".claude/skills/relay-session");
+    symlinkSync(outside, target, "junction");
+    const result = install("claude");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Replaced link with a real copy");
+    expect(lstatSync(target).isSymbolicLink()).toBe(false);
+    expect(readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("argument-hint: codex|claude|grok");
+    expect(readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("keep");
+    expect(existsSync(path.join(outside, "SKILL.md"))).toBe(false);
+    // A link whose target has already disappeared is what agents report as a symlink problem; it is replaced the same way.
+    const gone = path.join(dir, "gone");
+    mkdirSync(gone);
+    mkdirSync(path.join(dir, ".grok/skills"), { recursive: true });
+    symlinkSync(gone, path.join(dir, ".grok/skills/relay-session"), "junction");
+    rmSync(gone, { recursive: true });
+    expect(install("grok").exitCode).toBe(0);
+    expect(lstatSync(path.join(dir, ".grok/skills/relay-session")).isDirectory()).toBe(true);
+    expect(existsSync(path.join(dir, ".grok/skills/relay-session/SKILL.md"))).toBe(true);
+  } finally { cleanup(outside); }
+}, 15000);
 
 function installCli(source: string, destination: string, ...extra: string[]) {
   return Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",

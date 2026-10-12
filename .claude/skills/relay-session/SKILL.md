@@ -75,6 +75,15 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 
 입력 문자열은 인자 배열로 전달하거나 해당 셸에 맞게 인용한다. 저장 결과를 받지 못한 `continue`도 자동 재전송하지 말고 `relay show <ID> --provider <provider> --history --json`으로 먼저 확인한다.
 
+## 스킬 설치
+
+`relay install-skills`가 이 스킬을 Claude Code(`~/.claude/skills`), Grok(`~/.grok/skills`), Codex(`~/.codex/skills`, `CODEX_HOME`이 있으면 그 폴더의 `skills`)의 사용자 스킬 폴더에 실제 사본으로 둔다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 특정 프로젝트에만 두려면 `scripts/install-skill.ps1`을 쓴다.
+
+- 스킬 폴더를 심볼릭 링크나 정션으로 연결하지 않는다. 링크는 가리키던 폴더가 옮겨지거나 지워지면 끊어지고, 그러면 호스트가 스킬을 읽지 못한다.
+- 설치 위치에 링크가 있으면 링크 항목만 지우고 실제 사본으로 바꾼다. 링크가 가리키던 폴더는 건드리지 않는다.
+- 내용이 다른 기존 사본은 덮어쓰지 않고 `건너뜀`으로 알리며, 확인한 뒤 `--force`를 줄 때만 교체한다.
+- 호스트가 이 스킬을 목록에 보여 주지 않거나 링크 문제로 읽지 못해도 기록 절차는 프로젝트 지침과 같다. 절차를 그대로 수행하고, `relay install-skills`로 다시 설치하라고 한 줄로 안내한다.
+
 ## Agent 훅
 
 Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있고, `SessionEnd` 훅에서 `relay hook <codex|claude|grok> --end`를 호출하면 종료를 기록한다. 훅은 다음 규칙을 따른다.
