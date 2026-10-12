@@ -60,11 +60,8 @@ export const useUI = create<UIState>((set) => ({
     if (gone) URL.revokeObjectURL(gone.url);
     return { customImages: state.customImages.filter((image) => image.id !== id) };
   }),
-  syncLocation: () => set((state) => {
-    const next = location.pathname + location.search;
-    const changedSession = state.location.split("?")[0] !== location.pathname;
-    return { location: next, draft: readDraft(), ...(changedSession ? { tab: "overview" as const } : {}) };
-  }),
+  // 세션이 바뀌어도 탭은 그대로 둔다. 목록에서 다른 세션을 골라도 보던 탭(기록 이력·세션 연결)이 유지된다.
+  syncLocation: () => set({ location: location.pathname + location.search, draft: readDraft() }),
 }));
 
 export function navigate(href: string) {

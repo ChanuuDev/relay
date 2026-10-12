@@ -73,7 +73,7 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await expect(page).toHaveURL(new RegExp(parent.session.id));
   await page.getByRole("tab", { name: /세션 연결/ }).click();
   await page.locator("#children-content").getByRole("link", { name: "Codex 후속 작업" }).click(); await expect(page).toHaveURL(new RegExp(child.session.id));
-  await page.getByRole("tab", { name: /세션 연결/ }).click();
+  await expect(page.getByRole("tab", { name: /세션 연결/ })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("complementary", { name: "세션 상세" }).getByRole("link", { name: "Claude 이전 작업" }).click();
   await page.getByRole("link", { name: "목록으로 돌아가기", exact: false }).click();
   await expect(page.getByLabel("Provider", { exact: true })).toHaveValue("anthropic");
@@ -210,6 +210,8 @@ test("history and child pages beyond 50 remain navigable; detail polling preserv
   await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(4);
   await page.getByRole("tab", { name: /세션 연결/ }).click();
   const childLink = page.locator("#children-content li a").first(); await childLink.click();
+  await expect(page.getByRole("tab", { name: /세션 연결/ })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: /개요/ }).click();
   await page.getByText("세션 식별자", { exact: true }).click();
   const id = await page.locator("dd").first().textContent();
   const copy = page.getByRole("complementary", { name: "세션 상세" }).getByRole("button", { name: "세션 컨텍스트 복사", exact: true }); await copy.focus();
@@ -219,6 +221,28 @@ test("history and child pages beyond 50 remain navigable; detail polling preserv
   await expect(page.locator(".summary")).toHaveText("스크롤 유지 갱신", { timeout: 5000 });
   await expect(page.getByRole("complementary", { name: "세션 상세" }).getByRole("button", { name: "세션 컨텍스트 복사", exact: true })).toBeFocused();
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
+});
+
+test("picking another session in the list keeps the detail tab that was open", async ({ page }) => {
+  const first = record("first", "첫 번째 세션"); cli(["update", "--session-id", "first", "--summary", "첫 번째 진행"]);
+  const second = record("second", "두 번째 세션");
+  await ready(page);
+  await page.locator("#list-content").getByRole("link", { name: "첫 번째 세션" }).click();
+  await expect(page).toHaveURL(new RegExp(first.session.id));
+  await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(2);
+  await page.locator("#list-content").getByRole("link", { name: "두 번째 세션" }).click();
+  await expect(page).toHaveURL(new RegExp(second.session.id));
+  await expect(page.getByRole("tab", { name: /기록 이력/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(1);
+  await page.getByRole("tab", { name: /세션 연결/ }).click();
+  await page.locator("#list-content").getByRole("link", { name: "첫 번째 세션" }).click();
+  await expect(page).toHaveURL(new RegExp(first.session.id));
+  await expect(page.getByRole("tab", { name: /세션 연결/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#children-content")).toContainText("이어받은 세션 없음");
+  await page.getByRole("link", { name: "목록으로 돌아가기", exact: false }).click();
+  await page.locator("#list-content").getByRole("link", { name: "두 번째 세션" }).click();
+  await expect(page.getByRole("tab", { name: /세션 연결/ })).toHaveAttribute("aria-selected", "true");
 });
 
 test("slow older filter responses cannot replace newer results", async ({ page }) => {
