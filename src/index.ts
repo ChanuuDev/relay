@@ -5,6 +5,7 @@ import path from "node:path";
 import { loadConfig } from "./config";
 import { openDatabase } from "./db/database";
 import { errorBody, invalid, RelayError, storageError } from "./errors";
+import { SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
@@ -116,19 +117,27 @@ program.command("latest <provider>").description("codex / claude / grok 중 명�
 program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록 또는 종료 처리 (codex/claude/grok)")
   .option("--end", "SessionEnd: 종료 시각·사유를 기록하고, 훅 자동 기록만 남은 세션은 삭제")
   .action(async (alias: string, options: { end?: boolean }, command: Command) => {
-    // A session hook must never block or fail the host session: answer first, record second, stay silent on failure.
-    process.stdout.write("{}\n");
+    // Answer once before opening the store; recording must never block or fail the host session.
+    let answered = false;
     try {
       const raw = process.stdin.isTTY ? "" : await Bun.stdin.text();
-      const payload = (raw.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>;
+      const parsed: unknown = raw.trim() ? JSON.parse(raw) : {};
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      const payload = parsed as Record<string, unknown>;
       // A subagent shares the host session; only the session itself is recorded or closed.
       if (payload.agent_id || payload.subagentType || payload.subagent_type || !Object.hasOwn(PROVIDERS, alias)) return;
-      const sessionId = [payload.session_id, payload.sessionId, payload.thread_id,
-        process.env.CLAUDE_CODE_SESSION_ID, process.env.CODEX_THREAD_ID, process.env.GROK_SESSION_ID]
+      const environmentId = { claude: process.env.CLAUDE_CODE_SESSION_ID, codex: process.env.CODEX_THREAD_ID,
+        grok: process.env.GROK_SESSION_ID }[alias as keyof typeof PROVIDERS];
+      const sessionId = [payload.session_id, payload.sessionId, payload.thread_id, environmentId]
         .find((value): value is string => typeof value === "string" && value.trim().length > 0);
       if (!sessionId) return;
-      const cwd = typeof payload.cwd === "string" && existsSync(payload.cwd) ? payload.cwd : process.cwd();
       const { provider, agent } = PROVIDERS[alias as keyof typeof PROVIDERS];
+      // Grok ignores SessionStart output. Codex and Claude add this JSON to the agent's context.
+      const output = !options.end && alias !== "grok" ? { hookSpecificOutput: { hookEventName: "SessionStart",
+        additionalContext: `${SESSION_START_PROMPT}\n\n현재 호스트가 제공한 세션 정보: ${JSON.stringify({ provider, agent, sessionId })}` } } : {};
+      process.stdout.write(JSON.stringify(output) + "\n");
+      answered = true;
+      const cwd = typeof payload.cwd === "string" && existsSync(payload.cwd) ? payload.cwd : process.cwd();
       const config = loadConfig(command.optsWithGlobals().dataDir);
       const db = openDatabase(config);
       try {
@@ -137,6 +146,7 @@ program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin�
         else service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY });
       } finally { db.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
+    finally { if (!answered) process.stdout.write("{}\n"); }
   });
 
 /** The host's end reason in the form the record accepts; absent when the host sent none. */

@@ -29,7 +29,13 @@ export function record(id: string, name: string, provider = "openai", agent = "c
 export function hook(alias: string, payload: Record<string, unknown>, end = false) {
   const result = spawnSync(binary, ["hook", alias, ...(end ? ["--end"] : []), "--data-dir", env.dir],
     { cwd: env.dir, encoding: "utf8", timeout: 10000, env: spawnEnv, input: JSON.stringify(payload) });
-  if (result.status !== 0 || result.stdout.trim() !== "{}") throw new Error(`hook failed: ${result.stderr} ${result.error ?? ""}`);
+  if (result.status !== 0) throw new Error(`hook failed: ${result.stderr} ${result.error ?? ""}`);
+  const output = JSON.parse(result.stdout);
+  if (end || alias === "grok") expect(output).toEqual({});
+  else {
+    expect(output.hookSpecificOutput.hookEventName).toBe("SessionStart");
+    expect(output.hookSpecificOutput.additionalContext).toContain("relay-session");
+  }
 }
 
 export async function launch() {

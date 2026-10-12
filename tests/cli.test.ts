@@ -188,7 +188,7 @@ describe("CLI processes", () => {
     }
   });
 
-  test("session first-record hook records from stdin and never fails the host session", () => {
+  test("session start hook gives Codex/Claude recording context and never fails the host session", () => {
     const hook = (payload: string, extra: Record<string, string> = {}, alias = "claude", ...flags: string[]) => {
       // The host session of this test run must not leak into the payload fallback.
       const env: Record<string, string | undefined> = {
@@ -196,33 +196,61 @@ describe("CLI processes", () => {
       };
       const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, ...flags, "--data-dir", dir],
         { cwd: root, env, stdin: Buffer.from(payload), stdout: "pipe", stderr: "pipe" });
-      return { code: result.exitCode, stdout: result.stdout.toString().trim() };
+      return { code: result.exitCode, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString() };
+    };
+    const context = (result: ReturnType<typeof hook>): string => {
+      expect(result.code).toBe(0); expect(result.stderr).toBe("");
+      const output = JSON.parse(result.stdout);
+      expect(Object.keys(output)).toEqual(["hookSpecificOutput"]);
+      expect(output.hookSpecificOutput.hookEventName).toBe("SessionStart");
+      expect(output.hookSpecificOutput.additionalContext).toBeString();
+      return output.hookSpecificOutput.additionalContext;
     };
     const started = hook(JSON.stringify({ session_id: "hook-session", cwd: root, hook_event_name: "SessionStart", session_source: "startup" }));
-    expect(started.code).toBe(0); expect(started.stdout).toBe("{}");
+    const prompt = context(started);
+    for (const instruction of ["첫 작업 전에 relay-session 스킬을 읽고", "명령을 추측하지 않는다", "relay --help로 확인",
+      "실제 세션 ID만 사용", "기존 기록을 먼저 확인해 없을 때만 생성", "continue로 출처를 연결", "중간 작업 내용 또한 Relay 도구로 기록",
+      "update로 갱신", "relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속"]) expect(prompt).toContain(instruction);
+    expect(prompt).toContain(JSON.stringify({ provider: "anthropic", agent: "claude-code", sessionId: "hook-session" }));
     const stored = cli(dir, ["show", "hook-session"]).data.session;
     expect(stored.provider).toBe("anthropic"); expect(stored.agent).toBe("claude-code");
     expect(stored.sessionName).toBe(path.basename(root)); expect(stored).not.toHaveProperty("status");
     expect(stored.summary).toBe("세션 첫 기록 (훅 자동 기록)");
     // Resume fires the hook again with the same payload and must not duplicate history or fail.
-    expect(hook(JSON.stringify({ session_id: "hook-session", cwd: root, session_source: "resume" })).code).toBe(0);
+    expect(context(hook(JSON.stringify({ session_id: "hook-session", cwd: root, session_source: "resume" })))).toBe(prompt);
     expect(cli(dir, ["show", "hook-session", "--history"]).data.updates.length).toBe(1);
     // Subagents and unusable payloads stay silent instead of breaking the session.
-    expect(hook(JSON.stringify({ session_id: "sub", cwd: root, agent_id: "agent-1" })).code).toBe(0);
-    for (const payload of ["", "not json", "[]", JSON.stringify({ cwd: root })]) {
+    for (const payload of [{ session_id: "sub", agent_id: "agent-1" }, { session_id: "sub", subagentType: "explore" },
+      { session_id: "sub", subagent_type: "explore" }]) expect(hook(JSON.stringify(payload)).stdout).toBe("{}");
+    for (const payload of ["", "not json", "[]", "null", "42", JSON.stringify({ cwd: root })]) {
       const result = hook(payload);
       expect(result.code).toBe(0); expect(result.stdout).toBe("{}");
     }
+    expect(hook(JSON.stringify({ session_id: "unknown-host" }), {}, "unknown").stdout).toBe("{}");
+    // Another host's environment must never be mistaken for this host's actual session id.
+    expect(hook("{}", { CLAUDE_CODE_SESSION_ID: "other-host" }, "codex").stdout).toBe("{}");
     expect(cli(dir, ["list"]).data.page.total).toBe(1);
     // A host that omits the id from the payload is still recorded from its session environment variable.
     expect(hook("{}", { CLAUDE_CODE_SESSION_ID: "env-session" }).code).toBe(0);
     expect(cli(dir, ["show", "env-session"]).data.session.providerSessionId).toBe("env-session");
-    expect(hook(JSON.stringify({ sessionId: "grok-payload", cwd: root }), {}, "grok").code).toBe(0);
+    const grok = hook(JSON.stringify({ sessionId: "grok-payload", cwd: root }), {}, "grok");
+    expect(grok.code).toBe(0); expect(grok.stdout).toBe("{}");
     expect(cli(dir, ["show", "grok-payload", "--provider", "xai"]).data.session.agent).toBe("grok");
-    expect(hook("{}", { GROK_SESSION_ID: "grok-env-session" }, "grok").code).toBe(0);
+    expect(hook("{}", { CLAUDE_CODE_SESSION_ID: "other-host", GROK_SESSION_ID: "grok-env-session" }, "grok").code).toBe(0);
     expect(cli(dir, ["show", "grok-env-session", "--provider", "xai"]).data.session.provider).toBe("xai");
-    expect(hook("{}", { CODEX_THREAD_ID: "codex-env-session" }, "codex").code).toBe(0);
+    expect(context(hook("{}", { CODEX_THREAD_ID: "codex-env-session" }, "codex")))
+      .toContain(JSON.stringify({ provider: "openai", agent: "codex", sessionId: "codex-env-session" }));
     expect(cli(dir, ["show", "codex-env-session", "--provider", "openai"]).data.session.agent).toBe("codex");
+    // A payload id takes precedence over the host environment and is passed through unchanged.
+    const givenId = "host's thread; keep literal";
+    expect(context(hook(JSON.stringify({ thread_id: givenId }), { CODEX_THREAD_ID: "codex-env-session" }, "codex")))
+      .toContain(JSON.stringify({ provider: "openai", agent: "codex", sessionId: givenId }));
+    expect(cli(dir, ["show", givenId, "--provider", "openai"]).data.session.providerSessionId).toBe(givenId);
+    // Even when the store cannot be opened, the host gets one valid, non-blocking response.
+    writeFileSync(path.join(dir, "config.json"), "not json");
+    expect(context(hook(JSON.stringify({ session_id: "store-failed" }), {}, "codex"))).toContain("relay가 없거나 기록에 실패하면");
+    const failedEnd = hook(JSON.stringify({ session_id: "hook-session" }), {}, "claude", "--end");
+    expect(failedEnd.code).toBe(0); expect(failedEnd.stdout).toBe("{}"); expect(failedEnd.stderr).toBe("");
   }, 15000);
 
   test("session end hook closes a session with context, removes an untouched automatic record, and stays silent otherwise", () => {

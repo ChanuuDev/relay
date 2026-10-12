@@ -62,9 +62,11 @@ div.desktop (fixed inset-0)
 
 ## 5. 모션
 
-모든 상태 전환은 GSAP으로 잇습니다. 값과 헬퍼는 **`lib/motion.ts` 한 곳**에만 있고(`MOTION`·`EASE`·`dur()`),
-컴포넌트는 `useGSAP`으로 그 헬퍼만 부릅니다. 애니메이션 대상은 transform·opacity뿐이며(상세 필터 행의 `height: auto`만 예외),
+창·목록·상세의 상태 전환은 GSAP으로 잇습니다. 값과 헬퍼는 **`lib/motion.ts` 한 곳**에 있고(`MOTION`·`EASE`·`dur()`),
+해당 컴포넌트는 `useGSAP`으로 그 헬퍼를 부릅니다. 애니메이션 대상은 transform·opacity이며(상세 필터 행의 `height: auto`는 예외),
 설계 근거는 `.tasks/motion-design.md`입니다.
+
+Dock의 확대와 라벨은 사용자가 제공한 21st.dev 컴포넌트를 `components/ui/dock.tsx`에 적용한 Framer Motion 스프링으로 처리합니다. 포인터로부터 150px 이내의 아이콘은 기본 48px에서 최대 80px로 확대됩니다. 아이콘 PNG·앱 실행·열림 표시점은 유지하고, 라벨은 Dock의 backdrop 경계 밖 포털에 표시합니다. 실제 `button`을 사용해 Enter·Space 실행을 지원하고 키보드 초점도 확대합니다. 모바일과 동작 줄이기 설정에서는 고정 크기로 표시합니다.
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |

@@ -87,7 +87,9 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 
 Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있고, `SessionEnd` 훅에서 `relay hook <codex|claude|grok> --end`를 호출하면 종료를 기록한다. 훅은 다음 규칙을 따른다.
 
-- 먼저 `{}`를 출력하고 기록을 시도한다. 저장소 오류, 잘못된 JSON, `relay` 부재가 Agent 세션을 막지 않도록 실패를 조용히 처리한다.
+- Codex·Claude Code의 시작 훅은 `hookSpecificOutput.additionalContext`에 기록 안내와 호스트의 실제 세션 ID·provider·agent를 담는다. Agent는 첫 작업 전에 스킬을 읽고 기존 기록을 확인하며, 없을 때만 생성하고 이전 작업은 `continue`로 연결한다. 중간 작업도 의미 있는 단위마다 목표·현재 상태·변경 파일·검증 결과·남은 위험이나 다음 작업을 짧게 `update`한다. 스킬을 찾지 못하면 `relay --help`로 확인하고, 기록 실패는 한 줄로 알린 뒤 원래 작업을 계속한다.
+- Grok은 SessionStart 출력을 무시하므로 자동 기록만 수행한다. Grok의 Agent 안내는 프로젝트 지침에 둔다.
+- 저장소를 열기 전에 JSON 응답 한 건을 출력한다. 종료 훅·Grok 시작 훅·사용할 수 없는 입력은 `{}`를 반환한다. 저장소 오류, 잘못된 JSON, `relay` 부재가 Agent 세션을 막지 않도록 실패를 조용히 처리한다.
 - 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID`·`GROK_SESSION_ID` 환경변수를 쓴다. 임의 ID를 만들지 않는다.
 - 세션 이름은 작업 폴더 이름으로, 요약은 첫 기록임을 나타내는 짧은 문장으로 저장한다. 이후 실제 맥락은 Agent가 `relay update`로 갱신한다.
 - 페이로드에 `agent_id`가 있으면 서브에이전트이므로 기록하지 않는다.
