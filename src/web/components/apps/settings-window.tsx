@@ -1,4 +1,5 @@
-import { Download } from "lucide-react";
+import { useState, type ChangeEvent, type ReactNode } from "react";
+import { Download, Plus, X } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
@@ -10,7 +11,7 @@ import { DEFAULT_FONT_SIZE, FONT_SIZES, type FontSize } from "../../lib/font-siz
 import { useInstall } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
-import { WallpaperSettings } from "./wallpaper-settings";
+import { COLORS, MAX_CUSTOM_IMAGES, PRESETS, deleteCustomImage, imageLabel, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
 import type { Connection } from "../desktop/menu-bar";
 import type { HealthData } from "../../lib/queries";
 
@@ -96,5 +97,67 @@ function AppSettings() {
       : installed ? "시작 메뉴나 작업 표시줄에서 Relay를 여세요. 이 탭은 닫아도 됩니다."
       : prompt ? "브라우저 탭 없이 별도 창으로 열고, 작업 표시줄과 시작 메뉴에서 바로 실행합니다. 서버가 꺼져 있어도 창은 열리고 서버를 켜면 다시 연결됩니다."
       : "Chrome·Edge 주소 표시줄의 앱 설치 아이콘이나 브라우저 메뉴의 ‘앱 설치’로 설치합니다. 이미 설치했다면 같은 자리의 ‘앱에서 열기’를 누릅니다."}</p>
+  </section>;
+}
+
+/** macOS 배경화면 패널처럼 16:9 견본을 격자로 늘어놓는다. 고른 것은 시스템 블루 링, 기본 견본은 낮·밤을 대각선으로 나눠 보여 주고,
+ *  내 사진은 여러 장을 넣어 두고 견본 모서리의 ×로 한 장씩 지운다. */
+function WallpaperSettings() {
+  const wallpaper = useUI((state) => state.wallpaper);
+  const setWallpaper = useUI((state) => state.setWallpaper);
+  const images = useUI((state) => state.customImages);
+  const addCustomImage = useUI((state) => state.addCustomImage);
+  const removeCustomImage = useUI((state) => state.removeCustomImage);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const tile = (choice: WallpaperChoice, label: string, thumb: ReactNode, onRemove?: () => void) =>
+    <div key={`${choice.kind}-${"id" in choice ? choice.id : ""}`} className="wallpaper-tile">
+      <button type="button" role="radio" aria-checked={sameChoice(wallpaper, choice)} className="wallpaper-choice" onClick={() => setWallpaper(choice)}>
+        <span className="wallpaper-thumb">{thumb}</span><span className="wallpaper-label">{label}</span>
+      </button>
+      {onRemove && <button type="button" className="wallpaper-remove" aria-label={`${label} 지우기`} onClick={onRemove}><X aria-hidden="true" /></button>}
+    </div>;
+
+  async function pick(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    setBusy(true); setError(null);
+    const failures: string[] = [];
+    try {
+      for (const file of files) {
+        if (useUI.getState().customImages.length >= MAX_CUSTOM_IMAGES) { failures.push(`내 사진은 ${MAX_CUSTOM_IMAGES}장까지 둘 수 있습니다.`); break; }
+        try {
+          const blob = await prepareImage(file);
+          const saved = await storeCustomImage(blob, imageLabel(file));
+          addCustomImage({ id: saved.id, name: saved.name, url: URL.createObjectURL(blob) });
+          setWallpaper({ kind: "custom", id: saved.id });
+        } catch (failure) { failures.push(`${file.name}: ${failure instanceof Error ? failure.message : "저장할 수 없습니다."}`); }
+      }
+    } finally { setBusy(false); }
+    if (failures.length) setError(failures.join(" "));
+  }
+  async function remove(id: string) {
+    await deleteCustomImage(id);
+    removeCustomImage(id);
+    const current = useUI.getState().wallpaper;
+    if (current.kind === "custom" && current.id === id) setWallpaper({ kind: "dynamic" });
+  }
+
+  return <section className="settings-group" id="wallpaper-settings">
+    <h3>바탕화면</h3>
+    <div className="wallpaper-picker" role="radiogroup" aria-label="바탕화면">
+      {tile({ kind: "dynamic" }, "기본", <><img src="/wallpaper-light.jpg" alt="" data-layer="light" /><img src="/wallpaper-dark.jpg" alt="" data-layer="dark" /></>)}
+      {PRESETS.map((preset) => tile({ kind: "preset", id: preset.id }, preset.label, <img src={presetUrl(preset.id)} alt="" loading="lazy" />))}
+      {COLORS.map((color) => tile({ kind: "color", id: color.id }, color.label, <span className="wallpaper-swatch" data-color={color.id} />))}
+      {images.map((image) => tile({ kind: "custom", id: image.id }, image.name, <img src={image.url} alt="" />, () => void remove(image.id)))}
+      <label className="wallpaper-choice wallpaper-tile-add" data-busy={busy ? "" : undefined}>
+        <input id="wallpaper-file" type="file" accept="image/*" multiple onChange={pick} disabled={busy} />
+        <span className="wallpaper-thumb"><Plus aria-hidden="true" /></span><span className="wallpaper-label">{busy ? "저장 중…" : "사진 추가…"}</span>
+      </label>
+    </div>
+    {error && <p className="settings-note settings-error" role="alert">{error}</p>}
+    <p className="settings-note">기본은 테마에 따라 낮·밤 사진이 바뀝니다. 내 사진은 {MAX_CUSTOM_IMAGES}장까지 이 브라우저에만 저장되며 서버로 보내지 않습니다. 견본 모서리의 ×로 지웁니다.</p>
   </section>;
 }
