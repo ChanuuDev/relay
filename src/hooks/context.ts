@@ -11,3 +11,14 @@ export const SESSION_START_PROMPT = `세션의 첫 작업 전에 relay-session �
 훅 자동 기록만 남은 세션은 종료 시 삭제되므로 첫 작업 단위가 끝나면 반드시 update로 갱신한다.
 
 relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속한다.`;
+
+export const GROK_RULE_MARKER = "<!-- Relay managed session-start instructions -->";
+export const GROK_SESSION_RULE = `${GROK_RULE_MARKER}
+# Relay 세션 기록
+
+이 지침은 현재 호스트가 Grok일 때 적용한다.
+
+${SESSION_START_PROMPT}
+
+Grok의 provider는 xai, agent는 grok이다. 현재 호스트가 제공한 GROK_SESSION_ID 환경변수를 그대로 사용한다. 실제 ID를 확인할 수 없으면 임의로 만들지 말고 한 줄로 알린 뒤 원래 작업을 계속한다.
+`;

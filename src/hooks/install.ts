@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { storageError } from "../errors";
+import { GROK_RULE_MARKER, GROK_SESSION_RULE } from "./context";
 
 export type HookChange = "added" | "updated" | "unchanged" | "skipped";
 export type HookHost = "claude" | "grok" | "codex";
@@ -25,6 +26,7 @@ export interface HookInstallResult {
   executable: string;
   wrappers: HookInstallEntry[];
   hosts: HookInstallEntry[];
+  instructions: HookInstallEntry[];
 }
 
 export interface HookInstallOptions {
@@ -33,6 +35,7 @@ export interface HookInstallOptions {
   executablePath?: string;
   /** Codex home directories to register in; by default `$CODEX_HOME` when set, and `~/.codex`. */
   codexHomes?: string[];
+  grokHome?: string;
 }
 
 type CommandHook = { type: string; command?: unknown; timeout?: unknown; statusMessage?: unknown };
@@ -72,6 +75,10 @@ export function shouldAutoInstallHooks(input: {
 
 export function homeDirectory(options: { homeDirectory?: string }) {
   return options.homeDirectory ?? process.env.RELAY_USER_HOME ?? homedir();
+}
+
+export function grokHome(options: { grokHome?: string }, home: string) {
+  return options.grokHome ?? process.env.GROK_HOME ?? path.join(home, ".grok");
 }
 
 function binDirectory(options: HookInstallOptions, home: string) {
@@ -156,6 +163,28 @@ function writeText(file: string, content: string): HookChange {
   return existed ? "updated" : "added";
 }
 
+/** Grok ignores SessionStart stdout, but loads user rules before the first model request. */
+function installGrokInstructions(root: string): HookInstallEntry {
+  const file = path.join(root, "rules", "relay-session.md");
+  const entry = { host: "grok" as const, path: file };
+  try {
+    for (const target of [root, path.dirname(file), file]) {
+      let stat;
+      try { stat = lstatSync(target); }
+      catch (error) { if ((error as { code?: string }).code === "ENOENT") continue; throw error; }
+      if (stat.isSymbolicLink() || (target === file ? !stat.isFile() : !stat.isDirectory())) {
+        return { ...entry, status: "skipped", detail: "지침 경로가 링크이거나 파일 형식이 다릅니다." };
+      }
+    }
+    if (existsSync(file) && !readFileSync(file, "utf8").startsWith(GROK_RULE_MARKER)) {
+      return { ...entry, status: "skipped", detail: "기존 사용자 지침을 보존했습니다. 다른 이름으로 옮긴 뒤 다시 등록하세요." };
+    }
+    return { ...entry, status: writeText(file, GROK_SESSION_RULE) };
+  } catch {
+    return { ...entry, status: "skipped", detail: "세션 시작 지침을 쓸 수 없습니다." };
+  }
+}
+
 function ensureEvent(doc: HookDoc, event: HookEvent, alias: string, command: string, extra: Partial<CommandHook> = {}): HookChange {
   if (!doc.hooks || Array.isArray(doc.hooks) || typeof doc.hooks !== "object") doc.hooks = {};
   const groups = Array.isArray(doc.hooks[event]) ? doc.hooks[event]! : [];
@@ -196,6 +225,7 @@ export function installHostHooks(options: HookInstallOptions = {}): HookInstallR
     const home = homeDirectory(options);
     const bin = binDirectory(options, home);
     const executable = executablePath(options, bin);
+    const grok = grokHome(options, home);
     mkdirSync(bin, { recursive: true, mode: 0o700 });
     const wrappers: HookInstallEntry[] = [];
     if (process.platform === "win32") {
@@ -212,14 +242,14 @@ export function installHostHooks(options: HookInstallOptions = {}): HookInstallR
     }])) as HostCommands;
     const hosts = [
       installHostFile(path.join(home, ".claude", "settings.json"), "claude", commands("claude")),
-      installHostFile(path.join(home, ".grok", "hooks", "relay.json"), "grok", commands("grok")),
+      installHostFile(path.join(grok, "hooks", "relay.json"), "grok", commands("grok")),
       ...codexHomes(options, home).map(dir => installHostFile(path.join(dir, "hooks.json"), "codex",
         commands("codex", event => ({
           statusMessage: event === "SessionEnd" ? "Relay session end" : "Relay session record",
           timeout: event === "SessionEnd" ? CODEX_END_TIMEOUT : HOOK_TIMEOUT,
         })))),
     ];
-    return { schemaVersion: 1, binDirectory: bin, executable, wrappers, hosts };
+    return { schemaVersion: 1, binDirectory: bin, executable, wrappers, hosts, instructions: [installGrokInstructions(grok)] };
   } catch (error) {
     throw storageError(error);
   }

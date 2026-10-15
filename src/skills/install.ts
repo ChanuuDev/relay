@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { storageError } from "../errors";
-import { codexHomes, homeDirectory, type HookChange } from "../hooks/install";
+import { codexHomes, grokHome, homeDirectory, type HookChange } from "../hooks/install";
 import skillSource from "../../skills/relay-session/SKILL.md" with { type: "text" };
 import openaiSource from "../../skills/relay-session/agents/openai.yaml" with { type: "text" };
 
@@ -25,6 +25,7 @@ export interface SkillInstallOptions {
   homeDirectory?: string;
   /** Codex home directories to install in; by default `$CODEX_HOME` when set, and `~/.codex`. */
   codexHomes?: string[];
+  grokHome?: string;
   /** Replace an existing copy whose content differs; without it the host is reported as skipped. */
   force?: boolean;
 }
@@ -44,7 +45,7 @@ export function skillRoots(options: SkillInstallOptions = {}): { host: SkillHost
   const home = homeDirectory(options);
   return [
     { host: "claude", root: path.join(home, ".claude") },
-    { host: "grok", root: path.join(home, ".grok") },
+    { host: "grok", root: grokHome(options, home) },
     ...codexHomes(options, home).map(root => ({ host: "codex" as const, root })),
   ];
 }

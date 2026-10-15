@@ -76,7 +76,7 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 
 ## 스킬 설치
 
-`relay install-skills`가 이 스킬을 Claude Code(`~/.claude/skills`), Grok(`~/.grok/skills`), Codex(`~/.codex/skills`, `CODEX_HOME`이 있으면 그 폴더의 `skills`)의 사용자 스킬 폴더에 실제 사본으로 둔다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 특정 프로젝트에만 두려면 `scripts/install-skill.ps1`을 쓴다.
+`relay install-skills`가 이 스킬을 Claude Code(`~/.claude/skills`), Grok(`$GROK_HOME/skills`, 기본 `~/.grok/skills`), Codex(`~/.codex/skills`, `CODEX_HOME`이 있으면 그 폴더의 `skills`)의 사용자 스킬 폴더에 실제 사본으로 둔다. `relay install-hooks`도 시작 안내와 함께 스킬을 설치한다. `install-cli.ps1`은 설치 끝에 훅·안내·스킬을 구성하며, 특정 프로젝트에만 두려면 `scripts/install-skill.ps1`을 쓴다.
 
 - 스킬 폴더를 심볼릭 링크나 정션으로 연결하지 않는다. 링크는 가리키던 폴더가 옮겨지거나 지워지면 끊어지고, 그러면 호스트가 스킬을 읽지 못한다.
 - 설치 위치에 링크가 있으면 링크 항목만 지우고 실제 사본으로 바꾼다. 링크가 가리키던 폴더는 건드리지 않는다.
@@ -88,7 +88,7 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있고, `SessionEnd` 훅에서 `relay hook <codex|claude|grok> --end`를 호출하면 종료를 기록한다. 훅은 다음 규칙을 따른다.
 
 - Codex·Claude Code의 시작 훅은 `hookSpecificOutput.additionalContext`에 기록 안내와 호스트의 실제 세션 ID·provider·agent를 담는다. Agent는 첫 작업 전에 스킬을 읽고 기존 기록을 확인하며, 없을 때만 생성하고 이전 작업은 `continue`로 연결한다. 중간 작업도 의미 있는 단위마다 목표·현재 상태·변경 파일·검증 결과·남은 위험이나 다음 작업을 짧게 `update`한다. 스킬을 찾지 못하면 `relay --help`로 확인하고, 기록 실패는 한 줄로 알린 뒤 원래 작업을 계속한다.
-- Grok은 SessionStart 출력을 무시하므로 자동 기록만 수행한다. Grok의 Agent 안내는 프로젝트 지침에 둔다.
+- Grok은 SessionStart 출력을 무시하므로 같은 안내를 `$GROK_HOME/rules/relay-session.md`(기본 `~/.grok/rules/relay-session.md`)에 설치한다. Grok이 세션 시작 때 자동으로 읽는 전역 규칙이며 실제 ID는 현재 호스트의 `GROK_SESSION_ID`를 사용한다. CLI 설치와 `relay install-hooks`가 이 파일을 구성한다. Relay 관리 표시가 있는 사본은 갱신하고, 같은 경로의 사용자 파일이나 링크는 보존한 뒤 `건너뜀`으로 알린다.
 - 저장소를 열기 전에 JSON 응답 한 건을 출력한다. 종료 훅·Grok 시작 훅·사용할 수 없는 입력은 `{}`를 반환한다. 저장소 오류, 잘못된 JSON, `relay` 부재가 Agent 세션을 막지 않도록 실패를 조용히 처리한다.
 - 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID`·`GROK_SESSION_ID` 환경변수를 쓴다. 임의 ID를 만들지 않는다.
 - 세션 이름은 작업 폴더 이름으로, 요약은 첫 기록임을 나타내는 짧은 문장으로 저장한다. 이후 실제 맥락은 Agent가 `relay update`로 갱신한다.
@@ -111,7 +111,7 @@ Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 
 }
 ```
 
-`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart·SessionEnd 훅을 등록한다. Grok은 `~/.grok/hooks/relay.json`, Codex는 `~/.codex/hooks.json`이며 `CODEX_HOME`이 설정된 환경에서는 그 폴더의 `hooks.json`에도 등록한다. Codex는 SessionEnd 훅에 최대 3초만 허용하므로 Codex 종료 훅은 timeout 3초로 등록한다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
+`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex SessionStart·SessionEnd 훅과 Grok 시작 안내를 등록한다. Grok은 `$GROK_HOME/hooks/relay.json`(기본 `~/.grok/hooks/relay.json`), Codex는 `~/.codex/hooks.json`이며 `CODEX_HOME`이 설정된 환경에서는 그 폴더의 `hooks.json`에도 등록한다. Codex는 SessionEnd 훅에 최대 3초만 허용하므로 Codex 종료 훅은 timeout 3초로 등록한다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
 
 훅은 첫 기록을 자동화하는 편의 장치이며 기록의 전제 조건이 아니다. 훅이 등록되지 않았거나 실행되지 않아 첫 기록이 없으면 Agent가 「현재 세션 기록」 절차대로 `record`하고, 이어받을 때는 `continue`한다.
 

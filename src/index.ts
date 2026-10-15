@@ -156,10 +156,11 @@ function endReason(payload: Record<string, unknown>): string | undefined {
   return reason || undefined;
 }
 
-program.command("install-hooks").description("Claude/Grok/Codex SessionStart·SessionEnd 훅 등록")
+program.command("install-hooks").description("Claude/Grok/Codex 세션 훅·시작 안내 등록 및 스킬 설치")
   .option("--bin-dir <path>", "relay.exe와 훅 래퍼를 둘 절대경로")
   .action((o, c: Command) => {
-    const result = installHostHooks({ binDirectory: o.binDir === undefined ? undefined : directory(o.binDir, false) });
+    const hooks = installHostHooks({ binDirectory: o.binDir === undefined ? undefined : directory(o.binDir, false) });
+    const result = { ...hooks, skills: installSkills().targets };
     if (c.optsWithGlobals().json) return void process.stdout.write(JSON.stringify(result) + "\n");
     process.stdout.write(render(result).map(line => line.text).join("\n") + "\n");
   });

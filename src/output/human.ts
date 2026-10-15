@@ -157,6 +157,8 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
     scope?: { cwd: string | null }; binDirectory?: string; executable?: string;
     wrappers?: { path: string; status: string }[];
     hosts?: { host?: string; path: string; status: string; detail?: string }[];
+    instructions?: { host?: string; path: string; status: string; detail?: string }[];
+    skills?: { host: string; path: string; status: string; detail?: string }[];
     skill?: string; targets?: { host: string; path: string; status: string; detail?: string }[];
   };
   const row = (label: string, status: string, file: string, detail?: string, names = HOOK_STATUS) =>
@@ -173,6 +175,8 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
       `훅 래퍼    ${data.binDirectory}`,
       ...((data.wrappers ?? []).map(wrapper => row("래퍼", wrapper.status, wrapper.path))),
       ...(data.hosts.map(host => row(host.host ?? "host", host.status, host.path, host.detail))),
+      ...((data.instructions ?? []).map(item => row(`${item.host} 시작 안내`, item.status, item.path, item.detail))),
+      ...((data.skills ?? []).map(item => row(`${item.host} 스킬`, item.status, item.path, item.detail, SKILL_STATUS))),
     ]);
   }
   if (data.items) {

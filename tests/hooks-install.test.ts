@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { installHostHooks, isRelayBinary, shouldAutoInstallHooks, wrapperScript } from "../src/hooks/install";
+import { GROK_RULE_MARKER, SESSION_START_PROMPT } from "../src/hooks/context";
 import { cleanup, cli, root, temporary } from "./helpers";
 
 let dir: string;
@@ -69,11 +70,57 @@ test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd
 
   const second = install();
   expect(second.hosts.every(h => h.status === "unchanged")).toBe(true);
+  expect(first.instructions[0]!.status).toBe("added");
+  expect(second.instructions[0]!.status).toBe("unchanged");
   expect(JSON.parse(readFileSync(path.join(home(), ".claude", "settings.json"), "utf8")).model).toBe("keep-me");
   // Each event holds exactly one Relay entry after any number of runs.
   const settled = JSON.parse(readFileSync(path.join(home(), ".claude", "settings.json"), "utf8"));
   expect(settled.hooks.SessionStart).toHaveLength(2);
   expect(settled.hooks.SessionEnd).toHaveLength(1);
+});
+
+test("Grok gets the same session-start guidance through global rules, without changing user instructions", () => {
+  mkdirSync(path.join(home(), ".grok", "rules"), { recursive: true });
+  const agents = path.join(home(), ".grok", "AGENTS.md");
+  const otherRule = path.join(home(), ".grok", "rules", "user.md");
+  writeFileSync(agents, "Keep global instructions\r\n");
+  writeFileSync(otherRule, "Keep other rules\n");
+  const first = install();
+  const rule = first.instructions[0]!;
+  expect(rule.path).toBe(path.join(home(), ".grok", "rules", "relay-session.md"));
+  const prompt = readFileSync(rule.path, "utf8");
+  expect(prompt).toContain(SESSION_START_PROMPT);
+  expect(prompt).toContain("GROK_SESSION_ID");
+  expect(prompt).toContain("provider는 xai, agent는 grok");
+  expect(prompt).not.toContain(process.env.CODEX_THREAD_ID ?? "no-test-host-session-id");
+  expect(readFileSync(agents, "utf8")).toBe("Keep global instructions\r\n");
+  expect(readFileSync(otherRule, "utf8")).toBe("Keep other rules\n");
+  writeFileSync(rule.path, `${GROK_RULE_MARKER}\nOld Relay guidance\n`);
+  expect(install().instructions[0]!.status).toBe("updated");
+  expect(readFileSync(rule.path, "utf8")).toBe(prompt);
+  expect(install().instructions[0]!.status).toBe("unchanged");
+});
+
+test("Grok instruction conflicts do not overwrite a user's file or stop hook registration", () => {
+  const file = path.join(home(), ".grok", "rules", "relay-session.md");
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, "My own Relay instructions\n");
+  const result = install();
+  expect(result.instructions[0]!.status).toBe("skipped");
+  expect(result.instructions[0]!.detail).toContain("보존");
+  expect(readFileSync(file, "utf8")).toBe("My own Relay instructions\n");
+  expect(result.hosts.every(host => host.status === "added")).toBe(true);
+});
+
+test("Grok instructions skip a linked rules directory and leave its target alone", () => {
+  const outside = path.join(dir, "outside");
+  mkdirSync(outside);
+  mkdirSync(path.join(home(), ".grok"), { recursive: true });
+  symlinkSync(outside, path.join(home(), ".grok", "rules"), process.platform === "win32" ? "junction" : "dir");
+  const result = install();
+  expect(result.instructions[0]!.status).toBe("skipped");
+  expect(existsSync(path.join(outside, "relay-session.md"))).toBe(false);
+  expect(result.hosts.find(host => host.host === "grok")!.status).toBe("added");
 });
 
 test("install-hooks adds the missing end hook to a file that only has the start hook", () => {
@@ -137,6 +184,40 @@ test("CLI install-hooks writes into RELAY_USER_HOME and --bin-dir", () => {
   expect(data.schemaVersion).toBe(1);
   expect(data.hosts).toHaveLength(3);
   expect(data.hosts.every((h: { status: string }) => h.status === "added")).toBe(true);
+  expect(data.instructions[0].status).toBe("added");
+  expect(data.skills.map((skill: { host: string }) => skill.host)).toEqual(["claude", "grok", "codex"]);
+  for (const agent of ["claude", "grok", "codex"]) {
+    expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-session", "SKILL.md"), "utf8")).toContain("relay update");
+  }
+});
+
+test("CLI hook registration follows GROK_HOME for hooks, start guidance and skills", () => {
+  const grokHome = path.join(dir, "custom-grok");
+  const result = Bun.spawnSync(
+    [process.execPath, path.join(root, "src/index.ts"), "install-hooks", "--bin-dir", bin(), "--json"],
+    { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), GROK_HOME: grokHome, CODEX_HOME: undefined }, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(result.exitCode).toBe(0);
+  const data = JSON.parse(result.stdout.toString());
+  expect(data.hosts.find((item: { host: string }) => item.host === "grok").path).toBe(path.join(grokHome, "hooks", "relay.json"));
+  expect(data.instructions[0].path).toBe(path.join(grokHome, "rules", "relay-session.md"));
+  expect(readFileSync(path.join(grokHome, "skills", "relay-session", "SKILL.md"), "utf8")).toContain("relay update");
+  expect(existsSync(path.join(home(), ".grok"))).toBe(false);
+});
+
+test("CLI hook registration preserves an edited skill while installing the start guidance", () => {
+  const skill = path.join(home(), ".claude", "skills", "relay-session", "SKILL.md");
+  mkdirSync(path.dirname(skill), { recursive: true });
+  writeFileSync(skill, "User-customized skill\n");
+  const result = Bun.spawnSync(
+    [process.execPath, path.join(root, "src/index.ts"), "install-hooks", "--bin-dir", bin(), "--json"],
+    { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), GROK_HOME: undefined, CODEX_HOME: undefined }, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(result.exitCode).toBe(0);
+  const data = JSON.parse(result.stdout.toString());
+  expect(data.skills.find((item: { host: string }) => item.host === "claude").status).toBe("skipped");
+  expect(readFileSync(skill, "utf8")).toBe("User-customized skill\n");
+  expect(data.instructions[0].status).toBe("added");
 });
 
 test("install-hooks registers Codex in CODEX_HOME as well as ~/.codex, once when they are the same folder", () => {
