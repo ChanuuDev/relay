@@ -17,6 +17,7 @@
 | 2026-09-22 | GSAP 모션 구현(gsap 3.15.0, @gsap/react 2.1.2) + `tests/motion.spec.ts` | Opus 5 (worker) | 완료 (검증 로그 모션) |
 | 2026-10-12 | 사용자 피드백: 목록에서 다른 세션을 고르면 상세 탭이 개요로 되돌아감 → `lib/store.ts` `syncLocation`의 탭 초기화 제거, `tests/web.spec.ts`에 탭 유지 테스트 추가, 설계·구현 문서 갱신 | Fable | 완료 (감사 메모 2026-10-12). 커밋 `34e342f` 푸시, `install-cli.ps1 -Force` 재설치 |
 | 2026-10-15 | 사용자 요청: PC에서 편하게 보도록 PWA 적용 → 매니페스트·서비스 워커(network-first, 셸만 보관)·앱 아이콘(Grok `image_edit` + squircle), 설정 `앱` 섹션·Relay 메뉴 설치 항목, 제목 표시줄 통합(WCO)과 메뉴바에 맞춘 `theme-color`, 서버 꺼짐 안내 문구. `DESIGN.md` §8 | Opus 5.5 | 완료 (검증 로그 PWA) |
+| 2026-10-15 | 사용자 요청: 설정에서 글자 크기를 px 수치 드롭다운으로 조절 → 설정 `모양`에 `글자 크기`(12–18px, 기본 13px), 창 안 글자·줄 높이·한 줄 상자 높이를 함께 확대, 메뉴바·메뉴·Dock·툴팁·토스트는 고정. `DESIGN.md` §4 | Opus 5.5 | 완료 (검증 로그 글자 크기) |
 
 ## 검증 로그
 
@@ -191,6 +192,14 @@ run 2 → 10 passed (26.0s)
 - 실제 설치 점검: 이 PC의 Chrome 안정판은 CDP `PWA` 도메인이 없어, Playwright Chromium(영구 프로필, 화면 표시)에서 `PWA.install` → `PWA.changeAppUserSettings(displayMode: standalone)` → `PWA.launch`로 앱 창을 띄우고 `PrintWindow`로 캡처했다. WCO는 기본으로 꺼져 있고 제목 표시줄의 `⌃`(제목 표시줄 숨기기)로 켜지며, 창 조작 버튼 바탕은 `theme-color`로 칠해진다. 처음에는 버튼 바탕(#0b1024)이 유리 메뉴바보다 어두워 오른쪽 끝에 사각형이 보였다 → 메뉴바 겉보기 색을 재어 `theme-color`에 넣도록 고친 뒤 다크 표준 모드 제목 표시줄 (34,48,95) ≈ 메뉴바 (31,46,94), WCO 버튼 바탕 (44,59,104) ≈ 옆 메뉴바 (38,55,102), 라이트 WCO (155,213,253) ≈ (141,209,254).
 - 앱 창 제목은 운영체제가 `Relay - `를 붙이므로 앱 창에서는 문서 제목에서 `· Relay`를 뺀다(캡처에서 `Relay - 결제 모듈 리팩터링 · Relay`로 중복된 것을 발견).
 - 검증: `npm run typecheck` 통과, `npm test` 97 pass(신규 `tests/pwa.test.ts` 6건, `api.test.ts` 자산 검사 1건), `npm run build`, `npx playwright test` 47 passed(신규 `tests/pwa.spec.ts` 6건, 기존 41건은 서비스 워커가 켜진 채 통과). CDP `Page.getAppManifest` 오류 0건, `Page.getInstallabilityErrors` 0건.
+
+### 2026-10-15 · Opus 5.5 · 글자 크기 설정
+
+- 변경: `lib/font-size.ts`가 고른 크기 ÷ 13을 `--font-scale`에 넣고(`localStorage["relay-font-size"]`, 첫 렌더 전에 `client.tsx`가 적용), `styles.css`의 창 안 글자 크기·줄 높이를 `--fs-*`·`--lh-*` 토큰으로, shadcn `text-*`를 `@theme` 재정의로 바꿨다. 버튼·입력·배지·막대처럼 한 줄인 상자는 `calc(1em + 위아래 여백)`, 라벨 열 폭은 비율로 늘린다. 메뉴바·메뉴·Dock·툴팁·토스트·아바타 글자는 px 고정.
+- 줄바꿈 기준: 18px에서 780px 세션 창의 툴바가 비좁아 검색칸이 줄고 Provider 문구가 잘렸다 → 툴바(719·519px)·명령 줄(559px) 컨테이너 쿼리를 컨테이너 글자 크기 기준 em(`55.31em`·`39.95em`·`43em`)으로 바꿨다. 13px 경계는 719/720·519/520·559/560px에서 기존과 같음을 브라우저로 확인. 목록·상세 2단 기준(640·900px)은 px 유지.
+- 범위: 20px까지 촬영해 보니 390px 화면에서 Provider 안내 문구가 잘려 12–18px로 정했다.
+- 회귀 확인: 시각을 고정하고 동작 줄이기를 켠 13개 화면(목록·상세 3탭·명령·설정·좁은 창·필터·빈 상태·모바일)을 변경 전·후로 촬영해 픽셀 비교 → 13px에서 새 행이 들어간 설정 창 외 차이 0. 12·16·18·20px 화면을 직접 보고 확인.
+- 검증: `npm run check` 통과 — typecheck, `npm test` 97 pass, build, `npx playwright test` 48 passed(신규: 글자·줄 높이·버튼 높이·고정 크롬·저장·760px 줄바꿈 기준).
 
 ## 감사 메모 (Fable)
 

@@ -18,12 +18,15 @@ import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
 import { enter, enterToast, exit, exitToast } from "./lib/motion";
 import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
+import { applyFontSize } from "./lib/font-size";
 import { listCustomImages } from "./lib/wallpaper";
 import { setupPwa, useInstall } from "./lib/pwa";
 
 const queryClient = new QueryClient();
 // 제목 표시줄 영역이 바뀌면(설치한 앱에서 제목 표시줄을 숨기거나 보일 때) 창을 메뉴바 아래로 다시 맞춘다.
 setupPwa(() => useDesktop.getState().clampAll(window.innerWidth, window.innerHeight));
+// 저장한 글자 크기는 첫 렌더 전에 적용한다. 그 전에는 빈 바탕만 보이므로 테마처럼 선적용 스크립트가 필요 없다.
+applyFontSize(useUI.getState().fontSize, false);
 
 function App() {
   const currentLocation = useUI((state) => state.location);

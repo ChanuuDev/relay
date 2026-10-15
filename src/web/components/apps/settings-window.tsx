@@ -6,6 +6,7 @@ import { NativeSelect, NativeSelectOption } from "../ui/native-select";
 import { Window } from "../desktop/window";
 import { ErrorNotice } from "../session-common";
 import { useDesktop } from "../../lib/desktop-store";
+import { DEFAULT_FONT_SIZE, FONT_SIZES, type FontSize } from "../../lib/font-size";
 import { useInstall } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
@@ -21,6 +22,8 @@ export function SettingsWindow({ health, healthError, connection }: {
 }) {
   const theme = useUI((state) => state.theme);
   const setTheme = useUI((state) => state.setTheme);
+  const fontSize = useUI((state) => state.fontSize);
+  const setFontSize = useUI((state) => state.setFontSize);
   const shell = useUI((state) => state.shell);
   const setShell = useUI((state) => state.setShell);
   const resetLayout = useDesktop((state) => state.resetLayout);
@@ -35,7 +38,13 @@ export function SettingsWindow({ health, healthError, connection }: {
           </span>)}
         </fieldset>
       </div>
-      <p className="settings-note">시스템을 고르면 운영체제의 밝기 설정을 따릅니다.</p>
+      <div className="settings-row">
+        <label htmlFor="settings-font-size">글자 크기</label>
+        <NativeSelect id="settings-font-size" size="sm" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value) as FontSize)}>
+          {FONT_SIZES.map((size) => <NativeSelectOption key={size} value={size}>{size === DEFAULT_FONT_SIZE ? `${size}px (기본)` : `${size}px`}</NativeSelectOption>)}
+        </NativeSelect>
+      </div>
+      <p className="settings-note">시스템을 고르면 운영체제의 밝기 설정을 따릅니다. 글자 크기는 창 안의 글자에 적용되고 메뉴바와 Dock은 그대로 둡니다.</p>
     </section>
     <WallpaperSettings />
     <section className="settings-group">

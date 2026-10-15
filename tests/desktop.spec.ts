@@ -386,3 +386,54 @@ test("설정의 바탕화면에서 사진·색상·내 사진을 고르면 즉�
   await expect(picker.getByRole("radio", { name: /first|second/ })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test("설정의 글자 크기는 창 안의 글자·줄 높이·줄바꿈 기준을 함께 키우고, 메뉴바·메뉴는 그대로 두며 다시 열어도 유지된다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  record("font-size", "글자 크기 확인", "anthropic", "claude-code", "두 줄로 넘어가는 긴 요약 ".repeat(8));
+  await ready(page);
+  const metrics = (selector: string) => page.locator(selector).first().evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { size: parseFloat(style.fontSize), line: parseFloat(style.lineHeight), height: element.getBoundingClientRect().height };
+  });
+  const toolbarWrap = () => page.locator(`${win("sessions")} .titlebar`).evaluate((element) => getComputedStyle(element).flexWrap);
+  // 창 배치 저장은 200ms 뒤에 이뤄지므로, 새로고침 뒤에는 메뉴로 설정 창을 다시 연다.
+  const openSettings = async () => {
+    await page.locator(".menubar-mark").click();
+    expect((await metrics(".menu-item")).size).toBe(13);
+    await page.getByRole("menuitem", { name: "설정…" }).click();
+  };
+  const select = page.getByLabel("글자 크기");
+  await openSettings();
+  await expect(select).toHaveValue("13");
+  await expect(select.locator("option")).toHaveText(["12px", "13px (기본)", "14px", "15px", "16px", "17px", "18px"]);
+  expect(await metrics(".session-name")).toMatchObject({ size: 13, line: 20 });
+  await select.selectOption("18");
+  await expect.poll(async () => (await metrics(".session-name")).size).toBe(18);
+  expect(await page.evaluate(() => localStorage.getItem("relay-font-size"))).toBe("18");
+  // 미리보기는 줄 높이와 함께 커져 두 줄 고정을 지키고, 한 줄짜리 버튼은 위아래 여백을 지킨 채 자란다.
+  expect((await metrics(".session-name")).line).toBeCloseTo(20 * 18 / 13, 1);
+  const summary = await metrics(".row-summary");
+  expect(summary.size).toBeCloseTo(12 * 18 / 13, 1);
+  expect(summary.height).toBeCloseTo(summary.line * 2, 0);
+  const button = await metrics(`${win("settings")} [data-slot="button"][data-size="sm"]`);
+  expect(button.height).toBeCloseTo(button.size + 15, 0);
+  // 메뉴바는 운영체제 화면처럼 크기를 고정한다.
+  expect((await metrics(".menubar-app")).size).toBe(13);
+  expect((await metrics("#connection-state")).size).toBe(11);
+  await page.screenshot({ path: test.info().outputPath("font-size-18.png") });
+  // 툴바 줄바꿈 기준도 글자를 따라 넓어진다: 760px 창이 18px에서는 두 줄, 13px에서는 한 줄이다.
+  await page.setViewportSize({ width: 760, height: 900 });
+  await page.locator(dock("세션")).click();
+  await expect.poll(toolbarWrap).toBe("wrap");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.reload();
+  await expect.poll(async () => (await metrics(".session-name")).size).toBe(18);
+  await openSettings();
+  await expect(select).toHaveValue("18");
+  await select.selectOption("13");
+  await expect.poll(async () => (await metrics(".session-name")).size).toBe(13);
+  await page.setViewportSize({ width: 760, height: 900 });
+  await page.locator(dock("세션")).click();
+  await expect.poll(toolbarWrap).toBe("nowrap");
+  expect(errors).toEqual([]);
+});

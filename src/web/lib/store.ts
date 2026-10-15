@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { applyFontSize, readFontSize, type FontSize } from "./font-size";
 import { applyTheme, readTheme, type Theme } from "./theme";
 import { readWallpaper, writeWallpaper, type WallpaperChoice } from "./wallpaper";
 
@@ -25,6 +26,7 @@ interface UIState {
   tab: DetailTab;
   shell: "powershell" | "bash";
   theme: Theme;
+  fontSize: FontSize;
   wallpaper: WallpaperChoice;
   /** 내 사진 목록. url은 object URL이며, 브라우저 저장소에서 읽어 오기 전에는 비어 있다. */
   customImages: CustomImage[];
@@ -33,6 +35,7 @@ interface UIState {
   setTab: (tab: DetailTab) => void;
   setShell: (shell: "powershell" | "bash") => void;
   setTheme: (theme: Theme) => void;
+  setFontSize: (fontSize: FontSize) => void;
   setWallpaper: (choice: WallpaperChoice) => void;
   setCustomImages: (images: CustomImage[]) => void;
   addCustomImage: (image: CustomImage) => void;
@@ -44,11 +47,12 @@ export const useUI = create<UIState>((set) => ({
   location: location.pathname + location.search,
   draft: readDraft(), advanced: Boolean(readDraft().agent || readDraft().cwd), tab: "overview",
   shell: navigator.platform.startsWith("Win") ? "powershell" : "bash",
-  theme: readTheme(),
+  theme: readTheme(), fontSize: readFontSize(),
   wallpaper: readWallpaper(), customImages: [],
   setDraft: (patch) => set((state) => ({ draft: { ...state.draft, ...patch } })),
   setAdvanced: (advanced) => set({ advanced }), setTab: (tab) => set({ tab }), setShell: (shell) => set({ shell }),
   setTheme: (theme) => { applyTheme(theme); set({ theme }); },
+  setFontSize: (fontSize) => { applyFontSize(fontSize); set({ fontSize }); },
   setWallpaper: (wallpaper) => { writeWallpaper(wallpaper); set({ wallpaper }); },
   setCustomImages: (images) => set((state) => {
     for (const old of state.customImages) if (!images.some((image) => image.url === old.url)) URL.revokeObjectURL(old.url);
