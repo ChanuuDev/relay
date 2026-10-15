@@ -50,6 +50,8 @@
   --window-shadow: 0 28px 60px -12px rgba(0, 0, 0, .38), 0 0 0 .5px rgba(0, 0, 0, .35);
   --window-shadow-dim: 0 14px 30px -12px rgba(0, 0, 0, .28), 0 0 0 .5px rgba(0, 0, 0, .3);
   --glass-text-muted: color-mix(in srgb, var(--foreground) 62%, transparent);
+  /* 설치한 앱이 제목 표시줄 자리를 쓰면 lib/pwa.ts가 창 조작 버튼 높이로 바꾼다. */
+  --menubar-height: 28px;
 }
 .dark {
   --background: #1e1e20; --foreground: #f5f5f7;
@@ -156,7 +158,9 @@
 
 /* ── 데스크톱 셸 ─────────────────────────────────────────── */
 .desktop { position: fixed; inset: 0; overflow: hidden; }
-.wallpaper { position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(180deg, var(--wp-sky-1) 0%, var(--wp-sky-2) 55%, var(--wp-glow) 100%); }
+.wallpaper { position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(180deg, var(--wp-sky-1) 0%, var(--wp-sky-2) 55%, var(--wp-glow) 100%);
+  /* 메뉴바 뒤 상단 띠의 평균색(전체·오른쪽 끝). 설치한 앱의 제목 표시줄 색을 메뉴바에 맞출 때 쓴다(lib/pwa.ts). 사진은 직접 잰다. */
+  --wallpaper-top: var(--wp-sky-1); --wallpaper-top-end: var(--wp-sky-1); }
 .wallpaper-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s ease-out; }
 .wallpaper-image[data-active] { opacity: 1; }
 /* 색상 프리셋: 바닥 그라디언트를 바꾼다. 설정 창의 견본(.wallpaper-swatch)도 같은 값을 쓴다. */
@@ -165,13 +169,23 @@
 .wallpaper[data-color="lavender"], .wallpaper-swatch[data-color="lavender"] { background: radial-gradient(80% 60% at 20% 10%, rgba(255, 255, 255, .55), transparent 60%), linear-gradient(135deg, #efe2ff 0%, #c9b1f6 50%, #8a72e4 100%); }
 .wallpaper[data-color="sunset"], .wallpaper-swatch[data-color="sunset"] { background: radial-gradient(70% 60% at 75% 20%, rgba(255, 236, 200, .6), transparent 60%), linear-gradient(165deg, #ffd7a3 0%, #ff8d79 48%, #6a3ea6 100%); }
 .wallpaper[data-color="mint"], .wallpaper-swatch[data-color="mint"] { background: radial-gradient(80% 60% at 20% 0%, rgba(255, 255, 255, .5), transparent 60%), linear-gradient(135deg, #e2fbf0 0%, #9ce2c5 50%, #2b9b78 100%); }
+/* 위 그라디언트를 렌더링해 잰 상단 32px 띠의 평균색. 그라디언트를 바꾸면 함께 다시 잰다. */
+.wallpaper[data-color="graphite"] { --wallpaper-top: #54545b; --wallpaper-top-end: #54545a; }
+.wallpaper[data-color="midnight"] { --wallpaper-top: #253882; --wallpaper-top-end: #101a4a; }
+.wallpaper[data-color="lavender"] { --wallpaper-top: #dccbfa; --wallpaper-top-end: #c0a8f4; }
+.wallpaper[data-color="sunset"] { --wallpaper-top: #ffc59c; --wallpaper-top-end: #ffb997; }
+.wallpaper[data-color="mint"] { --wallpaper-top: #bfedda; --wallpaper-top-end: #8cd8ba; }
 #desktop { position: absolute; inset: 0; z-index: 1; }
 .skip-link { z-index: 110; position: fixed; left: 12px; top: -80px; height: 32px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); }
-.skip-link:focus { top: 36px; }
+.skip-link:focus { top: calc(var(--menubar-height) + 8px); }
 
 /* 메뉴바 */
-.menubar { position: fixed; top: 0; left: 0; right: 0; height: 28px; padding: 0 16px; z-index: 70; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+.menubar { position: fixed; top: 0; left: 0; right: 0; height: var(--menubar-height); padding: 0 16px; z-index: 70; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   border-bottom: 1px solid var(--glass-bar-border); color: var(--foreground); user-select: none; font-size: 13px; }
+/* 설치한 앱의 제목 표시줄 통합(Window Controls Overlay): 메뉴바가 제목 표시줄 자리에 올라가 앱 창을 옮기는 손잡이가 되고,
+   운영체제 창 조작 버튼 자리(--titlebar-left·right)는 비운다. 값은 lib/pwa.ts가 넣는다. 메뉴가 열려 있으면 바깥 클릭이 메뉴를 닫도록 손잡이를 끈다. */
+html[data-titlebar] .menubar { padding-left: calc(var(--titlebar-left) + 16px); padding-right: calc(var(--titlebar-right) + 12px); -webkit-app-region: drag; app-region: drag; }
+html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit-app-region: no-drag; app-region: no-drag; }
 .menubar-left { display: flex; align-items: center; gap: 12px; }
 .menubar-menu { position: relative; display: flex; align-items: center; }
 .menubar-mark { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 20px; border-radius: 5px; }
@@ -461,6 +475,8 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 .settings-row [data-slot="badge"], .settings-row [data-slot="button"], .settings-row [data-slot="native-select-wrapper"] { flex: 0 0 auto; }
 .settings-note { padding: 4px 16px 8px; font-size: 11px; line-height: 1.6; color: var(--muted-foreground); text-wrap: pretty; }
 .settings-connection { display: inline-flex; align-items: center; gap: 6px; }
+.app-install-state { display: inline-flex; align-items: center; gap: 8px; }
+.app-install-state img { width: 20px; height: 20px; flex-shrink: 0; }
 .theme-field { display: flex; align-items: center; gap: 16px; width: 100%; }
 .theme-field legend { float: left; width: 120px; font-size: 13px; }
 .theme-option { display: inline-flex; align-items: center; gap: 6px; }

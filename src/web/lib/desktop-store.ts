@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { APPS, APP_IDS, DOCK_RESERVED, GUIDE_MIN_VIEWPORT, MAX_Z, MENU_BAR_HEIGHT, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WIDTH, type AppId, type Box } from "./app-config";
+import { APPS, APP_IDS, DOCK_RESERVED, GUIDE_MIN_VIEWPORT, MAX_Z, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WIDTH, type AppId, type Box } from "./app-config";
 import { captureFrame } from "./motion";
+import { menuBarHeight } from "./pwa";
 
 export type Win = { open: boolean; minimized: boolean; maximized: boolean; x: number; y: number; w: number; h: number; z: number };
 export type Windows = Record<AppId, Win>;
@@ -11,10 +12,11 @@ export const isMobileWidth = (width: number) => width <= MOBILE_MAX_WIDTH;
 export const reservedBottom = (mobile: boolean) => (mobile ? MOBILE_DOCK_HEIGHT : DOCK_RESERVED);
 
 export function clampBox(box: Box, W: number, H: number, min: { w: number; h: number }): Box {
+  const top = menuBarHeight();
   const w = Math.max(min.w, Math.min(box.w, Math.max(min.w, W)));
-  const h = Math.max(min.h, Math.min(box.h, Math.max(min.h, H - MENU_BAR_HEIGHT - DOCK_RESERVED)));
+  const h = Math.max(min.h, Math.min(box.h, Math.max(min.h, H - top - DOCK_RESERVED)));
   const x = Math.min(Math.max(box.x, 0), Math.max(0, W - w));
-  const y = Math.min(Math.max(box.y, MENU_BAR_HEIGHT), Math.max(MENU_BAR_HEIGHT, H - DOCK_RESERVED - h));
+  const y = Math.min(Math.max(box.y, top), Math.max(top, H - DOCK_RESERVED - h));
   return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
 }
 

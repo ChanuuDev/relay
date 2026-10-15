@@ -1,8 +1,9 @@
 import { useCallback } from "react";
 import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent } from "react";
-import { APPS, MENU_BAR_HEIGHT, type AppId } from "../../lib/app-config";
+import { APPS, type AppId } from "../../lib/app-config";
 import { clampBox, reservedBottom, useDesktop } from "../../lib/desktop-store";
 import { snapTo } from "../../lib/motion";
+import { menuBarHeight } from "../../lib/pwa";
 
 export type ResizeDir = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 export const RESIZE_DIRS: ResizeDir[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -34,10 +35,11 @@ export function useDragHandle(id: AppId) {
     const handle = event.currentTarget;
     const startX = event.clientX, startY = event.clientY;
     const { x: originX, y: originY, w } = state.windows[id];
+    const top = menuBarHeight();
     track(handle, event, (move) => {
-      const maxY = Math.max(MENU_BAR_HEIGHT, window.innerHeight - reservedBottom(false) - 40);
+      const maxY = Math.max(top, window.innerHeight - reservedBottom(false) - 40);
       const x = Math.min(Math.max(originX + move.clientX - startX, 80 - w), window.innerWidth - 80);
-      const y = Math.min(Math.max(originY + move.clientY - startY, MENU_BAR_HEIGHT), maxY);
+      const y = Math.min(Math.max(originY + move.clientY - startY, top), maxY);
       useDesktop.getState().move(id, x, y);
     }, () => {
       // 뷰포트 밖으로 나간 만큼만 제자리로 스냅한다(§3-A7).
@@ -65,6 +67,7 @@ export function useResizeHandle(id: AppId) {
     const handle = event.currentTarget;
     const start = { px: event.clientX, py: event.clientY, ...state.windows[id] };
     const min = APPS[id].min;
+    const top = menuBarHeight();
     track(handle, event, (move) => {
       const dx = move.clientX - start.px, dy = move.clientY - start.py;
       let { x, y, w, h } = start;
@@ -75,7 +78,7 @@ export function useResizeHandle(id: AppId) {
       if (w < min.w) { if (dir.includes("w")) x = start.x + start.w - min.w; w = min.w; }
       if (h < min.h) { if (dir.includes("n")) y = start.y + start.h - min.h; h = min.h; }
       if (x < 0) { w = Math.max(min.w, w + x); x = 0; }
-      if (y < MENU_BAR_HEIGHT) { h = Math.max(min.h, h - (MENU_BAR_HEIGHT - y)); y = MENU_BAR_HEIGHT; }
+      if (y < top) { h = Math.max(min.h, h - (top - y)); y = top; }
       w = Math.max(min.w, Math.min(w, window.innerWidth - x));
       h = Math.max(min.h, Math.min(h, window.innerHeight - reservedBottom(false) - y));
       useDesktop.getState().resize(id, w, h, x, y);

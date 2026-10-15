@@ -16,6 +16,7 @@
 | 2026-09-22 | 사용자 피드백: 전환 애니메이션 부재 → GSAP 모션 설계 `.tasks/motion-design.md` 작성(타이밍 토큰, 전환 인벤토리 A–F, 아키텍처, 테스트 계약) | Fable | 완료 |
 | 2026-09-22 | GSAP 모션 구현(gsap 3.15.0, @gsap/react 2.1.2) + `tests/motion.spec.ts` | Opus 5 (worker) | 완료 (검증 로그 모션) |
 | 2026-10-12 | 사용자 피드백: 목록에서 다른 세션을 고르면 상세 탭이 개요로 되돌아감 → `lib/store.ts` `syncLocation`의 탭 초기화 제거, `tests/web.spec.ts`에 탭 유지 테스트 추가, 설계·구현 문서 갱신 | Fable | 완료 (감사 메모 2026-10-12). 커밋 `34e342f` 푸시, `install-cli.ps1 -Force` 재설치 |
+| 2026-10-15 | 사용자 요청: PC에서 편하게 보도록 PWA 적용 → 매니페스트·서비스 워커(network-first, 셸만 보관)·앱 아이콘(Grok `image_edit` + squircle), 설정 `앱` 섹션·Relay 메뉴 설치 항목, 제목 표시줄 통합(WCO)과 메뉴바에 맞춘 `theme-color`, 서버 꺼짐 안내 문구. `DESIGN.md` §8 | Opus 5.5 | 완료 (검증 로그 PWA) |
 
 ## 검증 로그
 
@@ -182,6 +183,14 @@ run 2 → 10 passed (26.0s)
   인라인으로 옮긴 뒤 클래스를 지운다. 클론이 살아 있는 160ms 동안 Playwright의 strict 선택자가 두 개를 잡는 일을 막는다.
 - A5 최대화 Flip은 스토어 `toggleMaximize`가 상태를 바꾸기 전에 `captureFrame(id)`로 프레임 상태를 떠 둔다(호출 지점 3곳을 한곳으로 모음).
 - 3초 폴링에서 내용이 같으면(React Query structural sharing) `items` 참조가 그대로라 Flip·pulse·stagger 모두 돌지 않는다(테스트 §5-6).
+
+### 2026-10-15 · Opus 5.5 · 설치형 앱(PWA)
+
+- 변경: `public/manifest.webmanifest`·`public/sw.js`·`public/icons/app-192.png`·`app-512.png`를 `assets.ts`로 실행 파일에 포함. `lib/pwa.ts`가 서비스 워커 등록, 설치 제안 상태, Window Controls Overlay 영역(`html[data-titlebar]`, `--menubar-height`·`--titlebar-left/right`), 메뉴바에 맞춘 `theme-color`를 맡는다. 창 배치 제한·드래그·최대화가 쓰던 `MENU_BAR_HEIGHT`는 `menuBarHeight()`/`var(--menubar-height)`로 바꿨다.
+- 아이콘: Relay 마크를 1024px 밑그림으로 렌더링 → Grok `image_edit` 두 시안 중 Big Sur풍(B) 선택 → PIL로 n=5 superellipse(89%) 마스크. 16~48px에서도 R이 또렷하다.
+- 실제 설치 점검: 이 PC의 Chrome 안정판은 CDP `PWA` 도메인이 없어, Playwright Chromium(영구 프로필, 화면 표시)에서 `PWA.install` → `PWA.changeAppUserSettings(displayMode: standalone)` → `PWA.launch`로 앱 창을 띄우고 `PrintWindow`로 캡처했다. WCO는 기본으로 꺼져 있고 제목 표시줄의 `⌃`(제목 표시줄 숨기기)로 켜지며, 창 조작 버튼 바탕은 `theme-color`로 칠해진다. 처음에는 버튼 바탕(#0b1024)이 유리 메뉴바보다 어두워 오른쪽 끝에 사각형이 보였다 → 메뉴바 겉보기 색을 재어 `theme-color`에 넣도록 고친 뒤 다크 표준 모드 제목 표시줄 (34,48,95) ≈ 메뉴바 (31,46,94), WCO 버튼 바탕 (44,59,104) ≈ 옆 메뉴바 (38,55,102), 라이트 WCO (155,213,253) ≈ (141,209,254).
+- 앱 창 제목은 운영체제가 `Relay - `를 붙이므로 앱 창에서는 문서 제목에서 `· Relay`를 뺀다(캡처에서 `Relay - 결제 모듈 리팩터링 · Relay`로 중복된 것을 발견).
+- 검증: `npm run typecheck` 통과, `npm test` 97 pass(신규 `tests/pwa.test.ts` 6건, `api.test.ts` 자산 검사 1건), `npm run build`, `npx playwright test` 47 passed(신규 `tests/pwa.spec.ts` 6건, 기존 41건은 서비스 워커가 켜진 채 통과). CDP `Page.getAppManifest` 오류 0건, `Page.getInstallabilityErrors` 0건.
 
 ## 감사 메모 (Fable)
 

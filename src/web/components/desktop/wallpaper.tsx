@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { syncTitlebarColor } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
 import { presetUrl } from "../../lib/wallpaper";
 
@@ -24,10 +25,12 @@ export function Wallpaper({ dark }: { dark: boolean }) {
   const photo = choice.kind === "preset" ? presetUrl(choice.id) : custom;
   // 내 사진을 골랐지만 아직(또는 더는) 없으면 기본 사진으로 돌아간다.
   const dynamic = choice.kind === "dynamic" || (choice.kind === "custom" && !custom);
+  // 보이는 바탕화면이나 테마가 바뀌면 설치한 앱의 제목 표시줄 색을 메뉴바에 다시 맞춘다.
+  useEffect(syncTitlebarColor, [choice, dark, custom]);
   return <div className="wallpaper" aria-hidden="true" data-color={choice.kind === "color" ? choice.id : undefined}>
     {LAYERS.map((layer) => <img key={layer} className="wallpaper-image" src={`/wallpaper-${layer}.jpg`} alt=""
       data-layer={layer} data-active={dynamic && (layer === "dark") === dark ? "" : undefined}
-      draggable={false} decoding="async" fetchPriority={dynamic ? "high" : "low"} />)}
+      draggable={false} decoding="async" fetchPriority={dynamic ? "high" : "low"} onLoad={syncTitlebarColor} />)}
     <Photo src={photo} />
   </div>;
 }
@@ -50,6 +53,7 @@ function Photo({ src }: { src: string | null }) {
     settle();
   }, [src]);
   useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(syncTitlebarColor, [layers]);
   // 로드가 끝난 사진이 맨 위면 켜고, 그새 다른 사진이 올라왔거나 실패했으면 걷는다.
   // ref 콜백은 렌더마다 불리므로 로드 중인 사진에만 반응해야 갱신이 돌지 않는다.
   const done = (key: number, ok: boolean) => {

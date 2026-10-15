@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Relay",
+  "short_name": "Relay",
+  "description": "AI Agent 세션 기록을 찾아보고 다음 Agent에게 넘길 조회 명령을 복사하는 로컬 화면",
+  "lang": "ko",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay"],
+  "launch_handler": { "client_mode": ["focus-existing", "auto"] },
+  "background_color": "#0b1024",
+  "theme_color": "#0b1024",
+  "categories": ["developer", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icons/app-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/app-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

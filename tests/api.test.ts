@@ -72,6 +72,33 @@ describe("Local read-only HTTP API", () => {
     expect(f.service.list().page.total).toBe(0);
   });
 
+  test("installed-app assets: manifest, service worker and app icons come from the executable", async () => {
+    const html = await request("/").text();
+    expect(html).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    const response = request("/manifest.webmanifest");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("application/manifest+json; charset=utf-8");
+    const manifest = await response.json();
+    expect(manifest).toMatchObject({ id: "/", name: "Relay", short_name: "Relay", start_url: "/", scope: "/", display: "standalone", lang: "ko" });
+    expect(manifest.display_override).toEqual(["window-controls-overlay"]);
+    expect(manifest.icons.map((icon: { sizes: string }) => icon.sizes).sort()).toEqual(["192x192", "512x512"]);
+    for (const icon of manifest.icons as { src: string; sizes: string; type: string }[]) {
+      const image = request(icon.src);
+      expect(image.status).toBe(200); expect(image.headers.get("Content-Type")).toBe(icon.type);
+      // PNG IHDR의 가로·세로가 매니페스트에 적은 크기와 같아야 브라우저가 설치 아이콘으로 쓴다.
+      const header = new DataView(await image.arrayBuffer());
+      expect(`${header.getUint32(16)}x${header.getUint32(20)}`).toBe(icon.sizes);
+    }
+    const worker = request("/sw.js");
+    expect(worker.status).toBe(200);
+    expect(worker.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
+    expect(worker.headers.get("Cache-Control")).toBe("no-store");
+    // 서비스 워커가 미리 담는 셸은 모두 서버가 실제로 내주는 자산이어야 한다.
+    const shell: string[] = JSON.parse(/const SHELL = (\[[^\]]+\])/.exec(await worker.text())![1]);
+    for (const path of shell) expect(request(path).status).toBe(200);
+    expect(shell.some((path) => path.startsWith("/api/"))).toBe(false);
+  });
+
   test("schema changes and busy errors produce structured 503, not empty data", async () => {
     f.db.exec("PRAGMA user_version=99");
     expect(request("/api/v1/health").status).toBe(503);

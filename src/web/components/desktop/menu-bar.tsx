@@ -4,6 +4,7 @@ import { Moon, Sun } from "lucide-react";
 import { APPS, APP_IDS, type AppId } from "../../lib/app-config";
 import { useDesktop } from "../../lib/desktop-store";
 import { popScale, spinIn } from "../../lib/motion";
+import { useInstall } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
 import { RelayMark } from "./app-icons";
@@ -37,6 +38,7 @@ export function MenuBar({ connection, dark }: { connection: Connection; dark: bo
   const windows = useDesktop((state) => state.windows);
   const theme = useUI((state) => state.theme);
   const setTheme = useUI((state) => state.setTheme);
+  const canInstall = useInstall((state) => Boolean(state.prompt) && !state.standalone);
   const [menu, setMenu] = useState<{ kind: MenuKind; left: number; top: number } | null>(null);
   const [leaving, setLeaving] = useState(false);
   const leavingRef = useRef(false);
@@ -91,6 +93,8 @@ export function MenuBar({ connection, dark }: { connection: Connection; dark: bo
     { kind: "item", id: "about", label: "Relay 정보…", onSelect: () => openSettings("storage-info") },
     { kind: "item", id: "settings", label: "설정…", onSelect: () => openSettings() },
     { kind: "item", id: "wallpaper", label: "바탕화면 변경…", onSelect: () => openSettings("wallpaper-settings") },
+    // 브라우저가 설치를 제안할 수 있을 때만 보인다. 설치한 앱 창 안에서는 숨긴다.
+    ...(canInstall ? [{ kind: "item", id: "install", label: "앱으로 설치…", onSelect: () => void useInstall.getState().install() } satisfies MenuEntry] : []),
     { kind: "separator", id: "sep-1" },
     themeItem("dark", "다크"), themeItem("light", "라이트"), themeItem("system", "시스템"),
     { kind: "separator", id: "sep-2" },

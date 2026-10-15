@@ -1,11 +1,12 @@
 import { useState, type ChangeEvent, type ReactNode } from "react";
-import { Plus, X } from "lucide-react";
+import { Download, Plus, X } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
 import { Window } from "../desktop/window";
 import { ErrorNotice } from "../session-common";
 import { useDesktop } from "../../lib/desktop-store";
+import { useInstall } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
 import { COLORS, MAX_CUSTOM_IMAGES, PRESETS, deleteCustomImage, imageLabel, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
@@ -51,6 +52,7 @@ export function SettingsWindow({ health, healthError, connection }: {
       <div className="settings-row"><span>창 배치</span><Button size="sm" variant="outline" onClick={resetLayout}>창 배치 초기화</Button></div>
       <p className="settings-note">저장된 창 위치와 크기를 지우고 기본 배치로 되돌립니다.</p>
     </section>
+    <AppSettings />
     <section className="settings-group" id="storage-info">
       <h3>저장소</h3>
       <ErrorNotice id="global-error" error={healthError} />
@@ -61,6 +63,28 @@ export function SettingsWindow({ health, healthError, connection }: {
       <p className="settings-note">127.0.0.1에서만 열리는 읽기 전용 로컬 서버입니다.</p>
     </section>
   </Window>;
+}
+
+/** 설치형 앱(PWA). 브라우저가 설치를 제안할 수 있을 때만 설치 버튼을 보이고, 그 밖에는 지금 상태와 설치 방법을 알려 준다. */
+function AppSettings() {
+  const prompt = useInstall((state) => state.prompt);
+  const standalone = useInstall((state) => state.standalone);
+  const installed = useInstall((state) => state.installed);
+  const install = useInstall((state) => state.install);
+  const state = (label: string) => <span className="app-install-state"><img src="/icons/app-192.png" alt="" />{label}</span>;
+  return <section className="settings-group" id="app-settings">
+    <h3>앱</h3>
+    <div className="settings-row">
+      <span>데스크톱 앱</span>
+      {standalone ? state("앱 창에서 실행 중") : installed ? state("설치했습니다")
+        : prompt ? <Button size="sm" variant="outline" onClick={() => void install()}><Download />앱으로 설치</Button>
+        : state("브라우저 탭에서 보는 중")}
+    </div>
+    <p className="settings-note">{standalone ? "작업 표시줄과 시작 메뉴에서 바로 엽니다. 서버가 꺼져 있어도 창은 열리고, relay web --headless로 서버를 켜면 저절로 다시 연결됩니다."
+      : installed ? "시작 메뉴나 작업 표시줄에서 Relay를 여세요. 이 탭은 닫아도 됩니다."
+      : prompt ? "브라우저 탭 없이 별도 창으로 열고, 작업 표시줄과 시작 메뉴에서 바로 실행합니다. 서버가 꺼져 있어도 창은 열리고 서버를 켜면 다시 연결됩니다."
+      : "Chrome·Edge 주소 표시줄의 앱 설치 아이콘이나 브라우저 메뉴의 ‘앱 설치’로 설치합니다. 이미 설치했다면 같은 자리의 ‘앱에서 열기’를 누릅니다."}</p>
+  </section>;
 }
 
 /** macOS 배경화면 패널처럼 16:9 견본을 격자로 늘어놓는다. 고른 것은 시스템 블루 링, 기본 견본은 낮·밤을 대각선으로 나눠 보여 주고,

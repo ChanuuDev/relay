@@ -19,8 +19,11 @@ import { isMobileWidth, useDesktop } from "./lib/desktop-store";
 import { enter, enterToast, exit, exitToast } from "./lib/motion";
 import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
 import { listCustomImages } from "./lib/wallpaper";
+import { setupPwa, useInstall } from "./lib/pwa";
 
 const queryClient = new QueryClient();
+// 제목 표시줄 영역이 바뀌면(설치한 앱에서 제목 표시줄을 숨기거나 보일 때) 창을 메뉴바 아래로 다시 맞춘다.
+setupPwa(() => useDesktop.getState().clampAll(window.innerWidth, window.innerHeight));
 
 function App() {
   const currentLocation = useUI((state) => state.location);
@@ -41,6 +44,7 @@ function App() {
   const connection = failed ? "offline" : pending ? "pending" : "online";
   const theme = useUI((state) => state.theme);
   const mobile = useDesktop((state) => state.mobile);
+  const standalone = useInstall((state) => state.standalone);
   const [dark, setDark] = useState(() => isDark(theme));
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null);
   const [toastLeaving, setToastLeaving] = useState(false);
@@ -100,7 +104,9 @@ function App() {
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
   useEffect(() => {
-    document.title = detail.data?.session && id ? `${detail.data.session.sessionName ?? "세션 상세"} · Relay` : "Relay";
+    // 설치한 앱 창은 운영체제 제목에 앱 이름을 앞에 붙이므로 세션 이름만 둔다.
+    const name = detail.data?.session.sessionName ?? "세션 상세";
+    document.title = detail.data?.session && id ? (standalone ? name : `${name} · Relay`) : "Relay";
     if (id !== selectedRef.current) {
       const previous = selectedRef.current;
       selectedRef.current = id;
@@ -111,7 +117,7 @@ function App() {
         (link ?? document.getElementById("workspace"))?.focus({ preventScroll: true });
       }
     }
-  }, [id, detail.data?.session.sessionName, currentLocation]);
+  }, [id, detail.data?.session.sessionName, currentLocation, standalone]);
   useEffect(() => { if (fallback !== null && !fallbackLeaving) { copyRef.current?.focus(); copyRef.current?.select(); } }, [fallback, fallbackLeaving]);
   useEffect(() => {
     if (!toast) return;

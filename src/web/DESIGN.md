@@ -8,7 +8,7 @@ Relay 웹 화면은 여러 창과 Dock을 사용하는 데스크톱 메타포를
 ```
 div.desktop (fixed inset-0)
 ├─ div.wallpaper (토큰 그라디언트 또는 색상 프리셋 + 기본 사진 2장 + 고른 사진, aria-hidden)
-├─ header.menubar (28px, z 70)
+├─ header.menubar (28px · 설치한 앱이 제목 표시줄을 숨기면 창 조작 버튼 높이, z 70)
 ├─ main#desktop (창 레이어, z 1–50)
 │   └─ section.window[data-window] × 4  — 세션 / 가이드 / 명령 / 설정
 └─ nav.dock (z 60) + 토스트·복사 폴백 (z 100)
@@ -109,3 +109,14 @@ React Query의 structural sharing 덕에 내용이 같은 폴링에서는 아무
 - **색상**: 그래파이트 · 미드나이트 · 라벤더 · 선셋 · 민트. 각각 방향 그라디언트 위에 radial 하이라이트 한 겹을 얹어 평면적으로 보이지 않게 합니다. 값은 `styles.css`의 `[data-color]` 규칙 한 곳에 두고 바닥과 견본이 공유합니다.
 - **내 사진**: 여러 장(최대 20장)을 넣은 순서대로 보여 주고 견본 아래에는 확장자를 뗀 파일 이름을 씁니다. 25MB 이하의 이미지만 받고 긴 변이 2560px을 넘으면 캔버스로 줄여 JPEG로 저장합니다.
   IndexedDB의 Blob을 `blob:` URL로 그리므로 CSP에 `img-src 'self' blob:`이 있습니다. 보고 있던 사진을 지우면 기본으로 돌아갑니다. 첫 버전이 `custom` 키에 두던 한 장은 그대로 한 장으로 읽습니다. 서버로는 보내지 않습니다.
+
+## 8. 설치형 앱(PWA)
+
+Chrome·Edge에서 앱으로 설치하면 브라우저 탭 없이 별도 창으로 열립니다. `127.0.0.1`과 `localhost`는 보안 출처로 취급되므로 HTTPS 없이 설치되며, 앱은 설치한 주소(포트까지)마다 따로 등록됩니다.
+
+- **매니페스트**(`public/manifest.webmanifest`): `id`·`start_url`·`scope`는 `/`, `display: standalone`에 `display_override: ["window-controls-overlay"]`, `launch_handler`는 이미 열린 창을 앞으로 가져옵니다(`focus-existing`). 아이콘은 192·512px PNG입니다.
+- **앱 아이콘**(`public/icons/app-*.png`): 메뉴바의 Relay 마크(R)를 코드로 그린 밑그림에 Grok Imagine `image_edit`로 재질과 입체감만 입히고, Dock 아이콘과 같은 squircle(n=5 superellipse, 캔버스의 89%)로 잘랐습니다. 파비콘과 메뉴바 마크는 그대로 인라인 SVG입니다.
+- **서비스 워커**(`public/sw.js`): 항상 서버 응답을 먼저 쓰고(network-first) 응답이 없을 때만 보관본을 꺼냅니다. 설치할 때 화면 셸(HTML·JS·CSS·서체·기본 바탕화면·아이콘)을 담고, 그 뒤로는 받아 온 정적 자산을 갱신해 둡니다. 세션 데이터(`/api/`)는 담지 않으며 Static Routing API를 지원하는 브라우저에서는 서비스 워커를 거치지도 않습니다. 같은 포트에 다른 서버가 떠도 그 응답은 담지 않도록 `Relay-Pid` 헤더가 있는 200 응답만 보관합니다. 서버가 꺼진 채 앱을 열면 보관한 셸이 뜨고 메뉴바는 `연결 끊김 · 재시도 중`, 목록에는 서버를 켜는 명령이 나오며, 서버가 다시 뜨면 3초 폴링으로 저절로 연결됩니다.
+- **제목 표시줄 통합**: 앱 창 오른쪽 위 `⌃` 단추로 제목 표시줄을 숨기면(Window Controls Overlay) 메뉴바가 그 자리에 올라갑니다. `lib/pwa.ts`가 `navigator.windowControlsOverlay`에서 영역을 읽어 `html[data-titlebar]`와 `--menubar-height`·`--titlebar-left`·`--titlebar-right`를 넣고, 메뉴바는 창 조작 버튼 자리를 비운 채 앱 창을 옮기는 손잡이(`app-region: drag`, 단추는 `no-drag`)가 됩니다. 메뉴바 높이는 창 조작 버튼 높이(Windows 33px)를 따르고, 창 배치 제한과 최대화한 창의 위쪽도 같은 값을 씁니다.
+- **제목 표시줄 색**: `theme-color`를 메뉴바 유리의 겉보기 색에 맞춥니다. 유리 뒤 바탕화면 띠의 평균색(사진은 `object-fit: cover` 그대로 캔버스로 재고, 색상 바탕화면은 `[data-color]` 규칙의 `--wallpaper-top`·`--wallpaper-top-end`)에 메뉴바의 `saturate()`와 반투명 채움을 겹쳐 계산합니다. 그래서 표준 제목 표시줄은 메뉴바와 한 덩어리로 보이고, 제목 표시줄을 숨기면 창 조작 버튼 바탕이 메뉴바 오른쪽 끝과 이어집니다. 바탕화면·테마·창 크기·제목 표시줄 모드가 바뀔 때마다 다시 잽니다.
+- **설치 안내**: 브라우저가 설치를 제안할 때(`beforeinstallprompt`)만 설정 창 `앱` 섹션의 `앱으로 설치` 단추와 Relay 메뉴의 `앱으로 설치…`가 나타납니다. 앱 창 안에서는 `앱 창에서 실행 중`을 보이고, 운영체제가 창 제목 앞에 앱 이름을 붙이므로 문서 제목에서 `· Relay`를 뺍니다.

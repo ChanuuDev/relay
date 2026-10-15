@@ -1,6 +1,6 @@
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
-import { APPS, MENU_BAR_HEIGHT, type AppId } from "../../lib/app-config";
+import { APPS, type AppId } from "../../lib/app-config";
 import { reservedBottom, useDesktop } from "../../lib/desktop-store";
 import {
   bootDelay, enter, enterWindow, exit, exitWindow, flipFrame, minimizeToDock,
@@ -98,8 +98,9 @@ export function Window({ id, header, children, bodyClassName, detail }: {
   }, { dependencies: [focused, mobile] });
 
   if (!win.open) return null;
+  // 최대화한 창은 메뉴바 바로 아래에서 시작한다. 설치한 앱이 제목 표시줄 자리를 쓰면 메뉴바가 높아지므로 CSS 변수를 따른다.
   const style: CSSProperties = maximized
-    ? { top: MENU_BAR_HEIGHT, left: 0, right: 0, bottom: reservedBottom(mobile), width: "auto", height: "auto", transform: "none", zIndex: win.z }
+    ? { top: "var(--menubar-height)", left: 0, right: 0, bottom: reservedBottom(mobile), width: "auto", height: "auto", transform: "none", zIndex: win.z }
     : { top: 0, left: 0, transform: `translate(${win.x}px, ${win.y}px)`, width: win.w, height: win.h, zIndex: win.z };
   return <section className="window" role="region" aria-label={`${APPS[id].title} 창`} tabIndex={-1} style={style}
     data-window={id} data-focused={focused ? "" : undefined} data-maximized={maximized ? "" : undefined}
