@@ -3,6 +3,7 @@ import { Download, Plus, X } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Window } from "../desktop/window";
 import { ErrorNotice } from "../session-common";
 import { useDesktop } from "../../lib/desktop-store";
@@ -40,9 +41,12 @@ export function SettingsWindow({ health, healthError, connection }: {
       </div>
       <div className="settings-row">
         <label htmlFor="settings-font-size">글자 크기</label>
-        <NativeSelect id="settings-font-size" size="sm" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value) as FontSize)}>
-          {FONT_SIZES.map((size) => <NativeSelectOption key={size} value={size}>{size === DEFAULT_FONT_SIZE ? `${size}px (기본)` : `${size}px`}</NativeSelectOption>)}
-        </NativeSelect>
+        <Select value={String(fontSize)} onValueChange={(value) => setFontSize(Number(value) as FontSize)}>
+          <SelectTrigger id="settings-font-size" size="sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {FONT_SIZES.map((size) => <SelectItem key={size} value={String(size)}>{size === DEFAULT_FONT_SIZE ? `${size}px (기본)` : `${size}px`}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
       <p className="settings-note">시스템을 고르면 운영체제의 밝기 설정을 따릅니다. 글자 크기는 창 안의 글자에 적용되고 메뉴바와 Dock은 그대로 둡니다.</p>
     </section>

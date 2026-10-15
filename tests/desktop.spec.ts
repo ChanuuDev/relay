@@ -402,12 +402,18 @@ test("설정의 글자 크기는 창 안의 글자·줄 높이·줄바꿈 기준
     expect((await metrics(".menu-item")).size).toBe(13);
     await page.getByRole("menuitem", { name: "설정…" }).click();
   };
-  const select = page.getByLabel("글자 크기");
+  // 글자 크기는 shadcn Select로 고른다. 목록은 body 포털에 뜨는 listbox다.
+  const select = page.getByRole("combobox", { name: "글자 크기" });
+  const listbox = page.getByRole("listbox");
   await openSettings();
-  await expect(select).toHaveValue("13");
-  await expect(select.locator("option")).toHaveText(["12px", "13px (기본)", "14px", "15px", "16px", "17px", "18px"]);
+  await expect(select).toHaveText("13px (기본)");
+  await select.click();
+  await expect(listbox.getByRole("option")).toHaveText(["12px", "13px (기본)", "14px", "15px", "16px", "17px", "18px"]);
+  await expect(listbox.getByRole("option", { name: "13px (기본)" })).toHaveAttribute("data-state", "checked");
   expect(await metrics(".session-name")).toMatchObject({ size: 13, line: 20 });
-  await select.selectOption("18");
+  await listbox.getByRole("option", { name: "18px" }).click();
+  await expect(listbox).toHaveCount(0);
+  await expect(select).toHaveText("18px");
   await expect.poll(async () => (await metrics(".session-name")).size).toBe(18);
   expect(await page.evaluate(() => localStorage.getItem("relay-font-size"))).toBe("18");
   // 미리보기는 줄 높이와 함께 커져 두 줄 고정을 지키고, 한 줄짜리 버튼은 위아래 여백을 지킨 채 자란다.
@@ -429,8 +435,19 @@ test("설정의 글자 크기는 창 안의 글자·줄 높이·줄바꿈 기준
   await page.reload();
   await expect.poll(async () => (await metrics(".session-name")).size).toBe(18);
   await openSettings();
-  await expect(select).toHaveValue("18");
-  await select.selectOption("13");
+  await expect(select).toHaveText("18px");
+  // 키보드로도 연다. 목록 글자도 커지고, 열린 목록에서는 / 검색 단축키가 동작하지 않으며, Esc로 닫으면 버튼으로 초점이 돌아온다.
+  await select.focus();
+  await page.keyboard.press("Enter");
+  await expect(listbox).toBeVisible();
+  expect((await metrics('[data-slot="select-item"]')).size).toBe(18);
+  await page.keyboard.press("/");
+  await expect(page.locator("#search")).not.toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(listbox).toHaveCount(0);
+  await expect(select).toBeFocused();
+  await select.click();
+  await listbox.getByRole("option", { name: "13px (기본)" }).click();
   await expect.poll(async () => (await metrics(".session-name")).size).toBe(13);
   await page.setViewportSize({ width: 760, height: 900 });
   await page.locator(dock("세션")).click();

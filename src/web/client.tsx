@@ -93,7 +93,7 @@ function App() {
     const shortcut = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey ||
-        target.closest("input, textarea, select, [contenteditable=true], [role=dialog], [role=menu]")) return;
+        target.closest("input, textarea, select, [contenteditable=true], [role=dialog], [role=menu], [role=listbox]")) return;
       if (event.key === "/") {
         event.preventDefault();
         useDesktop.getState().focus("sessions");

@@ -17,7 +17,8 @@
 | 2026-09-22 | GSAP 모션 구현(gsap 3.15.0, @gsap/react 2.1.2) + `tests/motion.spec.ts` | Opus 5 (worker) | 완료 (검증 로그 모션) |
 | 2026-10-12 | 사용자 피드백: 목록에서 다른 세션을 고르면 상세 탭이 개요로 되돌아감 → `lib/store.ts` `syncLocation`의 탭 초기화 제거, `tests/web.spec.ts`에 탭 유지 테스트 추가, 설계·구현 문서 갱신 | Fable | 완료 (감사 메모 2026-10-12). 커밋 `34e342f` 푸시, `install-cli.ps1 -Force` 재설치 |
 | 2026-10-15 | 사용자 요청: PC에서 편하게 보도록 PWA 적용 → 매니페스트·서비스 워커(network-first, 셸만 보관)·앱 아이콘(Grok `image_edit` + squircle), 설정 `앱` 섹션·Relay 메뉴 설치 항목, 제목 표시줄 통합(WCO)과 메뉴바에 맞춘 `theme-color`, 서버 꺼짐 안내 문구. `DESIGN.md` §8 | Opus 5.5 | 완료 (검증 로그 PWA) |
-| 2026-10-15 | 사용자 요청: 설정에서 글자 크기를 px 수치 드롭다운으로 조절 → 설정 `모양`에 `글자 크기`(12–18px, 기본 13px), 창 안 글자·줄 높이·한 줄 상자 높이를 함께 확대, 메뉴바·메뉴·Dock·툴팁·토스트는 고정. `DESIGN.md` §4 | Opus 5.5 | 완료 (검증 로그 글자 크기) |
+| 2026-10-15 | 사용자 요청: 설정에서 글자 크기를 px 수치 드롭다운으로 조절 → 설정 `모양`에 `글자 크기`(12–18px, 기본 13px), 창 안 글자·줄 높이·한 줄 상자 높이를 함께 확대, 메뉴바·메뉴·Dock·툴팁·토스트는 고정. `DESIGN.md` §4 | Opus 5.5 | 완료 (검증 로그 글자 크기). 커밋 `624bce0` 푸시, `install-cli.ps1 -Force` 재설치 |
+| 2026-10-15 | 사용자 피드백: 글자 크기 드롭다운은 shadcn 드롭다운이어야 함 → 네이티브 select를 shadcn `Select`(`components/ui/select.tsx`)로 교체, 목록을 드롭다운 메뉴와 같은 유리 재질·왼쪽 체크로 맞춤 | Opus 5.5 | 완료 (검증 로그 글자 크기 Select) |
 
 ## 검증 로그
 
@@ -200,6 +201,13 @@ run 2 → 10 passed (26.0s)
 - 범위: 20px까지 촬영해 보니 390px 화면에서 Provider 안내 문구가 잘려 12–18px로 정했다.
 - 회귀 확인: 시각을 고정하고 동작 줄이기를 켠 13개 화면(목록·상세 3탭·명령·설정·좁은 창·필터·빈 상태·모바일)을 변경 전·후로 촬영해 픽셀 비교 → 13px에서 새 행이 들어간 설정 창 외 차이 0. 12·16·18·20px 화면을 직접 보고 확인.
 - 검증: `npm run check` 통과 — typecheck, `npm test` 97 pass, build, `npx playwright test` 48 passed(신규: 글자·줄 높이·버튼 높이·고정 크롬·저장·760px 줄바꿈 기준).
+
+### 2026-10-15 · Opus 5.5 · 글자 크기 Select
+
+- 변경: `components/ui/select.tsx`를 shadcn 레지스트리(new-york-v4) 원본 그대로 추가했다(`cn` 경로만 `@/lib/utils`, `radix-ui`·`lucide-react`는 기존 의존성). 설정의 글자 크기를 `Select`·`SelectTrigger`·`SelectContent`·`SelectItem`으로 바꾸고, `styles.css`의 `[data-slot=select-*]` 오버라이드로 버튼은 다른 입력과 같은 유리 컨트롤, 목록은 `.material-menu`와 같은 유리(z 90)·26px 항목·시스템 블루 강조·왼쪽 체크로 맞췄다. 버튼은 가장 긴 `13px (기본)`에 맞춘 최소 폭(9.5em)이라 값이 바뀌어도 폭이 그대로다.
+- `client.tsx`의 `/` 단축키 제외 대상에 `[role=listbox]`를 더해, 열린 목록에서 `/`를 눌러도 검색으로 초점이 튀지 않는다.
+- 확인: 다크·라이트 × 13·18px로 닫힘·열림을 촬영해 유리 재질(blur 30px)·체크 위치·강조색을 봤다. 고른 항목이 버튼 글자 위에 겹치고(item-aligned), 18px에서 마지막 항목을 고른 채 열어도 목록 위끝이 메뉴바 아래(73px)에 머물며 스크롤 없이 모두 보인다.
+- 검증: `npm run check` 통과 — typecheck, `npm test` 97 pass, build, `npx playwright test` 48 passed(글자 크기 테스트를 목록 열기·항목 선택·키보드 Enter/Esc·열린 목록의 `/` 무시로 바꿈).
 
 ## 감사 메모 (Fable)
 

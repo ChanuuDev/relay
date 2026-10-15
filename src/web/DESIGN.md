@@ -29,7 +29,7 @@ div.desktop (fixed inset-0)
 | `.material-bar` | 20px | 메뉴바 |
 | `.material-dock` | 30px | Dock 캡슐, 모바일 탭바 |
 | `.material-chrome` | 40px | 창 상단바, 세션 목록 패널·상태바·필터 행, 설정 창 바깥 |
-| `.material-menu` | 30px | 드롭다운 메뉴, Dock 툴팁, Radix 툴팁, 복사 폴백 |
+| `.material-menu` | 30px | 드롭다운 메뉴, 선택 목록(shadcn Select), Dock 툴팁, Radix 툴팁, 복사 폴백 |
 | `.material-toast` | 24px | 복사 토스트 |
 | `.material-control` | 없음 | 검색·Provider 입력, 세그먼트 컨트롤, 아이콘 버튼 |
 
@@ -56,7 +56,8 @@ div.desktop (fixed inset-0)
 - **Pretendard Variable**(SIL OFL)을 실행 파일에 포함해 `/fonts/PretendardVariable.woff2`로 제공합니다. 굵기는 400·500·600만 씁니다.
 - 본문 `letter-spacing: -0.01em`, 22px 제목 `-0.02em`, 한글 `word-break: keep-all`, 긴 경로·ID는 `overflow-wrap: anywhere`.
 - 크기(글자 크기 13px 기준): 메뉴바·창 제목·UI 본문 13px, 목록 제목 13px/600, 미리보기 12px, 메타·캡션 11px, 상세 제목 22px/600, 요약 14px/1.8, 터미널 12.5px mono.
-- **글자 크기 설정**: 설정 창 `모양`의 `글자 크기`에서 12–18px을 고릅니다(기본 13px, `localStorage["relay-font-size"]`). `lib/font-size.ts`가 고른 크기 ÷ 13을 `--font-scale`에 넣으면
+- **글자 크기 설정**: 설정 창 `모양`의 `글자 크기`(shadcn `Select`)에서 12–18px을 고릅니다(기본 13px, `localStorage["relay-font-size"]`). 목록은 드롭다운 메뉴와 같은 유리 재질·26px 항목·시스템 블루 강조이고,
+  macOS 팝업 버튼처럼 체크를 왼쪽 열에 두며 열면 고른 항목이 버튼 글자 위에 겹칩니다(item-aligned). `lib/font-size.ts`가 고른 크기 ÷ 13을 `--font-scale`에 넣으면
   창 안의 글자 크기·줄 높이는 `--fs-*`·`--lh-*` 토큰으로, shadcn의 `text-*` 유틸리티는 `@theme` 재정의로 함께 커집니다. 한 줄짜리 글자 상자(버튼·입력·배지·막대)는 높이를 `calc(1em + 위아래 여백)`으로 잡아 여백을 지키고,
   라벨 열 폭은 비율로 늘립니다. 툴바·명령 줄의 줄바꿈 컨테이너 쿼리는 컨테이너 글자 크기 기준 `em`(13px에서 719·519·559px)이라 글자가 커지면 더 일찍 줄을 바꾸고, 목록·상세 2단 기준(640·900px)은 px 그대로입니다.
   메뉴바·드롭다운 메뉴·Dock·툴팁·토스트는 운영체제 화면처럼 px로 고정합니다.
