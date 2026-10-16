@@ -26,8 +26,8 @@ test("install-skills writes a real copy for Claude, Grok and Codex and is idempo
   expect(first.targets.map(t => [t.host, t.status])).toEqual([["claude", "added"], ["grok", "added"], ["codex", "added"]]);
   const source = readFileSync(path.join(root, "skills/relay-session/SKILL.md"), "utf8");
   const claude = readFileSync(path.join(skillDir(".claude"), "SKILL.md"), "utf8");
-  expect(claude).toContain("argument-hint: codex|claude|grok");
-  expect(claude.replace("argument-hint: codex|claude|grok\n", "")).toBe(source);
+  expect(claude).toContain("argument-hint: codex|claude|grok|cursor");
+  expect(claude.replace("argument-hint: codex|claude|grok|cursor\n", "")).toBe(source);
   // The agent must be able to invoke the skill itself; /relay-session stays available either way.
   expect(claude).not.toContain("disable-model-invocation");
   expect(readFileSync(path.join(skillDir(".grok"), "SKILL.md"), "utf8")).toBe(claude);

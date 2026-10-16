@@ -6,6 +6,9 @@ export const STATUS_LABELS: Record<SessionStatus, string> = { working: "작업 �
 /** What the repository looked like when the record was last written: enough to find the commit, never the diff. */
 export interface GitClue { branch: string | null; commit: string | null; dirty: number; at: string }
 
+/** How often the host compacted this session's context, and when it last did. A compacted session may have lost detail the record never got. */
+export interface Compaction { count: number; lastAt: string; trigger: string | null }
+
 export interface Session {
   id: string;
   provider: string;
@@ -25,6 +28,7 @@ export interface Session {
   /** A pinned record is exempt from retention and from the end hook's clean-up. */
   pinned: boolean;
   git: GitClue | null;
+  compaction: Compaction | null;
 }
 export interface SessionUpdate {
   id: string; sessionId: string; sequence: number;

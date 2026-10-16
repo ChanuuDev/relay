@@ -65,7 +65,7 @@ export function FilterControls() {
         <InputGroupAddon align="inline-end"><kbd className="search-shortcut" aria-hidden="true">/</kbd></InputGroupAddon></InputGroup></Field>
     <Field className="provider-field"><FieldLabel htmlFor="provider" className="sr-only">Provider</FieldLabel>
       <Input id="provider" list="providers" value={draft.provider} onChange={(event) => setDraft({ provider: event.target.value })} placeholder="모든 Provider" maxLength={64} />
-      <datalist id="providers"><option value="openai" /><option value="anthropic" /><option value="xai" /></datalist></Field>
+      <datalist id="providers"><option value="openai" /><option value="anthropic" /><option value="xai" /><option value="cursor" /></datalist></Field>
     <Button type="button" size="sm" variant={advanced ? "secondary" : "outline"} aria-expanded={advanced} aria-controls="advanced-filters" onClick={() => setAdvanced(!advanced)}>
       <ListFilter data-icon="inline-start" />상세 필터{advancedOpen(draft) && <span className="filter-indicator" />}</Button>
     <Button type="submit" size="sm"><Search data-icon="inline-start" />검색</Button>

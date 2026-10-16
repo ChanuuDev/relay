@@ -12,6 +12,13 @@ export const SESSION_START_PROMPT = `세션의 첫 작업 전에 relay-session �
 
 relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속한다.`;
 
+/** Delivered when a host starts the session again after compacting its context: the record is now the fuller memory. */
+export const SESSION_COMPACT_PROMPT = `컨텍스트가 압축되어 앞선 대화의 세부가 요약으로 대체되었다. 작업을 계속하기 전에 relay show <실제 세션 ID> --provider <회사 식별자> --history --json으로 자신의 Relay 기록을 다시 읽는다.
+
+압축으로 사라졌을 수 있는 맥락(변경 파일·검증 결과·남은 위험·다음 작업)을 아직 기록하지 않았다면 relay update --session-id <실제 세션 ID> --summary <보완한 요약>으로 바로 보완한다. 기록이 없으면 relay-session 스킬 절차대로 record한다.
+
+호스트가 제공한 실제 세션 ID만 사용하고 임의 ID를 만들지 않는다. relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속한다.`;
+
 export const GROK_RULE_MARKER = "<!-- Relay managed session-start instructions -->";
 export const GROK_SESSION_RULE = `${GROK_RULE_MARKER}
 # Relay 세션 기록
@@ -21,4 +28,6 @@ export const GROK_SESSION_RULE = `${GROK_RULE_MARKER}
 ${SESSION_START_PROMPT}
 
 Grok의 provider는 xai, agent는 grok이다. 현재 호스트가 제공한 GROK_SESSION_ID 환경변수를 그대로 사용한다. 실제 ID를 확인할 수 없으면 임의로 만들지 말고 한 줄로 알린 뒤 원래 작업을 계속한다.
+
+컨텍스트가 압축된 뒤에는 relay show $GROK_SESSION_ID --provider xai --history --json으로 자신의 기록을 다시 읽고, 압축으로 사라졌을 수 있는 맥락을 update로 보완한다.
 `;

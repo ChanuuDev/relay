@@ -8,7 +8,7 @@ const at = "2026-10-16T03:00:00.000Z";
 const session: Session = { id: "ses_1", provider: "anthropic", agent: "claude-code", providerSessionId: "id'1", sessionName: "로그인 수정",
   model: "claude-opus-5", workingDirectory: "C:/workspace/app", summary: "콜백 수정\n```bash\necho note\n```\n모바일 확인 남음",
   parentSessionId: "ses_0", createdAt: at, updatedAt: at, endedAt: null, endReason: null, status: "blocked", pinned: true,
-  git: { branch: "main", commit: "abc1234", dirty: 2, at } };
+  git: { branch: "main", commit: "abc1234", dirty: 2, at }, compaction: null };
 const update = (sequence: number, summary: string, status: SessionUpdate["status"] = null): SessionUpdate =>
   ({ id: `upd_${sequence}`, sessionId: "ses_1", sequence, summary, status, createdAt: at });
 const node = (id: string, depth: number, current: boolean, extra: Partial<ChainNode> = {}): ChainNode => ({ id: `ses_${id}`, provider: "openai", agent: "codex",

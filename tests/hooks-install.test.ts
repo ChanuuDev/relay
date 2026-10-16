@@ -15,7 +15,7 @@ function install(codexHomes = [path.join(home(), ".codex")]) {
   return installHostHooks({ homeDirectory: home(), binDirectory: bin(), executablePath: path.join(bin(), "relay.exe"), codexHomes });
 }
 
-test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd without clobbering other hooks", () => {
+test("install-hooks registers Claude, Grok, Codex and Cursor session hooks and the compaction note without clobbering other hooks", () => {
   mkdirSync(path.join(home(), ".claude"), { recursive: true });
   writeFileSync(path.join(home(), ".claude", "settings.json"), JSON.stringify({
     model: "keep-me",
@@ -29,14 +29,22 @@ test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd
     hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "keep-prompt" }] }] },
   }));
 
+  mkdirSync(path.join(home(), ".cursor"), { recursive: true });
+  writeFileSync(path.join(home(), ".cursor", "hooks.json"), JSON.stringify({
+    version: 1, hooks: { beforeShellExecution: [{ command: "keep-shell", timeout: 10 }] },
+  }));
+
   const first = install();
-  expect(first.hosts.map(h => h.status)).toEqual(["added", "added", "added"]);
+  expect(first.hosts.map(h => [h.host, h.status])).toEqual([["claude", "added"], ["grok", "added"], ["codex", "added"], ["cursor", "added"]]);
   if (process.platform === "win32") {
-    expect(first.wrappers.map(w => w.status)).toEqual(["added", "added", "added", "added"]);
+    expect(first.wrappers.map(w => w.status)).toEqual(Array(9).fill("added"));
     expect(readFileSync(path.join(bin(), "relay-hook-grok.cmd"), "utf8")).toBe(wrapperScript("grok"));
     expect(readFileSync(path.join(bin(), "relay-hook-grok-end.cmd"), "utf8")).toBe(wrapperScript("grok", "SessionEnd"));
+    expect(readFileSync(path.join(bin(), "relay-hook-cursor-compact.cmd"), "utf8")).toBe(wrapperScript("cursor", "PreCompact"));
     expect(wrapperScript("codex", "SessionEnd")).toContain("hook codex --end");
+    expect(wrapperScript("codex", "PreCompact")).toContain("hook codex --compact");
     expect(wrapperScript("codex")).not.toContain("--end");
+    expect(wrapperScript("codex")).not.toContain("--compact");
   }
 
   const claude = JSON.parse(readFileSync(path.join(home(), ".claude", "settings.json"), "utf8"));
@@ -48,6 +56,8 @@ test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd
   expect(claude.hooks.SessionEnd).toHaveLength(1);
   expect(claude.hooks.SessionEnd[0].hooks[0].command).toContain("hook claude --end");
   expect(claude.hooks.SessionEnd[0].hooks[0].timeout).toBe(10);
+  expect(claude.hooks.PreCompact).toHaveLength(1);
+  expect(claude.hooks.PreCompact[0].hooks[0].command).toContain("hook claude --compact");
 
   const grok = JSON.parse(readFileSync(path.join(home(), ".grok", "hooks", "relay.json"), "utf8"));
   const grokCommand = String(grok.hooks.SessionStart[0].hooks[0].command).toLowerCase();
@@ -67,6 +77,22 @@ test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd
   expect(codex.hooks.SessionStart[0].hooks[0].timeout).toBe(10);
   // Codex allows SessionEnd hooks at most three seconds.
   expect(codex.hooks.SessionEnd[0].hooks[0].timeout).toBe(3);
+  const codexCompact = String(codex.hooks.PreCompact[0].hooks[0].command).toLowerCase();
+  expect(codexCompact.includes("hook codex --compact") || codexCompact.includes("relay-hook-codex-compact.cmd")).toBe(true);
+  expect(codex.hooks.PreCompact[0].hooks[0].statusMessage).toBe("Relay compaction note");
+
+  // Cursor keeps its own file shape: a version, and plain command lists per camelCase event.
+  const cursor = JSON.parse(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8"));
+  expect(cursor.version).toBe(1);
+  expect(cursor.hooks.beforeShellExecution).toEqual([{ command: "keep-shell", timeout: 10 }]);
+  for (const [event, flag] of [["sessionStart", ""], ["sessionEnd", "-end"], ["preCompact", "-compact"]]) {
+    expect(cursor.hooks[event]).toHaveLength(1);
+    expect(cursor.hooks[event][0]).not.toHaveProperty("type");
+    expect(cursor.hooks[event][0].timeout).toBe(10);
+    const command = String(cursor.hooks[event][0].command).toLowerCase();
+    expect(command.includes(`relay-hook-cursor${flag}.cmd`) || command.includes(`hook cursor${flag.replace("-", " --")}`)).toBe(true);
+  }
+  expect(String(cursor.hooks.sessionStart[0].command).toLowerCase()).not.toMatch(/--end|--compact|-end\.cmd|-compact\.cmd/);
 
   const second = install();
   expect(second.hosts.every(h => h.status === "unchanged")).toBe(true);
@@ -77,6 +103,33 @@ test("install-hooks registers Claude, Grok and Codex SessionStart and SessionEnd
   const settled = JSON.parse(readFileSync(path.join(home(), ".claude", "settings.json"), "utf8"));
   expect(settled.hooks.SessionStart).toHaveLength(2);
   expect(settled.hooks.SessionEnd).toHaveLength(1);
+  expect(settled.hooks.PreCompact).toHaveLength(1);
+  const cursorAgain = JSON.parse(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8"));
+  expect(cursorAgain.hooks.sessionStart).toHaveLength(1);
+  expect(cursorAgain.hooks.preCompact).toHaveLength(1);
+});
+
+test("install-hooks adds the compaction note to files that only have the start and end hooks, and leaves a Cursor file of another version alone", () => {
+  mkdirSync(path.join(home(), ".claude"), { recursive: true });
+  const exe = path.join(bin(), "relay.exe").replaceAll("\\", "/");
+  writeFileSync(path.join(home(), ".claude", "settings.json"), JSON.stringify({
+    hooks: {
+      SessionStart: [{ hooks: [{ type: "command", command: `"${exe}" hook claude || echo {}`, timeout: 10 }] }],
+      SessionEnd: [{ hooks: [{ type: "command", command: `"${exe}" hook claude --end || echo {}`, timeout: 10 }] }],
+    },
+  }));
+  mkdirSync(path.join(home(), ".cursor"), { recursive: true });
+  writeFileSync(path.join(home(), ".cursor", "hooks.json"), JSON.stringify({ version: 2, hooks: {} }));
+  const result = install();
+  expect(result.hosts.find(h => h.host === "claude")!.status).toBe("added");
+  const claude = JSON.parse(readFileSync(path.join(home(), ".claude", "settings.json"), "utf8"));
+  expect(claude.hooks.SessionStart).toHaveLength(1);
+  expect(claude.hooks.SessionEnd).toHaveLength(1);
+  expect(claude.hooks.PreCompact[0].hooks[0].command).toContain("hook claude --compact");
+  const cursor = result.hosts.find(h => h.host === "cursor")!;
+  expect(cursor.status).toBe("skipped"); expect(cursor.detail).toContain("버전");
+  expect(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8")).toBe(JSON.stringify({ version: 2, hooks: {} }));
+  expect(install().hosts.find(h => h.host === "claude")!.status).toBe("unchanged");
 });
 
 test("Grok gets the same session-start guidance through global rules, without changing user instructions", () => {
@@ -182,8 +235,9 @@ test("CLI install-hooks writes into RELAY_USER_HOME and --bin-dir", () => {
   expect(result.exitCode).toBe(0);
   const data = JSON.parse(result.stdout.toString());
   expect(data.schemaVersion).toBe(1);
-  expect(data.hosts).toHaveLength(3);
+  expect(data.hosts).toHaveLength(4);
   expect(data.hosts.every((h: { status: string }) => h.status === "added")).toBe(true);
+  expect(JSON.parse(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8")).hooks.sessionStart).toHaveLength(1);
   expect(data.instructions[0].status).toBe("added");
   expect(data.skills.map((skill: { host: string }) => skill.host)).toEqual(["claude", "grok", "codex"]);
   for (const agent of ["claude", "grok", "codex"]) {

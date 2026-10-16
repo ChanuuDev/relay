@@ -6,14 +6,14 @@ import { loadConfig } from "./config";
 import { openDatabase } from "./db/database";
 import { errorBody, invalid, RelayError, storageError } from "./errors";
 import { gitClue } from "./git";
-import { SESSION_START_PROMPT } from "./hooks/context";
+import { SESSION_COMPACT_PROMPT, SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
 import { terminalWidth } from "./output/terminal";
 import { SessionRepository } from "./session/session.repository";
-import { HOOK_SUMMARY, PROVIDERS, SessionService } from "./session/session.service";
+import { ALIASES, HOOK_SUMMARY, PROVIDERS, SessionService, type ProviderAlias } from "./session/session.service";
 import type { NewSession, Session } from "./session/session.types";
 import { installSkills } from "./skills/install";
 import { directory } from "./validation";
@@ -29,13 +29,14 @@ const program = new Command().name("relay").description("로컬 AI Agent 세션 
   .option("--codex", "최근 Codex 세션 조회 (latest codex)")
   .option("--claude", "최근 Claude 세션 조회 (latest claude)")
   .option("--grok", "최근 Grok 세션 조회 (latest grok)")
+  .option("--cursor", "최근 Cursor 세션 조회 (latest cursor)")
   .showSuggestionAfterError(false).exitOverride()
   .configureOutput({ writeErr: () => {} });
 
-const shortcuts = ["codex", "claude", "grok"] as const;
+const shortcuts = ALIASES;
 program.hook("preAction", (_command, actionCommand) => {
   const selected = shortcuts.filter(alias => program.opts()[alias]);
-  if (selected.length > 1) invalid("--codex, --claude, --grok 중 하나만 지정하세요.");
+  if (selected.length > 1) invalid(`${shortcuts.map(alias => `--${alias}`).join(", ")} 중 하나만 지정하세요.`);
   if (selected.length && actionCommand !== program) invalid("최근 세션 조회 옵션은 다른 명령과 함께 사용할 수 없습니다.");
 });
 program.action((options, command: Command) => {
@@ -133,7 +134,7 @@ program.command("list").description("세션 테이블 조회")
   .option("--status <status>", STATUS_HELP).option("--pinned", "고정한 세션만")
   .option("--limit <number>", "페이지 크기 (1~100, 기본 50)").option("--offset <number>", "offset (기본 0)")
   .action((o, c: Command) => run(c, false, s => s.list({ ...o, q: o.query })));
-program.command("latest <provider>").description("codex / claude / grok 중 명시한 출처의 최근 Relay 기록")
+program.command("latest <provider>").description(`${ALIASES.join(" / ")} 중 명시한 출처의 최근 Relay 기록`)
   .option("--cwd <path>", "명시한 작업 경로 내에서만 조회")
   .action((alias: string, o, c: Command) => run(c, false, s => s.latest(alias, o.cwd)));
 program.command("pin <session-id>").description("보관 기간과 종료 정리에서 제외하도록 세션 고정")
@@ -147,9 +148,10 @@ program.command("delete <session-id>").description("세션 기록과 이력 삭�
   .option("--force", "이어받은 세션의 연결을 끊고 삭제")
   .action((id: string, o, c: Command) => run(c, true, s => s.delete(id, o.provider, Boolean(o.force))));
 
-program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록 또는 종료 처리 (codex/claude/grok)")
+program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록·종료·압축 처리 (${ALIASES.join("/")})`)
   .option("--end", "SessionEnd: 종료 시각·사유를 기록하고, 훅 자동 기록만 남은 세션은 삭제")
-  .action(async (alias: string, options: { end?: boolean }, command: Command) => {
+  .option("--compact", "PreCompact: 컨텍스트 압축 횟수와 시각을 기록")
+  .action(async (alias: string, options: { end?: boolean; compact?: boolean }, command: Command) => {
     // Answer once before opening the store; recording must never block or fail the host session.
     let answered = false;
     try {
@@ -159,29 +161,44 @@ program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin�
       const payload = parsed as Record<string, unknown>;
       // A subagent shares the host session; only the session itself is recorded or closed.
       if (payload.agent_id || payload.subagentType || payload.subagent_type || !Object.hasOwn(PROVIDERS, alias)) return;
+      const host = alias as ProviderAlias;
       const environmentId = { claude: process.env.CLAUDE_CODE_SESSION_ID, codex: process.env.CODEX_THREAD_ID,
-        grok: process.env.GROK_SESSION_ID }[alias as keyof typeof PROVIDERS];
-      const sessionId = [payload.session_id, payload.sessionId, payload.thread_id, environmentId]
+        grok: process.env.GROK_SESSION_ID, cursor: undefined }[host];
+      // Cursor names the chat by conversation_id; its session_id usually repeats it and its CLI resumes by that id.
+      const sessionId = [...(host === "cursor" ? [payload.conversation_id] : []), payload.session_id, payload.sessionId, payload.thread_id, environmentId]
         .find((value): value is string => typeof value === "string" && value.trim().length > 0);
       if (!sessionId) return;
-      const { provider, agent } = PROVIDERS[alias as keyof typeof PROVIDERS];
-      // Grok ignores SessionStart output. Codex and Claude add this JSON to the agent's context.
-      const output = !options.end && alias !== "grok" ? { hookSpecificOutput: { hookEventName: "SessionStart",
-        additionalContext: `${SESSION_START_PROMPT}\n\n현재 호스트가 제공한 세션 정보: ${JSON.stringify({ provider, agent, sessionId })}` } } : {};
-      process.stdout.write(JSON.stringify(output) + "\n");
+      const { provider, agent } = PROVIDERS[host];
+      process.stdout.write(JSON.stringify(hookOutput(host, options, payload, { provider, agent, sessionId })) + "\n");
       answered = true;
-      const cwd = typeof payload.cwd === "string" && existsSync(payload.cwd) ? payload.cwd : process.cwd();
+      const roots = Array.isArray(payload.workspace_roots) ? payload.workspace_roots : [];
+      const cwd = [payload.cwd, roots[0]].find((value): value is string => typeof value === "string" && existsSync(value)) ?? process.cwd();
       const config = loadConfig(command.optsWithGlobals().dataDir);
       const db = openDatabase(config);
       try {
         // The hook has a few seconds at most, so it records without reading the working tree.
         const service = new SessionService(new SessionRepository(db), config.retentionDays);
         if (options.end) service.end(sessionId, provider, endReason(payload));
+        else if (options.compact) service.compact(sessionId, provider, typeof payload.trigger === "string" ? payload.trigger : undefined);
         else service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY });
       } finally { db.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
     finally { if (!answered) process.stdout.write("{}\n"); }
   });
+
+/**
+ * What the host gets back. Only a session start carries guidance: the first-record steps, or, when the
+ * host starts the session again after compacting its context, the steps to read the record back.
+ * Grok ignores SessionStart output and reads the same guidance from its rules file instead.
+ */
+function hookOutput(host: ProviderAlias, options: { end?: boolean; compact?: boolean }, payload: Record<string, unknown>,
+  info: { provider: string; agent: string; sessionId: string }): unknown {
+  if (options.end || options.compact || host === "grok") return {};
+  const compacted = [payload.source, payload.session_source].includes("compact");
+  const text = `${compacted ? SESSION_COMPACT_PROMPT : SESSION_START_PROMPT}\n\n현재 호스트가 제공한 세션 정보: ${JSON.stringify(info)}`;
+  if (host === "cursor") return { additional_context: text };
+  return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } };
+}
 
 /** The host's end reason in the form the record accepts; absent when the host sent none. */
 function endReason(payload: Record<string, unknown>): string | undefined {

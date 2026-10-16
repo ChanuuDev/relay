@@ -36,7 +36,7 @@ $skillText = [IO.File]::ReadAllText((Join-Path $sourceRoot 'SKILL.md'), $utf8)
 # Claude Code and Grok read argument-hint from the frontmatter. Model invocation stays enabled so
 # the agent can follow the project instruction to record a session without waiting for /relay-session.
 if ($Agent -ne 'codex') {
-    $skillText = $skillText -replace '^---\r?\n', "---`nargument-hint: codex|claude|grok`n"
+    $skillText = $skillText -replace '^---\r?\n', "---`nargument-hint: codex|claude|grok|cursor`n"
 }
 $files = @{ 'SKILL.md' = $skillText }
 if ($Agent -eq 'codex') { $files['agents/openai.yaml'] = [IO.File]::ReadAllText((Join-Path $sourceRoot 'agents/openai.yaml'), $utf8) }

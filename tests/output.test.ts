@@ -9,7 +9,7 @@ function session(index: number, extra: Partial<Session> = {}): Session {
   return { id: `ses_00000000-0000-0000-0000-00000000000${index}`, provider: "anthropic", agent: "claude-code",
     providerSessionId: `f47ac10b-58cc-4372-a567-0e02b2c3d4000${index}`, sessionName: `세션 이름 ${index}`,
     model: "claude-opus-5", workingDirectory: "C:/workspace/agent-session-chain",
-    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, endedAt: null, endReason: null, status: null, pinned: false, git: null, ...extra };
+    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, endedAt: null, endReason: null, status: null, pinned: false, git: null, compaction: null, ...extra };
 }
 
 describe("Terminal output", () => {

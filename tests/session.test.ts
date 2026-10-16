@@ -366,4 +366,25 @@ describe("Session Service", () => {
     expect(f.service.show("h").session.git).toBeNull();
   });
 
+
+  test("a compaction note counts the host's compactions without touching the context, the time or the history", () => {
+    f.service.record(input("c")); f.service.update("c", "진행");
+    const before = f.service.show("c", undefined, true);
+    expect(before.session.compaction).toBeNull();
+    const first = f.service.compact("c", undefined, "auto").session.compaction!;
+    expect(first.count).toBe(1); expect(first.trigger).toBe("auto"); expect(first.lastAt).toBeString();
+    const second = f.service.compact("c").session.compaction!;
+    expect(second.count).toBe(2); expect(second.trigger).toBeNull();
+    const after = f.service.show("c", undefined, true);
+    expect(after.session.compaction?.count).toBe(2);
+    expect(after.session.updatedAt).toBe(before.session.updatedAt); expect(after.session.summary).toBe("진행");
+    expect(after.updates).toEqual(before.updates);
+    expect(() => f.service.compact("missing")).toThrow("찾을 수 없습니다");
+    // The note sits beside the git clue in the same metadata column.
+    const service = new SessionService(f.repo, 0, () => ({ branch: "main", commit: "abc1234", dirty: 0, at: "2026-10-16T00:00:00.000Z" }));
+    const updated = service.update("c", "더 진행").session;
+    expect(updated.git?.commit).toBe("abc1234"); expect(updated.compaction?.count).toBe(2);
+    expect(f.service.compact("c", undefined, "manual").session.git?.commit).toBe("abc1234");
+  });
+
 });

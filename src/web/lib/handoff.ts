@@ -41,6 +41,7 @@ export function handoffMarkdown(input: HandoffInput, { shell, storeDirectory }: 
     `- 프로젝트: \`${s.workingDirectory}\``,
     `- 작업 상태: ${statusLabel(s.status)}${s.pinned ? " · 고정" : ""}`,
     `- Git: ${gitLabel(s.git)}`,
+    ...(s.compaction ? [`- 컨텍스트 압축: ${s.compaction.count}회 · 마지막 ${when(s.compaction.lastAt)} (압축 전 세부가 기록에 없을 수 있음)`] : []),
     `- 최초 기록: ${when(s.createdAt)} · 마지막 갱신: ${when(s.updatedAt)}`,
     `- 세션 종료: ${s.endedAt ? endLabel(s) : "기록 없음"}`,
     "",

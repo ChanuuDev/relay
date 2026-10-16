@@ -6,6 +6,8 @@ const RESUME: Record<string, (id: string) => string> = {
   "claude-code": id => `claude --resume ${id}`,
   codex: id => `codex resume ${id}`,
   grok: id => `grok --resume ${id}`,
+  // Cursor's CLI is `agent`; the chat id is the conversation id the session hook recorded.
+  "cursor-agent": id => `agent --resume ${id}`,
 };
 
 /** The command that reopens the original conversation in its own tool, quoted for the shell it will run in. */

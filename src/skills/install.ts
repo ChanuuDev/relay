@@ -34,10 +34,13 @@ export interface SkillInstallOptions {
 const SKILL_TEXT = skillSource as unknown as string;
 const OPENAI_TEXT = openaiSource as unknown as string;
 
+/** The aliases a reader may pass to the skill. Cursor reads the Claude and Codex copies, so it gets no copy of its own. */
+export const ARGUMENT_HINT = "argument-hint: codex|claude|grok|cursor";
+
 /** Claude Code and Grok read argument-hint from the frontmatter; Codex reads agents/openai.yaml instead. */
 export function skillFiles(host: SkillHost): Record<string, string> {
   if (host === "codex") return { "SKILL.md": SKILL_TEXT, "agents/openai.yaml": OPENAI_TEXT };
-  return { "SKILL.md": SKILL_TEXT.replace(/^---(\r?\n)/, (_match, eol: string) => `---${eol}argument-hint: codex|claude|grok${eol}`) };
+  return { "SKILL.md": SKILL_TEXT.replace(/^---(\r?\n)/, (_match, eol: string) => `---${eol}${ARGUMENT_HINT}${eol}`) };
 }
 
 /** Where each host reads user-level skills from. */

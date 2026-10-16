@@ -1,5 +1,5 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import type { GitClue, Session, SessionUpdate } from "./session.types";
+import type { Compaction, GitClue, Session, SessionUpdate } from "./session.types";
 
 const columns = `id, provider, agent, provider_session_id AS providerSessionId,
   session_name AS sessionName, model, working_directory AS workingDirectory,
@@ -23,9 +23,15 @@ function clue(raw: string): GitClue | null {
     dirty: typeof git.dirty === "number" ? git.dirty : 0, at: git.at };
 }
 
+function compaction(raw: string): Compaction | null {
+  const value = metadata(raw).compaction as Partial<Compaction> | undefined;
+  if (!value || typeof value !== "object" || typeof value.count !== "number" || typeof value.lastAt !== "string") return null;
+  return { count: value.count, lastAt: value.lastAt, trigger: typeof value.trigger === "string" ? value.trigger : null };
+}
+
 function hydrate(row: Row): Session {
   const { pinned, metadataJson, ...rest } = row;
-  return { ...rest, pinned: pinned === 1, git: clue(metadataJson) };
+  return { ...rest, pinned: pinned === 1, git: clue(metadataJson), compaction: compaction(metadataJson) };
 }
 
 export class SessionRepository {
@@ -75,6 +81,11 @@ export class SessionRepository {
 
   pin(id: string, pinned: boolean) {
     this.db.query("UPDATE sessions SET pinned = ? WHERE id = ?").run(pinned ? 1 : 0, id);
+  }
+
+  /** A compaction is not context: the record's time of last update and its history stay as they were. */
+  compact(id: string, value: Compaction) {
+    this.db.query("UPDATE sessions SET metadata_json = json_set(metadata_json, '$.compaction', json(?)) WHERE id = ?").run(JSON.stringify(value), id);
   }
 
   reopen(id: string) {

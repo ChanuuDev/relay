@@ -15,7 +15,10 @@ export const PROVIDERS = {
   codex: { provider: "openai", agent: "codex" },
   claude: { provider: "anthropic", agent: "claude-code" },
   grok: { provider: "xai", agent: "grok" },
+  cursor: { provider: "cursor", agent: "cursor-agent" },
 } as const;
+export type ProviderAlias = keyof typeof PROVIDERS;
+export const ALIASES = Object.keys(PROVIDERS) as ProviderAlias[];
 
 export type ClueReader = (cwd: string) => GitClue | null;
 
@@ -111,7 +114,7 @@ export class SessionService {
       const session: Session = { id: `ses_${crypto.randomUUID()}`, provider, agent, providerSessionId,
         sessionName, model, workingDirectory: cwd, summary,
         parentSessionId: parent?.id ?? null, createdAt: now, updatedAt: now, endedAt: null, endReason: null,
-        status, pinned: false, git: this.readClue(cwd) };
+        status, pinned: false, git: this.readClue(cwd), compaction: null };
       this.repo.insert(session);
       this.repo.append(session);
       return { schemaVersion: 1, session, ...(parent ? { parentSession: brief(parent) } : {}) };
@@ -171,6 +174,20 @@ export class SessionService {
       this.repo.change(session);
       this.repo.append(session);
       return { schemaVersion: 1, session };
+    });
+  }
+
+  /**
+   * The host compacted the session's context. The record notes how often and when, so the next reader
+   * knows detail may have been lost before it was written down; nothing else about the record moves.
+   */
+  compact(id: string, provider?: string, triggerInput?: unknown) {
+    const trigger = optionalText(triggerInput, "trigger", 40);
+    return this.write(() => {
+      const session = this.resolve(id, provider);
+      const compaction = { count: (session.compaction?.count ?? 0) + 1, lastAt: new Date().toISOString(), trigger };
+      this.repo.compact(session.id, compaction);
+      return { schemaVersion: 1, session: { ...session, compaction } };
     });
   }
 
@@ -322,7 +339,7 @@ export class SessionService {
   }
 
   latest(alias: string, cwd?: string) {
-    if (!Object.hasOwn(PROVIDERS, alias)) invalid("사용법: relay latest codex|claude|grok [--cwd <절대경로>] --json");
+    if (!Object.hasOwn(PROVIDERS, alias)) invalid(`사용법: relay latest ${ALIASES.join("|")} [--cwd <절대경로>] --json`);
     const mapping = PROVIDERS[alias as keyof typeof PROVIDERS];
     const scope = { cwd: cwd === undefined ? null : directory(cwd, false) };
     return this.transaction(false, () => {

@@ -1,10 +1,10 @@
 import type { ChainNode, Session, SessionUpdate } from "../session/session.types";
-import { gitLabel, projectName, statusLabel } from "../web/lib/format";
+import { compactionLabel, gitLabel, projectName, statusLabel } from "../web/lib/format";
 import { resumeCommand } from "../web/lib/resume-command";
 import { clip, dim, localTime, pad, paint, shortTime, terminalWidth, width, wrap } from "./terminal";
 
 const GAP = 2;
-const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35" };
+const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35", cursor: "97" };
 const providerColor = (s: { provider: string }) => Object.hasOwn(PROVIDER_COLORS, s.provider) ? PROVIDER_COLORS[s.provider]! : "36";
 const STATUS_COLORS: Record<string, string> = { working: "36", blocked: "31", handoff: "33", done: "32" };
 const statusColor = (s: { status: Session["status"] }) => s.status ? STATUS_COLORS[s.status] ?? "" : "2";
@@ -127,6 +127,7 @@ function detail(data: Detail, space: number): Line[] {
     ["모델", s.model ?? "미기록"],
     ["작업 상태", stateCell(s) || "미기록", s.status || s.pinned ? statusColor(s) : "2"],
     ["Git", gitLabel(s.git), s.git ? "" : "2"],
+    ["컨텍스트 압축", compactionLabel(s.compaction), s.compaction ? "33" : "2"],
     ["작업 경로", s.workingDirectory, "94"],
     ["최초 기록", localTime(s.createdAt, true), "90"],
     ["마지막 갱신", localTime(s.updatedAt, true), "90"],

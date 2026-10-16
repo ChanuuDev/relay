@@ -5,7 +5,7 @@ import type { ChainNode, Session } from "../../session/session.types";
 import type { BriefSession, ChainData, DetailData, HistoryData, ListData, QueryResult } from "../lib/queries";
 import { listLocation } from "../lib/store";
 import { useUI, type DetailTab } from "../lib/store";
-import { endLabel, gitLabel, isStale, projectName, STALE_HOURS, statusLabel, timestamp } from "../lib/format";
+import { compactionLabel, endLabel, gitLabel, isStale, projectName, STALE_HOURS, statusLabel, timestamp } from "../lib/format";
 import { captureMove, enter, playMove, pulse, staggerIn } from "../lib/motion";
 import { handoffMarkdown } from "../lib/handoff";
 import { resumeCommand } from "../lib/resume-command";
@@ -166,7 +166,8 @@ function SessionMetadata({ session: s, copy, resume }: { session: Session; copy:
   };
   return <div className="detail-section"><h3>세션 정보</h3><div className="identity-grid"><div><span>Provider / Agent</span><strong>{s.provider} / {s.agent}</strong></div><div><span>모델</span><strong>{s.model ?? "미기록"}</strong></div>
     <div><span>작업 상태</span><strong data-testid="session-status">{statusLabel(s.status)}{s.pinned ? " · 고정" : ""}</strong></div>
-    <div><span><GitCommitHorizontal />Git</span><strong data-testid="session-git" title={s.git ? `읽은 시각 ${timestamp(s.git.at)}` : undefined}>{gitLabel(s.git)}</strong></div></div>
+    <div><span><GitCommitHorizontal />Git</span><strong data-testid="session-git" title={s.git ? `읽은 시각 ${timestamp(s.git.at)}` : undefined}>{gitLabel(s.git)}</strong></div>
+    <div><span>컨텍스트 압축</span><strong data-testid="session-compaction" title={s.compaction ? "압축 전 대화의 세부는 기록에 없을 수 있습니다." : undefined}>{compactionLabel(s.compaction)}</strong></div></div>
     <div className="path-block"><span><Folder />작업 경로</span><code>{s.workingDirectory}</code></div>
     <div className="time-grid"><div><CalendarDays /><span>최초 기록</span><time title={s.createdAt}>{timestamp(s.createdAt)}</time></div><div><Clock3 /><span>마지막 갱신</span><time title={s.updatedAt}>{timestamp(s.updatedAt)}</time></div><div><LogOut /><span>세션 종료</span><time title={s.endedAt ?? "종료 기록 없음"} data-testid="session-end">{endLabel(s)}</time></div></div>
     {resume && <div className="path-block resume-block"><span><RotateCcw />원본 세션 재개</span><code data-testid="resume-command">{resume}</code></div>}

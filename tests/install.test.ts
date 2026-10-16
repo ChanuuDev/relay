@@ -31,7 +31,7 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   const claudeSkill = path.join(dir, ".claude/skills/relay-session/SKILL.md");
   expect(existsSync(claudeSkill)).toBe(true);
   const installed = readFileSync(claudeSkill, "utf8");
-  expect(installed).toContain("argument-hint: codex|claude|grok");
+  expect(installed).toContain("argument-hint: codex|claude|grok|cursor");
   // The agent must be able to invoke the skill itself; /relay-session stays available either way.
   expect(installed).not.toContain("disable-model-invocation");
   expect(install("grok").exitCode).toBe(0);
@@ -63,7 +63,7 @@ test.skipIf(process.platform !== "win32")("installer replaces a linked skill fol
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("Replaced link with a real copy");
     expect(lstatSync(target).isSymbolicLink()).toBe(false);
-    expect(readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("argument-hint: codex|claude|grok");
+    expect(readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("argument-hint: codex|claude|grok|cursor");
     expect(readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("keep");
     expect(existsSync(path.join(outside, "SKILL.md"))).toBe(false);
     // A link whose target has already disappeared is what agents report as a symlink problem; it is replaced the same way.

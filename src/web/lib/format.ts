@@ -34,6 +34,12 @@ export function isStale(session: Pick<Session, "endedAt" | "status" | "updatedAt
   return now - new Date(session.updatedAt).getTime() > STALE_HOURS * 3_600_000;
 }
 
+/** How often the host compacted the context and when it last did; a session never compacted says so. */
+export function compactionLabel(compaction: Session["compaction"]) {
+  if (!compaction) return "없음";
+  return `${compaction.count}회 · 마지막 ${timestamp(compaction.lastAt)}${compaction.trigger ? ` (${compaction.trigger})` : ""}`;
+}
+
 /** The working tree clue in one phrase: branch, commit and how many paths differed when it was read. */
 export function gitLabel(git: GitClue | null) {
   if (!git) return "기록 없음";

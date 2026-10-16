@@ -1,6 +1,6 @@
 # 프로바이더 아이콘
 
-OpenAI(Codex), Anthropic(Claude Code), xAI(Grok)의 목록 아이콘을 내장 ImageGen 도구로 각각 생성했습니다. 기존 28px 아바타 영역에서 보이는 매듭·별·궤도 문양이며, 공식 배포 로고 파일을 복사한 자산은 아닙니다.
+OpenAI(Codex), Anthropic(Claude Code), xAI(Grok)의 목록 아이콘을 내장 ImageGen 도구로 각각 생성했습니다. Cursor 아이콘은 Codex CLI의 내장 이미지 생성 도구(`image_gen`, gpt-image-2)로 만든 뒤 다른 아이콘과 같은 128px로 줄였습니다. 기존 28px 아바타 영역에서 보이는 매듭·별·궤도·정육면체 문양이며, 공식 배포 로고 파일을 복사한 자산은 아닙니다.
 
 둥근 타일 바깥의 투명도를 보존한 PNG를 `assets.ts`에서 실행 파일에 포함합니다.
 
@@ -22,4 +22,12 @@ Use case: logo-brand. Asset type: a production raster provider icon for Relay, a
 
 ```text
 Use case: logo-brand. Asset type: a production raster provider icon for Relay, a macOS-inspired local developer session viewer. Create exactly ONE square app icon, viewed straight on, flat and crisp, with no perspective, no surrounding scene, no lettering, no watermark, no cast shadow outside the tile. It will be displayed at 28 by 28 CSS pixels, so use a single bold, instantly legible symbol with generous negative space and no fine texture or tiny detail. A centered rounded-square tile occupies 92 percent of the square canvas, corner radius about 24 percent, completely transparent outside the rounded tile. Subtle smooth surface shading is fine, but do not add bevels or decorative objects. The symbol occupies about 62 percent of the tile. All visible edges sharp with careful antialiasing. It must work in both light and dark glass UI. Subject: a recognizable Grok/xAI-inspired minimal white orbital glyph, an open circular ring crossed by one strong diagonal rising slash from lower left to upper right, centered on a charcoal-black tile (#17191d to #2a2e34). The diagonal extends just beyond the open ring to create a bold dynamic mark; use a clean generous ring stroke. Monochrome, simple, precise. No planet shading or stars. No text.
+```
+
+### cursor
+
+Codex CLI에서 `codex exec`로 생성했습니다. 결과(1254px RGBA)를 Lanczos로 128px로 줄여 두었습니다.
+
+```text
+Use case: logo-brand. Asset type: a production raster provider icon for Relay, a macOS-inspired local developer session viewer. Create exactly ONE square app icon, viewed straight on, flat and crisp, with no perspective, no surrounding scene, no lettering, no watermark, no cast shadow outside the tile. It will be displayed at 28 by 28 CSS pixels, so use a single bold, instantly legible symbol with generous negative space and no fine texture or tiny detail. A centered rounded-square tile occupies 92 percent of the square canvas, corner radius about 24 percent, completely transparent outside the rounded tile (PNG with alpha). Subtle smooth surface shading is fine, but do not add bevels or decorative objects. The symbol occupies about 62 percent of the tile. All visible edges sharp with careful antialiasing. It must work in both light and dark glass UI. Subject: a recognizable Cursor-inspired minimal isometric cube glyph: a regular hexagonal outline with three inner edges meeting at the center so it reads as a wireframe 3D cube, in clean white strokes of generous even width, the top face filled a touch lighter than the two side faces for depth, centered on a near-black graphite tile (#141416 to #2a2a2f). Monochrome, geometric, precise. No text.
 ```

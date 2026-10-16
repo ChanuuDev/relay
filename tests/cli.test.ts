@@ -301,6 +301,73 @@ describe("CLI processes", () => {
     expect(failedEnd.code).toBe(0); expect(failedEnd.stdout).toBe("{}"); expect(failedEnd.stderr).toBe("");
   }, 15000);
 
+  test("a session started again after compaction gets the read-back guidance; the compaction note counts each compaction", () => {
+    const hook = (payload: Record<string, unknown>, alias = "claude", ...flags: string[]) => {
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, ...flags, "--data-dir", dir],
+        { cwd: root, env: { ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, GROK_SESSION_ID: undefined },
+          stdin: Buffer.from(JSON.stringify(payload)), stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+      return JSON.parse(result.stdout.toString());
+    };
+    const started = hook({ session_id: "compacted", cwd: root, source: "startup" });
+    expect(started.hookSpecificOutput.additionalContext).toContain("첫 작업 전에 relay-session 스킬을 읽고");
+    expect(started.hookSpecificOutput.additionalContext).not.toContain("압축되어");
+    cli(dir, ["update", "--session-id", "compacted", "--summary", "작업 중"]);
+    // The compaction hook answers with nothing and never touches the context or its time.
+    const before = cli(dir, ["show", "compacted", "--history"]).data;
+    expect(before.session.compaction).toBeNull();
+    expect(hook({ session_id: "compacted", cwd: root, trigger: "auto" }, "claude", "--compact")).toEqual({});
+    expect(hook({ session_id: "compacted", cwd: root, trigger: "manual" }, "claude", "--compact")).toEqual({});
+    const after = cli(dir, ["show", "compacted", "--history"]).data;
+    expect(after.session.compaction.count).toBe(2); expect(after.session.compaction.trigger).toBe("manual");
+    expect(after.session.updatedAt).toBe(before.session.updatedAt); expect(after.updates).toEqual(before.updates);
+    // Claude and Codex start the session again after compacting: the guidance now says to read the record back.
+    for (const [alias, payload] of [["claude", { session_id: "compacted", cwd: root, source: "compact" }],
+      ["codex", { session_id: "compacted", cwd: root, source: "compact" }]] as const) {
+      const again = hook(payload, alias);
+      const context: string = again.hookSpecificOutput.additionalContext;
+      expect(context).toContain("컨텍스트가 압축되어"); expect(context).toContain("relay show"); expect(context).toContain("update");
+      expect(context).not.toContain("첫 작업 전에");
+      expect(context).toContain(JSON.stringify({ ...(alias === "claude" ? { provider: "anthropic", agent: "claude-code" } : { provider: "openai", agent: "codex" }), sessionId: "compacted" }));
+    }
+    expect(cli(dir, ["show", "compacted", "--provider", "anthropic", "--history"]).data.updates.length).toBe(2);
+    // A compaction note for a session the store does not know is silently dropped.
+    expect(hook({ session_id: "unknown", trigger: "auto" }, "claude", "--compact")).toEqual({});
+    expect(cli(dir, ["show", "unknown"]).code).toBe(3);
+  });
+
+  test("Cursor sessions are recorded from the conversation id and workspace root, and answered in Cursor's shape", () => {
+    const hook = (payload: Record<string, unknown>, ...flags: string[]) => {
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", "cursor", ...flags, "--data-dir", dir],
+        { cwd: dir, env: { ...process.env, CLAUDE_CODE_SESSION_ID: "other-host" }, stdin: Buffer.from(JSON.stringify(payload)), stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+      return JSON.parse(result.stdout.toString());
+    };
+    const started = hook({ conversation_id: "chat-1", session_id: "chat-1", generation_id: "gen-1", hook_event_name: "sessionStart", workspace_roots: [root], cursor_version: "2.0" });
+    expect(Object.keys(started)).toEqual(["additional_context"]);
+    expect(started.additional_context).toContain("relay-session 스킬");
+    expect(started.additional_context).toContain(JSON.stringify({ provider: "cursor", agent: "cursor-agent", sessionId: "chat-1" }));
+    const stored = cli(dir, ["show", "chat-1", "--provider", "cursor"]).data.session;
+    expect(stored.agent).toBe("cursor-agent"); expect(stored.workingDirectory).toBe(root.replaceAll("\\", "/"));
+    expect(stored.sessionName).toBe(path.basename(root));
+    // The conversation id wins over a session id that differs, and the host environment of another tool is never used.
+    expect(hook({ conversation_id: "chat-2", session_id: "other", workspace_roots: [root] }).additional_context).toContain('"sessionId":"chat-2"');
+    expect(hook({ workspace_roots: [root] })).toEqual({});
+    expect(cli(dir, ["list", "--provider", "cursor"]).data.page.total).toBe(2);
+    cli(dir, ["update", "--session-id", "chat-1", "--provider", "cursor", "--summary", "Cursor 작업"]);
+    expect(hook({ conversation_id: "chat-1", trigger: "auto" }, "--compact")).toEqual({});
+    expect(cli(dir, ["show", "chat-1", "--provider", "cursor"]).data.session.compaction.count).toBe(1);
+    expect(hook({ conversation_id: "chat-1", reason: "user_close" }, "--end")).toEqual({});
+    expect(cli(dir, ["show", "chat-1", "--provider", "cursor"]).data.session.endReason).toBe("user_close");
+    // An untouched Cursor record is dropped on close like any other host's.
+    expect(hook({ conversation_id: "chat-2", reason: "completed" }, "--end")).toEqual({});
+    expect(cli(dir, ["show", "chat-2", "--provider", "cursor"]).code).toBe(3);
+    expect(cli(dir, ["latest", "cursor"]).data.session.providerSessionId).toBe("chat-1");
+    expect(cli(dir, ["--cursor"]).data.session.agent).toBe("cursor-agent");
+    const handoff = cli(dir, ["handoff", "chat-1", "--provider", "cursor", "--shell", "bash"]).data.markdown;
+    expect(handoff).toContain("agent --resume 'chat-1'");
+  });
+
   test("session end hook closes a session with context, removes an untouched automatic record, and stays silent otherwise", () => {
     const hook = (payload: string, alias = "claude", ...flags: string[]) => {
       const env: Record<string, string | undefined> = {
