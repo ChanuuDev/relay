@@ -1,12 +1,15 @@
 import type { SQLQueryBindings } from "bun:sqlite";
 import { checkVersion } from "../db/database";
 import { invalid, RelayError, storageError } from "../errors";
-import { directory, identifier, optionalText, pagination, text } from "../validation";
+import { directory, flag, identifier, optionalText, pagination, sessionStatus, text } from "../validation";
 import { SessionRepository } from "./session.repository";
-import { brief, type Filters, type NewSession, type Session } from "./session.types";
+import { brief, type ChainNode, type Filters, type GitClue, type NewSession, type Session, type SessionStatus } from "./session.types";
 
 /** The note a session hook stores before the agent has said anything about the work. */
 export const HOOK_SUMMARY = "세션 첫 기록 (훅 자동 기록)";
+
+/** How many sessions a chain lists before it stops; a store this deep is beyond what anyone reads. */
+export const CHAIN_LIMIT = 200;
 
 export const PROVIDERS = {
   codex: { provider: "openai", agent: "codex" },
@@ -14,8 +17,13 @@ export const PROVIDERS = {
   grok: { provider: "xai", agent: "grok" },
 } as const;
 
+export type ClueReader = (cwd: string) => GitClue | null;
+
+export interface Change { sessionName?: string; status?: string }
+
 export class SessionService {
-  constructor(public repo: SessionRepository, private retentionDays = 0) {}
+  /** `clue` reads the working tree when a record is written; without it records carry no git clue. */
+  constructor(public repo: SessionRepository, private retentionDays = 0, private clue: ClueReader = () => null) {}
 
   private transaction<T>(write: boolean, action: () => T): T {
     try {
@@ -58,6 +66,11 @@ export class SessionService {
     return session;
   }
 
+  /** The working tree as it stands now; a reader that throws is treated as a tree that could not be read. */
+  private readClue(cwd: string): GitClue | null {
+    try { return this.clue(cwd); } catch { return null; }
+  }
+
   record(input: NewSession, parentId?: string, parentProvider?: string) {
     const provider = identifier(input.provider, "provider");
     const agent = identifier(input.agent, "agent");
@@ -65,6 +78,7 @@ export class SessionService {
     const summary = text(input.summary, "summary", 4000, true);
     const model = optionalText(input.model, "model", 200);
     const givenName = optionalText(input.sessionName, "session-name", 200);
+    const status = sessionStatus(input.status);
     const givenCwd = input.cwd === undefined ? undefined : directory(input.cwd, true);
     return this.write(() => {
       const parent = parentId === undefined ? null : this.resolve(parentId, parentProvider);
@@ -72,7 +86,7 @@ export class SessionService {
       // A session hook may have recorded this session before the agent ran; `continue` links that
       // record instead of failing, so taking work over does not depend on the hook being off.
       if (existing && parent) {
-        if (existing.parentSessionId === null) return this.adopt(existing, parent, { agent, summary, name: givenName, model, input });
+        if (existing.parentSessionId === null) return this.adopt(existing, parent, { agent, summary, name: givenName, model, status, input });
         if (existing.parentSessionId !== parent.id) {
           throw new RelayError("PARENT_CONFLICT", "이 세션은 이미 다른 세션에 연결되어 있습니다.", 4, 409, { parentSessionId: existing.parentSessionId });
         }
@@ -96,7 +110,8 @@ export class SessionService {
       const now = new Date().toISOString();
       const session: Session = { id: `ses_${crypto.randomUUID()}`, provider, agent, providerSessionId,
         sessionName, model, workingDirectory: cwd, summary,
-        parentSessionId: parent?.id ?? null, createdAt: now, updatedAt: now, endedAt: null, endReason: null };
+        parentSessionId: parent?.id ?? null, createdAt: now, updatedAt: now, endedAt: null, endReason: null,
+        status, pinned: false, git: this.readClue(cwd) };
       this.repo.insert(session);
       this.repo.append(session);
       return { schemaVersion: 1, session, ...(parent ? { parentSession: brief(parent) } : {}) };
@@ -120,7 +135,8 @@ export class SessionService {
   // Identity and origin stay fixed: the tool, the project and the creation time never move. Only the
   // parent and the labels an automatic first record could not know are written, and the takeover note
   // lands in the history like any other update.
-  private adopt(existing: Session, parent: Session, incoming: { agent: string; summary: string; name: string | null; model: string | null; input: NewSession }) {
+  private adopt(existing: Session, parent: Session,
+    incoming: { agent: string; summary: string; name: string | null; model: string | null; status: SessionStatus | null; input: NewSession }) {
     if (existing.agent !== incoming.agent) {
       throw new RelayError("SESSION_EXISTS", "같은 제공자·ID가 다른 도구로 저장되어 있습니다.", 4, 409, { agent: existing.agent });
     }
@@ -130,27 +146,58 @@ export class SessionService {
     const session: Session = { ...existing, parentSessionId: parent.id,
       sessionName: incoming.input.sessionName === undefined ? existing.sessionName : incoming.name,
       model: incoming.input.model === undefined ? existing.model : incoming.model,
-      summary: incoming.summary, updatedAt: new Date().toISOString(), endedAt: null, endReason: null };
+      status: incoming.input.status === undefined ? existing.status : incoming.status,
+      summary: incoming.summary, updatedAt: new Date().toISOString(), endedAt: null, endReason: null,
+      git: this.readClue(existing.workingDirectory) ?? existing.git };
     this.repo.link(session);
     this.repo.change(session);
     this.repo.append(session);
     return { schemaVersion: 1, session, parentSession: brief(parent) };
   }
 
-  update(id: string, summaryInput: string, provider?: string) {
-    return this.change(id, summaryInput, provider);
-  }
-
-  private change(id: string, summaryInput: string, provider?: string) {
+  /** New context, and with it any new name or state the agent declares. What is not given stays as it was. */
+  update(id: string, summaryInput: string, provider?: string, change: Change = {}) {
     const summary = text(summaryInput, "summary", 4000, true);
+    const sessionName = change.sessionName === undefined ? undefined : text(change.sessionName, "session-name", 200);
+    const status = change.status === undefined ? undefined : sessionStatus(change.status);
     return this.write(() => {
       const session = this.resolve(id, provider);
       session.summary = summary;
+      if (sessionName !== undefined) session.sessionName = sessionName;
+      if (status !== undefined) session.status = status;
       session.updatedAt = new Date().toISOString();
       session.endedAt = null; session.endReason = null;
+      session.git = this.readClue(session.workingDirectory) ?? session.git;
       this.repo.change(session);
       this.repo.append(session);
       return { schemaVersion: 1, session };
+    });
+  }
+
+  /** A pin is not context: the record keeps its time of last update and its history. */
+  pin(id: string, pinned: boolean, provider?: string) {
+    return this.write(() => {
+      const session = this.resolve(id, provider);
+      if (session.pinned !== pinned) this.repo.pin(session.id, pinned);
+      return { schemaVersion: 1, session: { ...session, pinned } };
+    });
+  }
+
+  /**
+   * Removes the record and its history. Sessions that took over from it keep their records; without
+   * `force` they hold the record in place, with it they lose only the link.
+   */
+  delete(id: string, provider?: string, force = false) {
+    return this.write(() => {
+      const session = this.resolve(id, provider);
+      const children = this.repo.count("WHERE parent_session_id = ?", [session.id]);
+      if (children && !force) {
+        throw new RelayError("SESSION_LINKED", `이어받은 세션 ${children}건이 이 세션에 연결되어 있습니다. --force를 주면 연결을 끊고 삭제합니다.`, 4, 409,
+          { children });
+      }
+      const detached = children ? this.repo.detachChildren(session.id) : 0;
+      this.repo.remove(session.id);
+      return { schemaVersion: 1, session, deleted: true, detached };
     });
   }
 
@@ -163,7 +210,7 @@ export class SessionService {
     const reason = optionalText(reasonInput, "reason", 200);
     return this.write(() => {
       const session = this.resolve(id, provider);
-      const untouched = this.repo.updateCount(session.id) === 1 && this.repo.firstSummary(session.id) === HOOK_SUMMARY &&
+      const untouched = !session.pinned && this.repo.updateCount(session.id) === 1 && this.repo.firstSummary(session.id) === HOOK_SUMMARY &&
         this.repo.count("WHERE parent_session_id = ?", [session.id]) === 0;
       if (untouched) {
         this.repo.remove(session.id);
@@ -189,11 +236,56 @@ export class SessionService {
       updatesPage: { ...page, total: this.repo.updateCount(session.id) } };
   }
 
+  /**
+   * The whole line of work this session belongs to: from the first session down to this one, then
+   * everything that took over from it, each child under its parent in the order they were created.
+   */
+  private lineage(session: Session): { items: ChainNode[]; truncated: boolean } {
+    const node = (s: Session, depth: number): ChainNode => ({ id: s.id, provider: s.provider, agent: s.agent,
+      providerSessionId: s.providerSessionId, sessionName: s.sessionName, summary: s.summary, status: s.status, pinned: s.pinned,
+      createdAt: s.createdAt, updatedAt: s.updatedAt, endedAt: s.endedAt, parentSessionId: s.parentSessionId, depth, current: s.id === session.id });
+    const above = this.ancestors(session).map(id => this.repo.byId(id)).filter((s): s is Session => s !== null).reverse();
+    const items = above.map((s, depth) => node(s, depth));
+    let truncated = false;
+    const descend = (parent: Session, depth: number) => {
+      if (items.length >= CHAIN_LIMIT) { truncated = true; return; }
+      items.push(node(parent, depth));
+      // Oldest first, so the list reads in the order the work was taken over.
+      const children = this.repo.rows("WHERE parent_session_id = ?", [parent.id], CHAIN_LIMIT, 0, true).reverse();
+      for (const child of children) descend(child, depth + 1);
+    };
+    descend(session, above.length);
+    return { items, truncated };
+  }
+
   show(id: string, provider?: string, history = false, input: { limit?: unknown; offset?: unknown } = {}) {
     const page = pagination(input);
     return this.transaction(false, () => {
       const session = this.resolve(id, provider);
       return { ...this.detail(session), ...(history ? this.historyPage(session, page) : {}) };
+    });
+  }
+
+  chain(id: string, provider?: string) {
+    return this.transaction(false, () => {
+      const session = this.resolve(id, provider);
+      return { schemaVersion: 1, session, ...this.lineage(session) };
+    });
+  }
+
+  chainById(id: string) {
+    return this.transaction(false, () => {
+      const session = this.internal(id);
+      return { schemaVersion: 1, sessionId: session.id, ...this.lineage(session) };
+    });
+  }
+
+  /** Everything a hand-over note needs in one read: the detail, the newest history page and the chain. */
+  packet(id: string, provider?: string, input: { limit?: unknown; offset?: unknown } = {}) {
+    const page = pagination(input);
+    return this.transaction(false, () => {
+      const session = this.resolve(id, provider);
+      return { ...this.detail(session), ...this.historyPage(session, page), chain: this.lineage(session).items };
     });
   }
 
@@ -204,7 +296,7 @@ export class SessionService {
     const page = pagination(input);
     return this.transaction(false, () => {
       const session = this.internal(id);
-      return { ...this.detail(session), ...this.historyPage(session, page) };
+      return { ...this.detail(session), ...this.historyPage(session, page), chain: this.lineage(session).items };
     });
   }
 
@@ -215,6 +307,9 @@ export class SessionService {
     if (filters.provider !== undefined) { clauses.push("provider = ?"); args.push(identifier(filters.provider, "provider")); }
     if (filters.agent !== undefined) { clauses.push("agent = ?"); args.push(identifier(filters.agent, "agent")); }
     if (filters.cwd !== undefined) { clauses.push(`working_directory = ?${process.platform === "win32" ? " COLLATE NOCASE" : ""}`); args.push(directory(filters.cwd, false)); }
+    if (filters.status !== undefined) { clauses.push("status = ?"); args.push(sessionStatus(filters.status)); }
+    const pinned = flag(filters.pinned, "pinned");
+    if (pinned !== undefined) { clauses.push("pinned = ?"); args.push(pinned ? 1 : 0); }
     if (filters.q !== undefined) {
       const q = text(filters.q, "query", 4000).replace(/[\\%_]/g, "\\$&");
       const searchColumns = ["session_name", "id", "provider_session_id", "summary", "working_directory"];

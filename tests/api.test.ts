@@ -26,9 +26,9 @@ describe("Local read-only HTTP API", () => {
     expect(list.schemaVersion).toBe(1); expect(list.items[0].id).toBe(child.id); expect(list.page.total).toBe(1);
     const detail = await request(`/api/v1/sessions/${child.id}`).json(); expect(detail.parentSession.id).toBe(a.id);
     expect(detail.session.createdAt).toBeString(); expect(detail.session.endedAt).toBeNull();
-    for (const field of ["status", "startedAt"]) {
-      expect(detail.session).not.toHaveProperty(field);
-      expect(list.items[0]).not.toHaveProperty(field);
+    for (const row of [detail.session, list.items[0]]) {
+      expect(row).not.toHaveProperty("startedAt");
+      expect(row.status).toBeNull(); expect(row.pinned).toBe(false); expect(row.git).toBeNull();
     }
     expect((await request(`/api/v1/sessions/${a.id}/children?limit=1`).json()).items[0].id).toBe(child.id);
     const history = await request(`/api/v1/sessions/${a.id}/updates?offset=1`).json();
@@ -151,4 +151,25 @@ describe("Local read-only HTTP API", () => {
       expect((await (await fetch(`http://127.0.0.1:${port}/api/v1/sessions/${s.id}`)).json()).session.summary).toBe("실시간 갱신");
     } finally { await running.stop(); }
   });
+
+  test("chain endpoint, declared-state and pin filters", async () => {
+    const origin = f.service.record(input("root", { status: "done" })).session;
+    const child = f.service.record(input("child", { provider: "anthropic", agent: "claude-code", status: "handoff" }), "root").session;
+    f.service.pin("child", true);
+    const chain = await request(`/api/v1/sessions/${child.id}/chain`).json();
+    expect(chain.schemaVersion).toBe(1); expect(chain.sessionId).toBe(child.id); expect(chain.truncated).toBe(false);
+    expect(chain.items.map((n: { id: string; depth: number; current: boolean }) => [n.id, n.depth, n.current])).toEqual([[origin.id, 0, false], [child.id, 1, true]]);
+    expect(request(`/api/v1/sessions/${child.id}/chain?limit=1`).status).toBe(400);
+    expect(request("/api/v1/sessions/absent/chain").status).toBe(404);
+    const ids = async (query: string) => (await request(`/api/v1/sessions?${query}`).json()).items.map((s: { id: string }) => s.id);
+    expect(await ids("status=handoff")).toEqual([child.id]);
+    expect(await ids("pinned=1")).toEqual([child.id]);
+    expect(await ids("pinned=false")).toEqual([origin.id]);
+    expect(request("/api/v1/sessions?pinned=maybe").status).toBe(400);
+    const detail = await request(`/api/v1/sessions/${child.id}`).json();
+    expect(detail.session.status).toBe("handoff"); expect(detail.session.pinned).toBe(true);
+    expect(detail.parentSession.agent).toBe("codex"); expect(detail.parentSession.status).toBe("done");
+    expect((await request(`/api/v1/sessions/${child.id}/updates`).json()).items[0].status).toBe("handoff");
+  });
+
 });

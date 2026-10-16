@@ -1,11 +1,12 @@
 import { focusManager, queryOptions } from "@tanstack/react-query";
-import type { Page, Session, SessionUpdate } from "../../session/session.types";
+import type { ChainNode, Page, Session, SessionUpdate } from "../../session/session.types";
 
 export type QueryResult<T> = { data: T | undefined; error: Error | null; isPending: boolean };
 
-export type BriefSession = Pick<Session, "id" | "provider" | "providerSessionId" | "sessionName" | "summary">;
+export type BriefSession = Pick<Session, "id" | "provider" | "agent" | "providerSessionId" | "sessionName" | "summary" | "status">;
 export type ListData<T = Session> = { schemaVersion: number; items: T[]; page: Page };
 export type DetailData = { schemaVersion: number; session: Session; parentSession: BriefSession | null };
+export type ChainData = { schemaVersion: number; sessionId: string; items: ChainNode[]; truncated: boolean };
 export type HealthData = { schemaVersion: number; dataDirectory: string; databasePath: string; appVersion: string };
 export type HistoryData = ListData<SessionUpdate>;
 

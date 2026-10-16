@@ -5,6 +5,7 @@ import type { Session } from "../../session/session.types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { CopyButton, EmptyState, ErrorNotice, Loading, Pager, SessionLink } from "./session-common";
+import { PinMark, StaleBadge, StatusBadge } from "./session-detail";
 import { Crossfade, FlipList } from "./transitions";
 import type { ListData, QueryResult } from "../lib/queries";
 import { growAccent, pulse, staggerIn } from "../lib/motion";
@@ -15,7 +16,7 @@ import { sessionContext } from "../lib/session-context";
 
 const ROWS = "#list-content .session-row";
 /** 행이 실제로 바뀌었는지 판단하는 값(폴링 갱신 감지용). */
-const signature = (session: Session) => `${session.summary}\u0000${session.updatedAt}\u0000${session.endedAt ?? ""}`;
+const signature = (session: Session) => `${session.summary}\u0000${session.updatedAt}\u0000${session.endedAt ?? ""}\u0000${session.status ?? ""}\u0000${session.pinned ? 1 : 0}`;
 
 const PROVIDER_ICONS = new Map([
   ["openai", "/icons/providers/openai.png"],
@@ -80,7 +81,7 @@ export function SessionList({ list, selectedId, activeFilters, storeDirectory, c
             <span className="row-accent" aria-hidden="true" />
             <ProviderAvatar provider={session.provider} agent={session.agent} />
             <div className="row-main">
-              <div className="session-title-line"><SessionLink session={session} />{session.endedAt && <Badge variant="outline" className="ended-badge" title={`세션 종료 ${endLabel(session)}`}>종료</Badge>}</div>
+              <div className="session-title-line"><SessionLink session={session} /><PinMark pinned={session.pinned} /><StatusBadge status={session.status} /><StaleBadge session={session} />{session.endedAt && <Badge variant="outline" className="ended-badge" title={`세션 종료 ${endLabel(session)}`}>종료</Badge>}</div>
               <p className="row-summary">{session.summary}</p>
               <div className="compact-meta"><span>{session.agent}</span><span>·</span><span>{projectName(session.workingDirectory)}</span><span>·</span><span>{relativeTime(session.updatedAt)}</span></div>
             </div>

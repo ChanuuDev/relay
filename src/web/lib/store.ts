@@ -5,7 +5,9 @@ import { readWallpaper, writeWallpaper, type WallpaperChoice } from "./wallpaper
 
 export type DetailTab = "overview" | "history" | "connections";
 export type CustomImage = { id: string; url: string; name: string };
-export type FilterDraft = { q: string; provider: string; agent: string; cwd: string; limit: string };
+export type FilterDraft = { q: string; provider: string; agent: string; cwd: string; status: string; pinned: string; limit: string };
+/** The filters the advanced row holds; any of them set means the row opens with the page. */
+export const ADVANCED_KEYS = ["agent", "cwd", "status", "pinned"] as const;
 
 export function listLocation() {
   if (location.pathname === "/") return location.pathname + location.search;
@@ -16,8 +18,10 @@ export function listLocation() {
 export function readDraft(): FilterDraft {
   const query = new URL(listLocation(), location.origin).searchParams;
   return { q: query.get("q") ?? "", provider: query.get("provider") ?? "",
-    agent: query.get("agent") ?? "", cwd: query.get("cwd") ?? "", limit: query.get("limit") ?? "50" };
+    agent: query.get("agent") ?? "", cwd: query.get("cwd") ?? "", status: query.get("status") ?? "", pinned: query.get("pinned") ?? "",
+    limit: query.get("limit") ?? "50" };
 }
+export const advancedOpen = (draft: FilterDraft) => ADVANCED_KEYS.some((key) => Boolean(draft[key]));
 
 interface UIState {
   location: string;
@@ -45,7 +49,7 @@ interface UIState {
 
 export const useUI = create<UIState>((set) => ({
   location: location.pathname + location.search,
-  draft: readDraft(), advanced: Boolean(readDraft().agent || readDraft().cwd), tab: "overview",
+  draft: readDraft(), advanced: advancedOpen(readDraft()), tab: "overview",
   shell: navigator.platform.startsWith("Win") ? "powershell" : "bash",
   theme: readTheme(), fontSize: readFontSize(),
   wallpaper: readWallpaper(), customImages: [],

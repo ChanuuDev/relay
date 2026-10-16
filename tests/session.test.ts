@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmdirSync } from "node:fs";
 import path from "node:path";
-import { HOOK_SUMMARY } from "../src/session/session.service";
-import { age, fixture, input } from "./helpers";
+import { HOOK_SUMMARY, SessionService } from "../src/session/session.service";
+import type { GitClue } from "../src/session/session.types";
+import { age, fixture, input, root } from "./helpers";
 
 describe("Session Service", () => {
   let f: ReturnType<typeof fixture>;
@@ -12,7 +13,8 @@ describe("Session Service", () => {
   test("atomic records and descending history without lifecycle fields", () => {
     const recorded = f.service.record(input("a")).session;
     expect(recorded.createdAt).toBe(recorded.updatedAt); expect(recorded.model).toBeNull();
-    for (const field of ["status", "startedAt"]) expect(recorded).not.toHaveProperty(field);
+    expect(recorded).not.toHaveProperty("startedAt");
+    expect(recorded.status).toBeNull(); expect(recorded.pinned).toBe(false); expect(recorded.git).toBeNull();
     expect(recorded.endedAt).toBeNull(); expect(recorded.endReason).toBeNull();
     f.service.update("a", "중간\n요약");
     const updated = f.service.update("a", "완료").session;
@@ -262,4 +264,106 @@ describe("Session Service", () => {
     expect(() => f.service.record({ ...input("b"), cwd: undefined }, "a")).toThrow();
     expect(f.service.record(input("b"), "a").session.parentSessionId).toBe(f.service.show("a").session.id);
   });
+
+  test("a declared work state and a new name travel with the update and into the history", () => {
+    f.service.record(input("a", { status: "working" }));
+    expect(f.service.show("a").session.status).toBe("working");
+    const named = f.service.update("a", "막힘", undefined, { status: "blocked", sessionName: "로그인 수정" }).session;
+    expect(named.status).toBe("blocked"); expect(named.sessionName).toBe("로그인 수정");
+    // Nothing given, nothing changed: the state and the name stay as they were.
+    const kept = f.service.update("a", "계속").session;
+    expect(kept.status).toBe("blocked"); expect(kept.sessionName).toBe("로그인 수정");
+    f.service.update("a", "넘김", undefined, { status: "HANDOFF" });
+    const history = f.service.show("a", undefined, true).updates!;
+    expect(history.map(u => u.status)).toEqual(["handoff", "blocked", "blocked", "working"]);
+    expect(() => f.service.update("a", "x", undefined, { status: "active" })).toThrow("status");
+    expect(() => f.service.record(input("b", { status: "bogus" }))).toThrow("status");
+    expect(f.service.list({ status: "handoff" }).items.map(s => s.providerSessionId)).toEqual(["a"]);
+    expect(f.service.list({ status: "done" }).page.total).toBe(0);
+    expect(() => f.service.list({ pinned: "maybe" })).toThrow("pinned");
+    // Taking over a hook record carries the declared state like the name and the model.
+    f.service.record(input("hooked", { sessionName: "agent-session-chain", summary: HOOK_SUMMARY }));
+    expect(f.service.record({ ...input("hooked"), summary: "이어받음", status: "working" }, "a").session.status).toBe("working");
+    expect(f.service.show("hooked").parentSession?.status).toBe("handoff");
+  });
+
+  test("a pin survives retention and the end hook; delete refuses a parent unless forced", () => {
+    const retained = fixture(30);
+    try {
+      retained.service.record(input("old")); retained.service.record(input("pinned-old"));
+      const pinned = retained.service.pin("pinned-old", true).session;
+      expect(pinned.pinned).toBe(true);
+      age(retained.db, "old", 40); age(retained.db, "pinned-old", 40);
+      retained.service.record(input("fresh"));
+      expect(retained.service.list().items.map(s => s.providerSessionId).sort()).toEqual(["fresh", "pinned-old"]);
+      // Pinning is not context: the time of the last update and the history stay as they were.
+      const shown = retained.service.show("pinned-old", undefined, true);
+      expect(new Date(shown.session.updatedAt).getTime()).toBeLessThan(Date.now() - 39 * 86_400_000);
+      expect(shown.updatesPage?.total).toBe(1);
+      expect(retained.service.list({ pinned: true }).items.map(s => s.providerSessionId)).toEqual(["pinned-old"]);
+      retained.service.pin("pinned-old", false);
+      retained.service.record(input("another"));
+      expect(retained.service.list().items.map(s => s.providerSessionId).sort()).toEqual(["another", "fresh"]);
+    } finally { retained.close(); }
+    // A hook-only record that was pinned is closed, not dropped.
+    f.service.record(input("hooked", { summary: HOOK_SUMMARY }));
+    f.service.pin("hooked", true);
+    expect(f.service.end("hooked", undefined, "logout").deleted).toBe(false);
+    expect(f.service.show("hooked").session.endReason).toBe("logout");
+    f.service.record(input("parent")); f.service.record(input("child"), "parent"); f.service.update("parent", "진행");
+    expect(() => f.service.delete("parent")).toThrow("이어받은 세션 1건");
+    expect(f.service.show("parent").childrenPage.total).toBe(1);
+    const removed = f.service.delete("parent", undefined, true);
+    expect(removed.deleted).toBe(true); expect(removed.detached).toBe(1);
+    expect(() => f.service.show("parent")).toThrow("찾을 수 없습니다");
+    expect(f.service.show("child").session.parentSessionId).toBeNull();
+    expect(f.service.delete("child").detached).toBe(0);
+    expect(f.service.list().items.map(s => s.providerSessionId)).toEqual(["hooked"]);
+    expect(f.db.query("SELECT count(*) AS n FROM session_updates").get()).toEqual({ n: 1 });
+  });
+
+  test("the chain lists ancestors first, then the session and all that took over, oldest first", () => {
+    f.service.record(input("root", { sessionName: "뿌리" }));
+    f.service.record(input("mid", { provider: "anthropic", agent: "claude-code" }), "root");
+    f.service.record(input("leaf-a", { sessionName: "가지 A" }), "mid");
+    f.service.record(input("leaf-b", { provider: "xai", agent: "grok" }), "mid");
+    f.service.record(input("grand", { sessionName: "손자" }), "leaf-a");
+    const born = f.db.query("UPDATE sessions SET created_at = ? WHERE provider_session_id = ?");
+    born.run("2026-10-01T00:00:00.000Z", "leaf-a"); born.run("2026-10-02T00:00:00.000Z", "leaf-b");
+    const chain = f.service.chain("mid", "anthropic");
+    expect(chain.items.map(n => [n.providerSessionId, n.depth, n.current])).toEqual([
+      ["root", 0, false], ["mid", 1, true], ["leaf-a", 2, false], ["grand", 3, false], ["leaf-b", 2, false]]);
+    expect(chain.truncated).toBe(false);
+    expect(chain.items[0].sessionName).toBe("뿌리"); expect(chain.items[1].agent).toBe("claude-code");
+    // From a leaf: every ancestor, then only its own line.
+    expect(f.service.chain("grand").items.map(n => n.providerSessionId)).toEqual(["root", "mid", "leaf-a", "grand"]);
+    expect(f.service.chainById(f.service.show("root").session.id).items.length).toBe(5);
+    f.service.record(input("alone"));
+    expect(f.service.chain("alone").items).toEqual([expect.objectContaining({ providerSessionId: "alone", depth: 0, current: true })]);
+    // The hand-over packet carries the chain and the newest history page.
+    const packet = f.service.packet("mid", "anthropic", { limit: 1 });
+    expect(packet.chain.length).toBe(5); expect(packet.updates.length).toBe(1); expect(packet.updatesPage.total).toBe(1);
+    expect(packet.session.providerSessionId).toBe("mid");
+  });
+
+  test("a record carries the working tree clue the reader gives and keeps the last one when it cannot read", () => {
+    let clue: GitClue | null = { branch: "main", commit: "abc1234", dirty: 2, at: "2026-10-16T00:00:00.000Z" };
+    const service = new SessionService(f.repo, 0, cwd => { expect(cwd.replaceAll("\\", "/")).toBe(root.replaceAll("\\", "/")); return clue; });
+    expect(service.record(input("g")).session.git).toEqual(clue);
+    expect(f.service.show("g").session.git).toEqual(clue);
+    clue = { branch: null, commit: "def5678", dirty: 0, at: "2026-10-16T01:00:00.000Z" };
+    expect(service.update("g", "진행").session.git).toEqual(clue);
+    clue = null;
+    expect(service.update("g", "더 진행").session.git?.commit).toBe("def5678");
+    // Without a reader the record has no clue; a reader that throws is the same as none.
+    expect(f.service.record(input("h")).session.git).toBeNull();
+    const failing = new SessionService(f.repo, 0, () => { throw new Error("no git"); });
+    expect(failing.update("h", "x").session.git).toBeNull();
+    // A corrupt clue in the store reads as none instead of failing the lookup.
+    f.db.query("UPDATE sessions SET metadata_json = ? WHERE provider_session_id = ?").run('{"git":"nope"}', "h");
+    expect(f.service.show("h").session.git).toBeNull();
+    f.db.query("UPDATE sessions SET metadata_json = ? WHERE provider_session_id = ?").run("not json", "h");
+    expect(f.service.show("h").session.git).toBeNull();
+  });
+
 });

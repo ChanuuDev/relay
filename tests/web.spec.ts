@@ -74,7 +74,8 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await page.getByRole("tab", { name: /세션 연결/ }).click();
   await page.locator("#children-content").getByRole("link", { name: "Codex 후속 작업" }).click(); await expect(page).toHaveURL(new RegExp(child.session.id));
   await expect(page.getByRole("tab", { name: /세션 연결/ })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("complementary", { name: "세션 상세" }).getByRole("link", { name: "Claude 이전 작업" }).click();
+  // The chain above links the parent as well; this step follows the direct relation card.
+  await page.getByRole("complementary", { name: "세션 상세" }).locator(".relation").getByRole("link", { name: "Claude 이전 작업" }).click();
   await page.getByRole("link", { name: "목록으로 돌아가기", exact: false }).click();
   await expect(page.getByLabel("Provider", { exact: true })).toHaveValue("anthropic");
   await expect(page.locator("#list-content .session-row")).toHaveCount(1);

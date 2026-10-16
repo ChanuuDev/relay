@@ -14,7 +14,7 @@ import { GuideWindow } from "./components/apps/guide-window";
 import { CommandWindow } from "./components/apps/command-window";
 import { SettingsWindow } from "./components/apps/settings-window";
 import { YouTubeWindow } from "./components/apps/youtube-window";
-import { resource, type BriefSession, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
+import { resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
 import { enter, enterToast, exit, exitToast } from "./lib/motion";
@@ -41,7 +41,8 @@ function App() {
   const detail = useQuery(resource<DetailData>(`/api/v1/sessions/${id}`, Boolean(id)));
   const updates = useQuery(resource<HistoryData>(`/api/v1/sessions/${id}/updates?limit=50&offset=${encodeURIComponent(detailParams.get("historyOffset") ?? "0")}`, Boolean(id)));
   const children = useQuery(resource<ListData<BriefSession>>(`/api/v1/sessions/${id}/children?limit=50&offset=${encodeURIComponent(detailParams.get("childrenOffset") ?? "0")}`, Boolean(id)));
-  const watched = [health, list, ...(id ? [detail, updates, children] : [])];
+  const chain = useQuery(resource<ChainData>(`/api/v1/sessions/${id}/chain`, Boolean(id)));
+  const watched = [health, list, ...(id ? [detail, updates, children, chain] : [])];
   const failed = watched.some((query) => query.isError);
   const pending = watched.some((query) => query.isPending);
   const successAt = Math.min(...watched.map((query) => query.dataUpdatedAt));
@@ -168,14 +169,14 @@ function App() {
       navigate(`${location.pathname}?${detailQuery}`);
     } else navigate(`/?${next}`);
   }
-  const activeFilters = ["q", "provider", "agent", "cwd"].filter((key) => params.has(key));
+  const activeFilters = ["q", "provider", "agent", "cwd", "status", "pinned"].filter((key) => params.has(key));
 
   return <div className="desktop" data-shell="desktop" data-mobile={mobile ? "" : undefined}>
     <a className="skip-link" href="#workspace">본문으로 건너뛰기</a>
     <Wallpaper dark={dark} />
     <MenuBar connection={connection} dark={dark} />
     <main id="desktop">
-      <SessionsWindow list={list} detail={detail} updates={updates} relations={children} health={health.data} params={params}
+      <SessionsWindow list={list} detail={detail} updates={updates} relations={children} chain={chain} health={health.data} params={params}
         selectedId={id} activeFilters={activeFilters} copy={copy} onPage={listPage} successAt={successAt} />
       <GuideWindow />
       <CommandWindow detail={detail} health={health.data} copy={copy} />

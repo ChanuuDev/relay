@@ -20,7 +20,9 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   expect(original).toContain("relay continue");
   expect(original).not.toMatch(/\brelay start\b/);
   expect(original).not.toMatch(/\brelay finish\b/);
-  expect(original).not.toContain("--status");
+  // The declared work state is an update option, never a lifecycle the skill manages.
+  expect(original).toContain("--status working|blocked|handoff|done");
+  expect(original).not.toMatch(/--status (active|completed|interrupted|abandoned)\b/);
   expect(install("codex").exitCode).toBe(0);
   writeFileSync(target, original + "\nUser customization\n");
   expect(install("codex").exitCode).not.toBe(0);

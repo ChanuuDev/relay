@@ -5,6 +5,7 @@ import path from "node:path";
 import { loadConfig } from "./config";
 import { openDatabase } from "./db/database";
 import { errorBody, invalid, RelayError, storageError } from "./errors";
+import { gitClue } from "./git";
 import { SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { copyToClipboard } from "./output/clipboard";
@@ -16,6 +17,7 @@ import { HOOK_SUMMARY, PROVIDERS, SessionService } from "./session/session.servi
 import type { NewSession, Session } from "./session/session.types";
 import { installSkills } from "./skills/install";
 import { directory } from "./validation";
+import { handoffMarkdown } from "./web/lib/handoff";
 import { sessionCommand } from "./web/lib/session-context";
 import { startDetached, stopServer } from "./web/control";
 import { startServer } from "./web/server";
@@ -42,22 +44,25 @@ program.action((options, command: Command) => {
   program.outputHelp();
 });
 
-async function run(command: Command, write: boolean, action: (service: SessionService) => unknown) {
+const STATUS_HELP = "작업 상태: working | blocked | handoff | done";
+const shell = () => process.platform === "win32" ? "powershell" : "bash";
+
+async function run(command: Command, write: boolean, action: (service: SessionService, config: ReturnType<typeof loadConfig>) => unknown) {
   const options = command.optsWithGlobals();
   const config = loadConfig(options.dataDir);
   const db = openDatabase(config, !write);
-  const service = new SessionService(new SessionRepository(db), config.retentionDays);
+  // A record written from the CLI carries the working tree as it stands; reads never touch git.
+  const service = new SessionService(new SessionRepository(db), config.retentionDays, write ? gitClue : undefined);
   let picked: Session | undefined;
   try {
     let result: unknown;
-    try { result = action(service); }
+    try { result = action(service, config); }
     catch (error) {
       if (error instanceof RelayError && error.code === "SESSION_NOT_FOUND" && error.details?.relayId &&
         typeof error.details.providerSessionId === "string" && typeof error.details.provider === "string") {
-        const shell = process.platform === "win32" ? "powershell" : "bash";
-        const command = sessionCommand({ providerSessionId: error.details.providerSessionId, provider: error.details.provider }, config.dataDirectory, shell);
+        const command = sessionCommand({ providerSessionId: error.details.providerSessionId, provider: error.details.provider }, config.dataDirectory, shell());
         error.message += ` 다음 명령으로 조회하세요:\n${command}`;
-        error.details = { ...error.details, command, shell };
+        error.details = { ...error.details, command, shell: shell() };
       }
       throw error;
     }
@@ -88,6 +93,7 @@ function creation(command: Command) {
     .requiredOption("--summary <text>", "첫 기록 요약 (1~4000자)")
     .option("--session-name <name>", "세션 이름 (최대 200자)")
     .option("--model <model>", "모델 (미지정 시 null)")
+    .option("--status <status>", STATUS_HELP)
     .option("--cwd <path>", "존재하는 작업 디렉터리 절대경로");
 }
 
@@ -97,22 +103,49 @@ creation(program.command("continue <session-id>").description("이전 세션 기
   .option("--parent-provider <provider>", "부모 세션의 제공자")
   .action((id: string, options: NewSession & { parentProvider?: string }, command: Command) => run(command, true, s => s.record(options, id, options.parentProvider)));
 
-program.command("update").description("진행 요약과 이력 추가")
+program.command("update").description("진행 요약과 이력 추가. 이름과 작업 상태는 준 것만 바뀐다")
   .requiredOption("--session-id <id>", "Agent Session ID").requiredOption("--summary <text>", "진행 요약")
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
-  .action((o, c: Command) => run(c, true, s => s.update(o.sessionId, o.summary, o.provider)));
+  .option("--session-name <name>", "세션 이름 변경 (최대 200자)")
+  .option("--status <status>", STATUS_HELP)
+  .action((o, c: Command) => run(c, true, s => s.update(o.sessionId, o.summary, o.provider, { sessionName: o.sessionName, status: o.status })));
 program.command("show <session-id>").description("Agent Session ID로 세션 상세 조회 (Relay 내부 ID 아님)")
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)").option("--history", "진행 이력 포함")
   .option("--limit <number>", "이력 페이지 크기 (1~100, 기본 50)").option("--offset <number>", "이력 offset (기본 0)")
   .action((id: string, o, c: Command) => run(c, false, s => s.show(id, o.provider, o.history, o)));
+program.command("chain <session-id>").description("처음 세션부터 이어받은 세션까지 작업 흐름 전체 조회")
+  .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
+  .action((id: string, o, c: Command) => run(c, false, s => s.chain(id, o.provider)));
+program.command("handoff <session-id>").description("요약·이력·흐름·재개 명령을 담은 인계 문서(Markdown) 출력")
+  .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
+  .option("--limit <number>", "담을 이력 건수 (1~100, 기본 50)")
+  .option("--shell <shell>", "명령 인용 셸: powershell | bash (기본은 현재 OS)")
+  .action((id: string, o, c: Command) => run(c, false, (s, config) => {
+    if (o.shell !== undefined && o.shell !== "powershell" && o.shell !== "bash") invalid("shell: powershell 또는 bash를 입력하세요.");
+    const packet = s.packet(id, o.provider, { limit: o.limit });
+    return { schemaVersion: 1, sessionId: packet.session.id,
+      markdown: handoffMarkdown({ ...packet, childrenTotal: packet.childrenPage.total, updatesTotal: packet.updatesPage.total },
+        { shell: o.shell ?? shell(), storeDirectory: config.dataDirectory }) };
+  }));
 program.command("list").description("세션 테이블 조회")
   .option("--provider <provider>", "제공자").option("--agent <agent>", "도구")
   .option("--cwd <path>", "작업 경로 정확히 일치").option("--query <text>", "이름·ID·요약·경로 부분 검색")
+  .option("--status <status>", STATUS_HELP).option("--pinned", "고정한 세션만")
   .option("--limit <number>", "페이지 크기 (1~100, 기본 50)").option("--offset <number>", "offset (기본 0)")
   .action((o, c: Command) => run(c, false, s => s.list({ ...o, q: o.query })));
 program.command("latest <provider>").description("codex / claude / grok 중 명시한 출처의 최근 Relay 기록")
   .option("--cwd <path>", "명시한 작업 경로 내에서만 조회")
   .action((alias: string, o, c: Command) => run(c, false, s => s.latest(alias, o.cwd)));
+program.command("pin <session-id>").description("보관 기간과 종료 정리에서 제외하도록 세션 고정")
+  .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
+  .action((id: string, o, c: Command) => run(c, true, s => s.pin(id, true, o.provider)));
+program.command("unpin <session-id>").description("세션 고정 해제")
+  .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
+  .action((id: string, o, c: Command) => run(c, true, s => s.pin(id, false, o.provider)));
+program.command("delete <session-id>").description("세션 기록과 이력 삭제. 이어받은 세션이 있으면 --force로 연결을 끊고 삭제")
+  .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
+  .option("--force", "이어받은 세션의 연결을 끊고 삭제")
+  .action((id: string, o, c: Command) => run(c, true, s => s.delete(id, o.provider, Boolean(o.force))));
 
 program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록 또는 종료 처리 (codex/claude/grok)")
   .option("--end", "SessionEnd: 종료 시각·사유를 기록하고, 훅 자동 기록만 남은 세션은 삭제")
@@ -141,6 +174,7 @@ program.command("hook <agent>").description("Agent 세션 훅의 JSON을 stdin�
       const config = loadConfig(command.optsWithGlobals().dataDir);
       const db = openDatabase(config);
       try {
+        // The hook has a few seconds at most, so it records without reading the working tree.
         const service = new SessionService(new SessionRepository(db), config.retentionDays);
         if (options.end) service.end(sessionId, provider, endReason(payload));
         else service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY });

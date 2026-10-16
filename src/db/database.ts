@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/003_init.sql" with { type: "text" };
+import schema from "./migrations/004_init.sql" with { type: "text" };
 
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -73,9 +73,17 @@ function migrateV2(db: Database) {
   db.exec("ALTER TABLE sessions ADD COLUMN ended_at TEXT; ALTER TABLE sessions ADD COLUMN end_reason TEXT;");
 }
 
+// v4 adds the work state an agent declares, the pin that exempts a record from clean-up, and the state
+// each history entry was written in. Older rows carry none of them.
+function migrateV3(db: Database) {
+  db.exec(`ALTER TABLE sessions ADD COLUMN status TEXT CHECK(status IS NULL OR status IN ('working', 'blocked', 'handoff', 'done'));
+    ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0, 1));
+    ALTER TABLE session_updates ADD COLUMN status TEXT CHECK(status IS NULL OR status IN ('working', 'blocked', 'handoff', 'done'));`);
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current !== 0 && current !== 1 && current !== 2) {
+  if (current !== 0 && current !== 1 && current !== 2 && current !== 3) {
     checkVersion(db);
     return;
   }
@@ -92,9 +100,14 @@ function initializeOrMigrate(db: Database) {
     } else if (observed === 1) {
       migrateV1(db);
       migrateV2(db);
+      migrateV3(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 2) {
       migrateV2(db);
+      migrateV3(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 3) {
+      migrateV3(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);

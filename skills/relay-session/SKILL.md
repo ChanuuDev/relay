@@ -36,13 +36,29 @@ Relay는 전체 대화나 원본 로그를 복원하는 도구가 아니라, 다
    relay record --provider <회사 식별자> --agent <도구 식별자> --session-id <실제 Session ID> --session-name <작업 주제> --summary <다음 대화에 필요한 첫 요약>
    ```
 
-4. **기록이 이미 있으면** `record`를 다시 호출하지 않고 맥락을 갱신한다.
+4. **기록이 이미 있으면** `record`를 다시 호출하지 않고 맥락을 갱신한다. 훅이 남긴 기록은 이름이 작업 폴더명이므로 첫 갱신에 `--session-name`으로 작업 주제를 붙인다.
 
    ```text
-   relay update --session-id <실제 Session ID> --summary <현재까지의 맥락과 다음 작업>
+   relay update --session-id <실제 Session ID> --session-name <작업 주제> --status working --summary <현재까지의 맥락과 다음 작업>
    ```
 
 5. 의미 있는 작업 단위가 끝날 때마다 `relay update --session-id <실제 Session ID> --summary <다음 대화에 필요한 사실>`을 실행한다. 훅 자동 기록만 있고 `update`가 없는 세션은 종료 훅이 삭제하므로, 남겨야 할 세션은 첫 작업 단위가 끝나면 반드시 갱신한다. 요약은 목표, 현재 상태, 변경 파일, 검증 결과, 남은 위험이나 다음 작업처럼 다음 대화에서 바로 쓸 사실을 중심으로 짧게 쓴다. 전체 채팅, reasoning, 키, 로그인 정보, 파일 내용 전문은 기록하지 않는다.
+
+6. **작업 상태**는 `--status working|blocked|handoff|done`으로 남긴다. 작업 중이면 `working`, 사용자 결정이나 외부 요인으로 막혔으면 `blocked`, 남은 일을 다음 세션에 넘기면 `handoff`, 끝났으면 `done`이다. 상태는 다음 `--status`까지 유지되며 이력에도 함께 남는다. 호스트 프로세스의 실행 여부가 아니라 Agent가 마지막으로 선언한 작업 상태다. `record`와 `continue`에도 같은 옵션을 쓸 수 있다.
+
+Git 저장소 안에서 `record`·`update`·`continue`를 실행하면 브랜치, 짧은 커밋 해시, 수정 파일 수가 단서로 함께 저장된다(`session.git`). diff는 저장하지 않으며, 저장소가 아니거나 `RELAY_NO_GIT=1`이면 비어 있다.
+
+### 그 밖의 명령
+
+| 명령 | 용도 |
+|---|---|
+| `relay chain <ID> --provider <provider> --json` | 처음 세션부터 이어받은 세션까지 작업 흐름 전체(`items[].depth`, `current`) |
+| `relay handoff <ID> --provider <provider> --json` | 요약·이력·흐름·조회 명령·원본 세션 재개 명령을 담은 인계 문서 Markdown(`markdown`) |
+| `relay pin <ID>` / `relay unpin <ID>` | 보관 기간 자동 삭제와 훅 종료 정리에서 제외 |
+| `relay delete <ID> [--force]` | 기록과 이력 삭제. 이어받은 세션이 있으면 `--force`로 연결을 끊고 삭제 |
+| `relay list --status handoff` / `--pinned` | 상태나 고정 여부로 목록 필터 |
+
+조회 결과의 `session.status`, `session.pinned`, `session.git`은 다음 Agent가 참고할 단서이며, `resume` 명령은 사용자가 원본 대화를 다시 열 때 쓴다(`claude --resume`, `codex resume`, `grok --resume`).
 
 기록 명령이 실패하면 사용자에게 한 줄로 알리고 원래 작업을 계속한다. 기록 성공 여부를 확인하려고 같은 `update`를 자동 재전송하지 말고, 필요하면 `relay show <ID> --provider <provider> --history --json`으로 확인한다.
 

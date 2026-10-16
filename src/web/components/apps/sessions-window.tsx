@@ -8,16 +8,16 @@ import { SessionDetail } from "../session-detail";
 import { Crossfade } from "../transitions";
 import { DetailPlaceholder } from "../context-guide";
 import { staggerIn } from "../../lib/motion";
-import type { BriefSession, DetailData, HealthData, HistoryData, ListData, QueryResult } from "../../lib/queries";
+import type { BriefSession, ChainData, DetailData, HealthData, HistoryData, ListData, QueryResult } from "../../lib/queries";
 
 /** 상세 자리(패널 또는 플레이스홀더). 클론 오버레이는 제외한다. */
 const DETAIL_SLOT = ":scope > .detail-panel:not(.detail-clone), :scope > .detail-placeholder:not(.detail-clone)";
 const staggerHeader = (panel: HTMLElement) =>
   staggerIn(panel.querySelectorAll(".detail-header > *, .detail-actions"), { y: 6, duration: "fast", step: "tight" });
 
-export function SessionsWindow({ list, detail, updates, relations, health, params, selectedId, activeFilters, copy, onPage, successAt }: {
+export function SessionsWindow({ list, detail, updates, relations, chain, health, params, selectedId, activeFilters, copy, onPage, successAt }: {
   list: QueryResult<ListData>; detail: QueryResult<DetailData>; updates: QueryResult<HistoryData>; relations: QueryResult<ListData<BriefSession>>;
-  health?: HealthData; params: URLSearchParams; selectedId?: string; activeFilters: string[];
+  chain: QueryResult<ChainData>; health?: HealthData; params: URLSearchParams; selectedId?: string; activeFilters: string[];
   copy: (value: string) => void; onPage: (offset: number) => void; successAt: number;
 }) {
   const total = list.data?.page.total;
@@ -36,7 +36,7 @@ export function SessionsWindow({ list, detail, updates, relations, health, param
         storeDirectory={health?.dataDirectory} copy={copy} onPage={onPage} />
       <Crossfade swapKey={selectedId ?? ""} container={bodyRef} select={DETAIL_SLOT} onEntered={staggerHeader}>
         {selectedId
-          ? <SessionDetail key={selectedId} detail={detail} updates={updates} children={relations} storeDirectory={health?.dataDirectory} copy={copy} />
+          ? <SessionDetail key={selectedId} detail={detail} updates={updates} children={relations} chain={chain} storeDirectory={health?.dataDirectory} copy={copy} />
           : <DetailPlaceholder />}
       </Crossfade>
     </div>

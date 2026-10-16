@@ -1,4 +1,4 @@
-import type { Session } from "../../session/session.types";
+import { STATUS_LABELS, type GitClue, type Session, type SessionStatus } from "../../session/session.types";
 
 export const projectName = (path: string) => path.replace(/\\/g, "/").replace(/\/$/, "").split("/").pop() || path;
 export function timestamp(value: string | null) {
@@ -18,3 +18,25 @@ export function relativeTime(value: string) {
 }
 export const quote = (value: string, shell: "powershell" | "bash") =>
   "'" + (shell === "powershell" ? value.replaceAll("'", "''") : value.replaceAll("'", "'\"'\"'")) + "'";
+
+/** The declared work state in words; a session that declared none reads as such. */
+export const statusLabel = (status: SessionStatus | null) => status ? STATUS_LABELS[status] : "미기록";
+
+/** Hours without an update after which a session that has neither finished nor closed is probably dead. */
+export const STALE_HOURS = 6;
+
+/**
+ * No end on record and no new context for a long while: the host was most likely closed without its
+ * end hook. A session declared handed over or done is not waiting on anyone, so it never reads as stale.
+ */
+export function isStale(session: Pick<Session, "endedAt" | "status" | "updatedAt">, now = Date.now()) {
+  if (session.endedAt || session.status === "handoff" || session.status === "done") return false;
+  return now - new Date(session.updatedAt).getTime() > STALE_HOURS * 3_600_000;
+}
+
+/** The working tree clue in one phrase: branch, commit and how many paths differed when it was read. */
+export function gitLabel(git: GitClue | null) {
+  if (!git) return "기록 없음";
+  const where = [git.branch ?? "(브랜치 없음)", git.commit ? `@ ${git.commit}` : ""].filter(Boolean).join(" ");
+  return `${where} · ${git.dirty ? `수정 ${git.dirty}건` : "깨끗함"}`;
+}

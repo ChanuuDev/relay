@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { ListFilter, Search, X } from "lucide-react";
+import { SESSION_STATUSES, STATUS_LABELS } from "../../session/session.types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -8,7 +9,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
 import { Field, FieldGroup, FieldLabel } from "./ui/field";
 import { NativeSelect, NativeSelectOption } from "./ui/native-select";
 import { collapseHeight, expandHeight, popIn } from "../lib/motion";
-import { navigate, useUI } from "../lib/store";
+import { advancedOpen, navigate, useUI } from "../lib/store";
 
 /** 창 상단바의 툴바 컨트롤과 상세 필터 행을 하나의 폼으로 묶는다(Enter 제출). */
 export function SessionFiltersForm({ children }: { children: ReactNode }) {
@@ -42,6 +43,10 @@ export function SessionFiltersForm({ children }: { children: ReactNode }) {
     {mounted && <FieldGroup id="advanced-filters" className="advanced-filters material-chrome" ref={rowRef}>
       <Field><FieldLabel htmlFor="agent">Agent</FieldLabel><Input id="agent" placeholder="전체 · codex, claude-code 등" value={draft.agent} maxLength={64} onChange={(event) => setDraft({ agent: event.target.value })} /></Field>
       <Field className="path-filter"><FieldLabel htmlFor="cwd">프로젝트 경로</FieldLabel><Input id="cwd" placeholder="프로젝트의 전체 절대경로" value={draft.cwd} onChange={(event) => setDraft({ cwd: event.target.value })} /></Field>
+      <Field className="status-filter"><FieldLabel htmlFor="status">작업 상태</FieldLabel><NativeSelect id="status" size="sm" value={draft.status} onChange={(event) => setDraft({ status: event.target.value })}>
+        <NativeSelectOption value="">전체</NativeSelectOption>{SESSION_STATUSES.map((status) => <NativeSelectOption key={status} value={status}>{STATUS_LABELS[status]}</NativeSelectOption>)}</NativeSelect></Field>
+      <Field className="pinned-filter"><FieldLabel htmlFor="pinned">고정</FieldLabel><NativeSelect id="pinned" size="sm" value={draft.pinned} onChange={(event) => setDraft({ pinned: event.target.value })}>
+        <NativeSelectOption value="">전체</NativeSelectOption><NativeSelectOption value="1">고정만</NativeSelectOption></NativeSelect></Field>
       <Field className="limit-filter"><FieldLabel htmlFor="limit">표시 개수</FieldLabel><NativeSelect id="limit" size="sm" value={draft.limit} onChange={(event) => setDraft({ limit: event.target.value })}>{[20, 50, 100].map((limit) => <NativeSelectOption key={limit} value={limit}>{limit}개</NativeSelectOption>)}</NativeSelect></Field>
       <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/")}>초기화</Button>
     </FieldGroup>}
@@ -62,9 +67,16 @@ export function FilterControls() {
       <Input id="provider" list="providers" value={draft.provider} onChange={(event) => setDraft({ provider: event.target.value })} placeholder="모든 Provider" maxLength={64} />
       <datalist id="providers"><option value="openai" /><option value="anthropic" /><option value="xai" /></datalist></Field>
     <Button type="button" size="sm" variant={advanced ? "secondary" : "outline"} aria-expanded={advanced} aria-controls="advanced-filters" onClick={() => setAdvanced(!advanced)}>
-      <ListFilter data-icon="inline-start" />상세 필터{(draft.agent || draft.cwd) && <span className="filter-indicator" />}</Button>
+      <ListFilter data-icon="inline-start" />상세 필터{advancedOpen(draft) && <span className="filter-indicator" />}</Button>
     <Button type="submit" size="sm"><Search data-icon="inline-start" />검색</Button>
   </>;
+}
+
+/** 칩에는 값 대신 사람이 읽는 말을 쓴다. 상태 키는 한글 이름, 고정 필터는 「고정만」. */
+function chipText(key: string, value: string | null) {
+  if (key === "status" && value && Object.hasOwn(STATUS_LABELS, value)) return STATUS_LABELS[value as keyof typeof STATUS_LABELS];
+  if (key === "pinned") return value === "1" || value === "true" ? "고정만" : "고정 제외";
+  return value;
 }
 
 export function FilterChips({ params, activeFilters }: { params: URLSearchParams; activeFilters: string[] }) {
@@ -80,7 +92,7 @@ export function FilterChips({ params, activeFilters }: { params: URLSearchParams
 
   if (!activeFilters.length) return null;
   return <div className="filter-chips material-chrome" role="group" aria-label="적용된 필터" ref={ref}>
-    {activeFilters.map((key) => <Badge variant="secondary" key={key} data-chip={key}>{params.get(key)}
+    {activeFilters.map((key) => <Badge variant="secondary" key={key} data-chip={key}>{chipText(key, params.get(key))}
       <button type="button" aria-label={`${key} 필터 해제`} onClick={() => {
         const next = new URLSearchParams(params); next.delete(key); next.delete("offset"); navigate(`/?${next}`);
       }}><X /></button></Badge>)}

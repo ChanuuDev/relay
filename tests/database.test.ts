@@ -5,6 +5,7 @@ import { loadConfig } from "../src/config";
 import { DB_VERSION, openDatabase } from "../src/db/database";
 import legacySchema from "../src/db/migrations/001_init.sql" with { type: "text" };
 import v2Schema from "../src/db/migrations/002_init.sql" with { type: "text" };
+import v3Schema from "../src/db/migrations/003_init.sql" with { type: "text" };
 import { SessionRepository } from "../src/session/session.repository";
 import { SessionService } from "../src/session/session.service";
 import { cleanup, cliAsync, input, root, temporary } from "./helpers";
@@ -39,9 +40,9 @@ describe("Database record migration", () => {
     // The v1 lifecycle is not carried over: every migrated session starts without an end on record.
     const sessions = old.query(`SELECT id, provider, agent, provider_session_id, session_name, model,
       working_directory, summary, parent_session_id, metadata_json, started_at AS created_at, updated_at,
-      NULL AS ended_at, NULL AS end_reason
+      NULL AS ended_at, NULL AS end_reason, NULL AS status, 0 AS pinned
       FROM sessions ORDER BY id`).all();
-    const updates = old.query("SELECT id, session_id, sequence, summary, created_at FROM session_updates ORDER BY id").all();
+    const updates = old.query("SELECT id, session_id, sequence, summary, created_at, NULL AS status FROM session_updates ORDER BY id").all();
     old.close();
     const config = loadConfig(dir);
     const db = openDatabase(config, true);
@@ -56,7 +57,9 @@ describe("Database record migration", () => {
       const detail = service.show("parent", "openai", true);
       expect(detail.children[0].providerSessionId).toBe("child");
       expect(detail.updates?.map(update => update.sequence)).toEqual([2, 1]);
-      for (const field of ["status", "startedAt"]) expect(detail.session).not.toHaveProperty(field);
+      expect(detail.session).not.toHaveProperty("startedAt");
+      // The v1 lifecycle state is not the declared work state: every migrated session starts with none.
+      expect(detail.session.status).toBeNull(); expect(detail.session.pinned).toBe(false);
       expect(detail.session.endedAt).toBeNull(); expect(detail.session.endReason).toBeNull();
       expect(detail.updates?.[0]).not.toHaveProperty("type");
     } finally { db.close(); }
@@ -90,7 +93,7 @@ describe("Database record migration", () => {
     const reader = openDatabase(config, true);
     try {
       expect(reader.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
-      expect(reader.query("SELECT * FROM sessions ORDER BY id").all()).toEqual(before.map(row => ({ ...row, ended_at: null, end_reason: null })));
+      expect(reader.query("SELECT * FROM sessions ORDER BY id").all()).toEqual(before.map(row => ({ ...row, ended_at: null, end_reason: null, status: null, pinned: 0 })));
       expect(reader.query("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(reader.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
       const service = new SessionService(new SessionRepository(reader));
@@ -143,4 +146,38 @@ describe("Database record migration", () => {
       expect(db.query("SELECT count(*) AS n FROM sessions").get()).toEqual({ n: 2 });
     } finally { db.close(); }
   });
+
+  test("v3 records gain the declared state, pin and history state columns in place", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v3Schema);
+    db.exec("PRAGMA user_version = 3");
+    const at = "2026-10-01T00:00:00.000Z";
+    db.query(`INSERT INTO sessions (id, provider, agent, provider_session_id, session_name, model, working_directory, summary,
+      parent_session_id, metadata_json, created_at, updated_at, ended_at, end_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run("ses_v3", "xai", "grok", "v3", "이전 작업", null, root, "마지막 맥락", null, '{"kept":1}', at, at, at, "logout");
+    db.query("INSERT INTO session_updates (id, session_id, sequence, summary, created_at) VALUES (?, ?, ?, ?, ?)").run("upd_v3", "ses_v3", 1, "마지막 맥락", at);
+    const before = db.query("SELECT * FROM sessions ORDER BY id").all() as Record<string, unknown>[];
+    db.close();
+    const config = loadConfig(dir);
+    const reader = openDatabase(config, true);
+    try {
+      expect(reader.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(reader.query("SELECT * FROM sessions ORDER BY id").all()).toEqual(before.map(row => ({ ...row, status: null, pinned: 0 })));
+      expect(reader.query("SELECT * FROM session_updates").all()).toEqual([{ id: "upd_v3", session_id: "ses_v3", sequence: 1, summary: "마지막 맥락", created_at: at, status: null }]);
+      expect(reader.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+      const session = new SessionService(new SessionRepository(reader)).show("v3", "xai").session;
+      expect(session.status).toBeNull(); expect(session.pinned).toBe(false); expect(session.git).toBeNull(); expect(session.endReason).toBe("logout");
+    } finally { reader.close(); }
+    const writer = openDatabase(config);
+    try {
+      const service = new SessionService(new SessionRepository(writer), 0, () => ({ branch: "main", commit: "abc1234", dirty: 0, at }));
+      const updated = service.update("v3", "다시 진행", "xai", { status: "working" }).session;
+      expect(updated.status).toBe("working"); expect(updated.git?.commit).toBe("abc1234");
+      // Metadata written before v4 stays beside the clue, and the store refuses states it does not know.
+      expect(JSON.parse(writer.query<{ m: string }, []>("SELECT metadata_json AS m FROM sessions").get()!.m)).toEqual({ kept: 1, git: { branch: "main", commit: "abc1234", dirty: 0, at } });
+      expect(() => writer.exec("UPDATE sessions SET status = 'ACTIVE'")).toThrow();
+      expect(() => writer.exec("UPDATE sessions SET pinned = 2")).toThrow();
+    } finally { writer.close(); }
+  });
+
 });

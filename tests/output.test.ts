@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { stripVTControlCharacters } from "node:util";
 import { human } from "../src/output/human";
 import { clip, localTime, shortTime, wrap, width } from "../src/output/terminal";
-import type { Session } from "../src/session/session.types";
+import type { ChainNode, Session } from "../src/session/session.types";
 
 const at = "2026-09-16T04:02:09.792Z";
 function session(index: number, extra: Partial<Session> = {}): Session {
   return { id: `ses_00000000-0000-0000-0000-00000000000${index}`, provider: "anthropic", agent: "claude-code",
     providerSessionId: `f47ac10b-58cc-4372-a567-0e02b2c3d4000${index}`, sessionName: `세션 이름 ${index}`,
     model: "claude-opus-5", workingDirectory: "C:/workspace/agent-session-chain",
-    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, endedAt: null, endReason: null, ...extra };
+    summary: "요약 텍스트", parentSessionId: null, createdAt: at, updatedAt: at, endedAt: null, endReason: null, status: null, pinned: false, git: null, ...extra };
 }
 
 describe("Terminal output", () => {
@@ -85,14 +85,15 @@ describe("Terminal output", () => {
     expect(view).toContain("기록 이력 (2건)");
     expect(lines.findIndex(l => l.includes("#2"))).toBeLessThan(lines.findIndex(l => l.includes("#1")));
     expect(view).toContain("최초 기록");
-    for (const forbidden of ["상태", "START", "PROGRESS", "END"]) expect(view).not.toContain(forbidden);
+    for (const forbidden of ["START", "PROGRESS", "END"]) expect(view).not.toContain(forbidden);
+    expect(view).toContain("작업 상태"); expect(view).toContain("미기록"); expect(view).toContain("Git");
     expect(view).toContain("세션 종료");
     expect(view).toContain("기록 없음");
   });
 
   test("the table never shows an end column; only the detail reports a recorded end", () => {
     const ended = "2026-09-16T06:30:00.000Z";
-    const items = [session(1), session(2, { endedAt: ended, endReason: "prompt_input_exit" })];
+    const items = [session(1), session(2, { endedAt: ended, endReason: "prompt_input_exit", git: { branch: "main", commit: "abc1234", dirty: 2, at } })];
     // Sessions are often closed without a SessionEnd hook, so an end column would mislabel open rows.
     const listed = human({ items, page: { total: 2, offset: 0 } }, 200).split("\n");
     expect(listed[0]).not.toContain("종료");
@@ -104,6 +105,7 @@ describe("Terminal output", () => {
     expect(detail).toContain(localTime(ended, true));
     expect(detail).toContain("prompt_input_exit");
     expect(detail).not.toContain("기록 없음");
+    expect(detail).toContain("main @ abc1234 · 수정 2건");
     const narrow = human({ items, page: { total: 2, offset: 0 } }, 60).split("\n");
     expect(narrow[0]).toContain("Agent Session ID");
   });
@@ -178,4 +180,33 @@ describe("Terminal output", () => {
     expect(detail).toContain(`${local.getFullYear()}-09-16`);
     expect(detail).not.toContain(short);
   });
+
+  test("the table carries the declared state and pin; the detail shows the flow; a note and a deletion print as they are", () => {
+    const items = [session(1, { status: "handoff", pinned: true }), session(2, { status: "blocked" }), session(3)];
+    const listed = human({ items, page: { total: 3, offset: 0 } }, 200).split("\n");
+    expect(listed[0]).toContain("상태");
+    expect(listed[2]).toContain("인계 대기 고정"); expect(listed[3]).toContain("막힘"); expect(listed[4]).not.toContain("미기록");
+    for (const line of listed) expect(width(line)).toBeLessThanOrEqual(200);
+    const narrow = human({ items, page: { total: 3, offset: 0 } }, 60).split("\n");
+    expect(narrow[0]).not.toContain("상태"); expect(narrow[0]).toContain("Agent Session ID");
+    const node = (id: string, depth: number, current: boolean, extra: Partial<ChainNode> = {}): ChainNode => ({ id: `ses_${id}`, provider: "openai", agent: "codex",
+      providerSessionId: id, sessionName: `세션 ${id}`, summary: `${id} 요약`, status: null, pinned: false, createdAt: at, updatedAt: at, endedAt: null,
+      parentSessionId: null, depth, current, ...extra });
+    const flow = [node("root", 0, false, { sessionName: "뿌리" }), node("mid", 1, true, { status: "handoff" }), node("leaf", 2, false, { pinned: true })];
+    const detail = human({ session: session(1, { status: "working", pinned: true }), chain: flow,
+      updates: [{ id: "u", sessionId: "s", sequence: 1, summary: "시작", status: "working", createdAt: at }], updatesPage: { total: 1 } }, 90);
+    expect(detail).toMatch(/작업 상태\s+작업 중 고정/);
+    expect(detail).toContain("세션 흐름 (3건)"); expect(detail).toMatch(/▶ 세션 mid/); expect(detail).toContain("뿌리"); expect(detail).toContain("인계 대기");
+    expect(detail.split("\n").findIndex(l => l.includes("뿌리"))).toBeLessThan(detail.split("\n").findIndex(l => l.includes("세션 leaf")));
+    expect(detail).toMatch(/#1 .*작업 중/);
+    for (const line of detail.split("\n")) expect(width(line)).toBeLessThanOrEqual(90);
+    // One session alone has no flow to show.
+    expect(human({ session: session(1), chain: [node("only", 0, true)] }, 90)).not.toContain("세션 흐름");
+    const alone = human({ session: session(1), items: flow, truncated: true }, 90);
+    expect(alone).toContain("세션 흐름 (3건)"); expect(alone).toContain("일부만 표시"); expect(alone).not.toContain("Agent Session ID");
+    expect(human({ schemaVersion: 1, markdown: "# 인계\n\n> 요약\n" })).toBe("# 인계\n\n> 요약");
+    const removed = human({ schemaVersion: 1, session: session(1), deleted: true, detached: 2 });
+    expect(removed).toContain("삭제함"); expect(removed).toContain("2건");
+  });
+
 });

@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { invalid } from "./errors";
+import { SESSION_STATUSES, type SessionStatus } from "./session/session.types";
 
 export function text(value: unknown, field: string, max: number, multiline = false): string {
   if (typeof value !== "string" || !value.trim() || Array.from(value).length > max ||
@@ -44,4 +45,20 @@ export function integer(value: unknown, field: string, fallback: number, min: nu
 export function pagination(input: { limit?: unknown; offset?: unknown } = {}) {
   return { limit: integer(input.limit, "limit", 50, 1, 100),
     offset: integer(input.offset, "offset", 0, 0, Number.MAX_SAFE_INTEGER) };
+}
+
+/** The work state an agent declares; absent means it declared none. */
+export function sessionStatus(value: unknown): SessionStatus | null {
+  if (value === undefined || value === null) return null;
+  const status = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!(SESSION_STATUSES as readonly string[]).includes(status)) invalid(`status: ${SESSION_STATUSES.join(" | ")} 중 하나를 입력하세요.`);
+  return status as SessionStatus;
+}
+
+/** A flag on the CLI arrives as a boolean; a query string carries 1/0 or true/false. */
+export function flag(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === true || value === "1" || value === "true") return true;
+  if (value === false || value === "0" || value === "false") return false;
+  return invalid(`${field}: 1/0 또는 true/false를 입력하세요.`);
 }

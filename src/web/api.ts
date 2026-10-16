@@ -21,14 +21,15 @@ export function api(url: URL, service: SessionService, config: Config): unknown 
     return { schemaVersion: 1, status: "ok", appVersion: version,
       dataDirectory: config.dataDirectory, databasePath: config.databasePath };
   }
-  if (url.pathname === "/api/v1/sessions") return service.list(params(url, ["provider", "agent", "cwd", "q", "limit", "offset"]));
-  const match = /^\/api\/v1\/sessions\/([^/]+)(?:\/(updates|children))?$/.exec(url.pathname);
+  if (url.pathname === "/api/v1/sessions") return service.list(params(url, ["provider", "agent", "cwd", "q", "status", "pinned", "limit", "offset"]));
+  const match = /^\/api\/v1\/sessions\/([^/]+)(?:\/(updates|children|chain))?$/.exec(url.pathname);
   if (match) {
     let id: string;
     try { id = decodeURIComponent(match[1]); } catch { throw new RelayError("INVALID_ARGUMENT", "잘못된 URL 인코딩입니다."); }
-    const query = params(url, match[2] ? ["limit", "offset"] : []);
+    const query = params(url, match[2] === "updates" || match[2] === "children" ? ["limit", "offset"] : []);
     if (match[2] === "updates") return service.updates(id, query);
     if (match[2] === "children") return service.children(id, query);
+    if (match[2] === "chain") return service.chainById(id);
     return service.byId(id);
   }
   throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);

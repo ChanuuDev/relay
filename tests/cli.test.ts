@@ -16,7 +16,7 @@ describe("CLI processes", () => {
     expect(cli(dir, ["update", "--session-id", "a", "--summary", "진행"]).stderr).toBe("");
     const result = cli(dir, ["show", "a", "--history"]);
     expect(result.data.updates.length).toBe(2); expect(result.data.session.createdAt).toBeString();
-    expect(result.data.session).not.toHaveProperty("status"); expect(result.data.session.endedAt).toBeNull();
+    expect(result.data.session.status).toBeNull(); expect(result.data.session.endedAt).toBeNull();
     expect(cli(dir, ["latest", "codex"]).data.session.providerSessionId).toBe("a");
     const missing = cli(dir, ["latest", "grok"]); expect(missing.stdout).toBe(""); expect(missing.code).toBe(3);
     expect(missing.data.error.code).toBe("SESSION_NOT_FOUND");
@@ -56,7 +56,7 @@ describe("CLI processes", () => {
     expect(cli(store, ["show", created.id]).data.session.providerSessionId).toBe(created.id);
   });
 
-  test("state-management commands and status options are removed", () => {
+  test("legacy lifecycle commands stay removed; the declared state, pin and delete are explicit", () => {
     for (const args of [
       ["start", "--provider", "openai", "--agent", "codex", "--session-id", "legacy", "--summary", "기록"],
       ["finish", "--session-id", "legacy", "--summary", "종료", "--status", "completed"],
@@ -67,6 +67,52 @@ describe("CLI processes", () => {
       expect(result.code).toBe(2); expect(result.stdout).toBe(""); expect(result.data.error.code).toBe("INVALID_ARGUMENT");
     }
     expect(cli(dir, ["list"]).data.page.total).toBe(0);
+    expect(cli(dir, [...record("work"), "--status", "working"]).data.session.status).toBe("working");
+    const updated = cli(dir, ["update", "--session-id", "work", "--summary", "남은 일 넘김", "--status", "handoff", "--session-name", "로그인 수정"]).data.session;
+    expect(updated.status).toBe("handoff"); expect(updated.sessionName).toBe("로그인 수정");
+    expect(cli(dir, ["list", "--status", "handoff"]).data.items.map((s: { providerSessionId: string }) => s.providerSessionId)).toEqual(["work"]);
+    expect(cli(dir, ["show", "work", "--history"]).data.updates.map((u: { status: string | null }) => u.status)).toEqual(["handoff", "working"]);
+    expect(cli(dir, ["pin", "work"]).data.session.pinned).toBe(true);
+    expect(cli(dir, ["list", "--pinned"]).data.page.total).toBe(1);
+    expect(cli(dir, ["unpin", "work"]).data.session.pinned).toBe(false);
+    expect(cli(dir, ["list", "--pinned"]).data.page.total).toBe(0);
+    cli(dir, ["continue", "work", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "next", "--summary", "이어받음"]);
+    const refused = cli(dir, ["delete", "work"]);
+    expect(refused.code).toBe(4); expect(refused.stdout).toBe(""); expect(refused.data.error.code).toBe("SESSION_LINKED");
+    const removed = cli(dir, ["delete", "work", "--force"]);
+    expect(removed.code).toBe(0); expect(removed.data.deleted).toBe(true); expect(removed.data.detached).toBe(1);
+    expect(cli(dir, ["show", "work"]).code).toBe(3);
+    expect(cli(dir, ["show", "next", "--provider", "anthropic"]).data.session.parentSessionId).toBeNull();
+  });
+
+  test("chain and handoff read the line of work; a CLI record carries the working tree clue", () => {
+    const first = cli(dir, [...record("first"), "--session-name", "첫 작업"]).data.session;
+    expect(first.git.branch).toBeString(); expect(first.git.commit).toMatch(/^[0-9a-f]{7,}$/);
+    expect(first.git.dirty).toBeNumber(); expect(first.git.at).toBeString();
+    cli(dir, ["continue", "first", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "second", "--summary", "이어받음", "--status", "handoff"]);
+    const chain = cli(dir, ["chain", "second", "--provider", "anthropic"]);
+    expect(chain.code).toBe(0); expect(chain.data.truncated).toBe(false);
+    expect(chain.data.items.map((n: { providerSessionId: string; depth: number; current: boolean }) => [n.providerSessionId, n.depth, n.current]))
+      .toEqual([["first", 0, false], ["second", 1, true]]);
+    const handoff = cli(dir, ["handoff", "second", "--provider", "anthropic", "--shell", "bash"]);
+    expect(handoff.code).toBe(0); expect(handoff.data.sessionId).toBe(chain.data.session.id);
+    const markdown: string = handoff.data.markdown;
+    for (const piece of ["# 인계: 첫 작업", "- 작업 상태: 인계 대기", "## 최근 작업 요약", "> 이어받음", "## 세션 흐름", "**현재**",
+      "claude --resume 'second'", "relay show 'second' --provider 'anthropic'", "실제 프로젝트 파일도 확인하세요"]) expect(markdown).toContain(piece);
+    expect(cli(dir, ["handoff", "second", "--shell", "fish"]).code).toBe(2);
+    expect(cli(dir, ["handoff", "missing"]).code).toBe(3);
+    // Human output of handoff is the note itself; a chain renders as a flow, never as the table.
+    const run = (args: string[]) => Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), ...args, "--data-dir", dir],
+      { cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, RELAY_NO_TUI: "1", NO_COLOR: "1" } });
+    expect(run(["handoff", "second", "--provider", "anthropic"]).stdout.toString()).toStartWith("# 인계: 첫 작업\n");
+    const flow = run(["chain", "first"]).stdout.toString();
+    expect(flow).toContain("세션 흐름 (2건)"); expect(flow).toContain("▶"); expect(flow).not.toContain("Agent Session ID");
+    const removed = run(["delete", "second", "--provider", "anthropic"]);
+    expect(removed.exitCode).toBe(0); expect(removed.stdout.toString()).toContain("삭제함");
+    // RELAY_NO_GIT turns the reading off, so a record written with it carries no clue.
+    const quiet = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), ...record("bare"), "--data-dir", dir, "--json"],
+      { cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, RELAY_NO_GIT: "1" } });
+    expect(JSON.parse(quiet.stdout.toString()).session.git).toBeNull();
   });
 
   test("JSON output remains uncolored when terminal colors are forced", () => {
@@ -214,7 +260,9 @@ describe("CLI processes", () => {
     expect(prompt).toContain(JSON.stringify({ provider: "anthropic", agent: "claude-code", sessionId: "hook-session" }));
     const stored = cli(dir, ["show", "hook-session"]).data.session;
     expect(stored.provider).toBe("anthropic"); expect(stored.agent).toBe("claude-code");
-    expect(stored.sessionName).toBe(path.basename(root)); expect(stored).not.toHaveProperty("status");
+    expect(stored.sessionName).toBe(path.basename(root)); expect(stored.status).toBeNull();
+    // The hook has seconds at most, so it records without reading the working tree.
+    expect(stored.git).toBeNull();
     expect(stored.summary).toBe("세션 첫 기록 (훅 자동 기록)");
     // Resume fires the hook again with the same payload and must not duplicate history or fail.
     expect(context(hook(JSON.stringify({ session_id: "hook-session", cwd: root, session_source: "resume" })))).toBe(prompt);
