@@ -61,7 +61,31 @@ describe("Local read-only HTTP API", () => {
       expect(request(endpoint).headers.has("Access-Control-Allow-Origin")).toBe(false);
       expect(request(endpoint).headers.get("X-Content-Type-Options")).toBe("nosniff");
       expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+      // 유튜브 창은 localhost 출처의 플레이어 래퍼(iframe)·섬네일·oEmbed만 바깥에서 받는다.
+      expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("frame-src 'self' http://localhost:7474");
+      expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("img-src 'self' blob: https://i.ytimg.com");
+      expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("connect-src 'self' https://www.youtube.com");
     }
+  });
+
+  test("youtube player wrapper: localhost-origin page that embeds only the nocookie player", async () => {
+    // 127.0.0.1 화면이 localhost 래퍼를 iframe으로 넣으면 브라우저가 cross-site로 표시하므로 이 경로만 허용한다.
+    const page = request("/youtube/player?v=dQw4w9WgXcQ&list=PLabc&start=65", { headers: { host: "localhost:7474", "sec-fetch-site": "cross-site" } });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(page.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors http://127.0.0.1:7474 http://localhost:7474");
+    expect(page.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(page.headers.get("Relay-Pid")).toBe(String(process.pid));
+    const html = await page.text();
+    expect(html).toContain('src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&amp;rel=0&amp;playsinline=1&amp;list=PLabc&amp;start=65"');
+    expect(html).not.toContain("<script");
+    expect(await request("/youtube/player?list=PLabc").text()).toContain("/embed/videoseries?autoplay=1&amp;rel=0&amp;playsinline=1&amp;list=PLabc");
+    for (const query of ["", "?v=short", "?v=dQw4w9WgXcQ&start=0", "?v=dQw4w9WgXcQ&x=1", "?v=dQw4w9WgXcQ&v=dQw4w9WgXcQ", "?list=a", "?v=%22%3E%3Cscript%3E"]) {
+      expect(request(`/youtube/player${query}`).status, query).toBe(400);
+    }
+    expect(request("/api/v1/health", { headers: { "sec-fetch-site": "cross-site" } }).status).toBe(403);
+    expect(request("/youtube/player?v=dQw4w9WgXcQ", { headers: { host: "evil.example:7474" } }).status).toBe(403);
+    expect(request("/youtube/player?v=dQw4w9WgXcQ", { method: "POST" }).status).toBe(405);
   });
 
   test("no mutations or arbitrary static files; detail URL reload serves HTML", async () => {

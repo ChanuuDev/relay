@@ -6,17 +6,21 @@ import { SessionService } from "../session/session.service";
 import { api } from "./api";
 import { assets } from "./assets";
 import { PID_HEADER } from "./control";
-import { checkRequest, securityHeaders } from "./security";
-
-// 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
-const headers = { ...securityHeaders, [PID_HEADER]: String(process.pid) };
+import { checkRequest, playerHeaders, securityHeaders } from "./security";
+import { playerHtml, playerTarget } from "./youtube-player";
+import { PLAYER_PATH } from "./youtube-shared";
 
 export function handler(service: SessionService, config: Config) {
+  // 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
+  const pid = { [PID_HEADER]: String(process.pid) };
+  const headers = { ...securityHeaders(config.webPort), ...pid };
   return (request: Request): Response => {
     try {
-      checkRequest(request, config.webPort);
-      if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", "GET 조회만 허용합니다.", 2, 405);
       const url = new URL(request.url);
+      const player = url.pathname === PLAYER_PATH;
+      checkRequest(request, config.webPort, { allowCrossSite: player });
+      if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", "GET 조회만 허용합니다.", 2, 405);
+      if (player) return new Response(playerHtml(playerTarget(url)), { headers: { ...playerHeaders(config.webPort), ...pid, "Content-Type": "text/html; charset=utf-8" } });
       if (url.pathname.startsWith("/api/")) return Response.json(api(url, service, config), { headers });
       const asset = assets.get(/^\/sessions\/[^/]+$/.test(url.pathname) ? "/" : url.pathname);
       if (!asset) throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);

@@ -609,3 +609,73 @@ img.agent-avatar { background: transparent; object-fit: contain; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .term-cursor { visibility: visible; }
 }
+
+/* ── YouTube 창: 크롬처럼 안에서 여는 브라우저 창 ─────────────── */
+.window[data-window="youtube"] .window-frame { container: youtube / inline-size; background: var(--background); }
+.window[data-window="youtube"] .titlebar { gap: 10px; }
+.browser-chrome { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.browser-nav { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.browser-nav [data-slot="button"], .browser-external { width: 28px; height: 28px; border-radius: 6px; color: inherit; }
+.browser-nav [data-slot="button"] svg, .browser-external svg { width: 15px; height: 15px; }
+.browser-nav [data-slot="button"]:disabled, .browser-external:disabled { opacity: .3; }
+.window:not([data-focused]) .browser-nav [data-slot="button"], .window:not([data-focused]) .browser-external { color: var(--glass-text-muted); }
+/* 주소창은 크롬의 옴니박스처럼 알약 모양이고, 초점을 받으면 유리에서 불투명한 바탕으로 바뀐다. */
+.address-field { flex: 1; min-width: 140px; border-radius: 999px; background: var(--glass-control-fill); border-color: var(--glass-control-border); }
+.address-field:hover { background: var(--glass-control-hover); }
+.address-field:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); border-color: var(--ring); }
+.address-field [data-slot="input-group-addon"] { color: var(--glass-text-muted); padding-left: 12px; }
+.address-field [data-slot="input-group-addon"][data-align="inline-end"] { padding-left: 0; padding-right: 6px; }
+.address-field [data-slot="input-group-addon"] svg { width: 13px; height: 13px; }
+.address-field [data-slot="input-group-control"] { font-size: var(--fs-12); letter-spacing: 0; text-overflow: ellipsis; }
+.address-field [data-slot="input-group-control"]::placeholder { color: var(--glass-text-muted); }
+.address-field [data-slot="input-group-control"][aria-invalid="true"] { color: var(--destructive); }
+.browser-body { background: var(--background); }
+.browser-notice { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 16px; font-size: var(--fs-12); border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--system-yellow) 14%, var(--background)); flex-shrink: 0; }
+.browser-notice > svg { width: 14px; height: 14px; color: var(--system-yellow); flex-shrink: 0; }
+.browser-notice > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-viewport { position: relative; flex: 1; min-height: 0; background: #000; }
+.browser-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #000; }
+/* 창을 끌거나 크기를 바꾸는 동안 플레이어가 포인터를 삼키지 않도록 한다. */
+body[data-window-dragging] .browser-frame { pointer-events: none; }
+.browser-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  color: #b8b8c0; font-size: var(--fs-12); background: #000; pointer-events: none; }
+.browser-loading svg { width: 22px; height: 22px; animation: browser-spin 1s linear infinite; }
+@keyframes browser-spin { to { transform: rotate(360deg); } }
+
+/* 시작 페이지: 크롬의 새 탭처럼 아이콘·안내·최근 본 항목 */
+.start-page { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 48px 24px 32px;
+  background: radial-gradient(60% 42% at 50% 0%, color-mix(in srgb, #ff2d3f 16%, transparent), transparent 70%), var(--background); }
+.start-hero { display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 470px; flex-shrink: 0; }
+.start-hero .app-icon { width: 72px; height: 72px; filter: drop-shadow(0 10px 22px rgba(0, 0, 0, .35)); }
+.start-hero h3 { margin-top: 18px; font-size: var(--fs-24); font-weight: 600; letter-spacing: -.02em; line-height: 1.3; }
+.start-hero p { margin-top: 8px; font-size: var(--fs-12); line-height: 1.8; color: var(--muted-foreground); text-wrap: pretty; }
+.start-hero code { padding: 1px 5px; border-radius: 4px; background: var(--glass-control-fill); font-size: var(--fs-11); }
+.recent-section { width: 100%; max-width: 840px; margin-top: 36px; flex-shrink: 0; }
+.recent-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 4px; }
+.recent-head h4 { font-size: var(--fs-11); font-weight: 600; letter-spacing: .06em; color: var(--muted-foreground); }
+.recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px 14px; margin: 12px 0 0; padding: 6px 4px; list-style: none; }
+.recent-tile { position: relative; }
+.recent-open { display: flex; flex-direction: column; width: 100%; padding: 0; text-align: left; border-radius: 10px; overflow: hidden; color: inherit;
+  background: var(--muted); border: 1px solid var(--border); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); transition: transform .15s ease-out, box-shadow .15s ease-out; }
+.recent-open:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0, 0, 0, .2); }
+.recent-open:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.recent-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
+.recent-playlist { display: grid; place-items: center; background: linear-gradient(135deg, #2b2b2f, #141416); color: #e5e5ea; }
+.recent-playlist svg { width: 24px; height: 24px; }
+/* 클램프 상자 안에 padding을 두면 잘린 셋째 줄이 비치므로 여백은 margin으로 준다. */
+.recent-caption { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 8px 10px 9px;
+  min-height: calc(2 * var(--lh-16)); font-size: var(--fs-11); line-height: var(--lh-16); overflow-wrap: anywhere; }
+.recent-remove { position: absolute; top: -7px; right: -7px; z-index: 1; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--glass-border); background: var(--glass-menu-fill); backdrop-filter: blur(12px); color: var(--foreground); box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+  opacity: 0; transition: opacity .15s ease-out, transform .15s ease-out, background-color .15s ease-out, color .15s ease-out; }
+.recent-remove svg { width: 12px; height: 12px; }
+.recent-tile:hover .recent-remove, .recent-tile:focus-within .recent-remove { opacity: 1; }
+.recent-remove:hover { background: var(--destructive); border-color: transparent; color: #ffffff; transform: scale(1.08); }
+@media (hover: none) { .recent-remove { opacity: 1; width: 24px; height: 24px; top: -8px; right: -8px; } }
+/* 좁은 창에서는 주소창 줄이 제목 아래로 내려간다(13px에서 572px). */
+@container youtube (max-width: 44em) {
+  .window[data-window="youtube"] .titlebar { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
+  .window[data-window="youtube"] .window-toolbar { order: 3; flex-basis: 100%; }
+  .start-page { padding: 32px 16px 24px; }
+}

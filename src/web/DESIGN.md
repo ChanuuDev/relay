@@ -10,7 +10,7 @@ div.desktop (fixed inset-0)
 ├─ div.wallpaper (토큰 그라디언트 또는 색상 프리셋 + 기본 사진 2장 + 고른 사진, aria-hidden)
 ├─ header.menubar (28px · 설치한 앱이 제목 표시줄을 숨기면 창 조작 버튼 높이, z 70)
 ├─ main#desktop (창 레이어, z 1–50)
-│   └─ section.window[data-window] × 4  — 세션 / 가이드 / 명령 / 설정
+│   └─ section.window[data-window] × 5  — 세션 / 가이드 / 명령 / 설정 / YouTube
 └─ nav.dock (z 60) + 토스트·복사 폴백 (z 100)
 ```
 
@@ -125,3 +125,14 @@ Chrome·Edge에서 앱으로 설치하면 브라우저 탭 없이 별도 창으�
 - **제목 표시줄 통합**: 앱 창 오른쪽 위 `⌃` 단추로 제목 표시줄을 숨기면(Window Controls Overlay) 메뉴바가 그 자리에 올라갑니다. `lib/pwa.ts`가 `navigator.windowControlsOverlay`에서 영역을 읽어 `html[data-titlebar]`와 `--menubar-height`·`--titlebar-left`·`--titlebar-right`를 넣고, 메뉴바는 창 조작 버튼 자리를 비운 채 앱 창을 옮기는 손잡이(`app-region: drag`, 단추는 `no-drag`)가 됩니다. 메뉴바 높이는 창 조작 버튼 높이(Windows 33px)를 따르고, 창 배치 제한과 최대화한 창의 위쪽도 같은 값을 씁니다.
 - **제목 표시줄 색**: `theme-color`를 메뉴바 유리의 겉보기 색에 맞춥니다. 유리 뒤 바탕화면 띠의 평균색(사진은 `object-fit: cover` 그대로 캔버스로 재고, 색상 바탕화면은 `[data-color]` 규칙의 `--wallpaper-top`·`--wallpaper-top-end`)에 메뉴바의 `saturate()`와 반투명 채움을 겹쳐 계산합니다. 그래서 표준 제목 표시줄은 메뉴바와 한 덩어리로 보이고, 제목 표시줄을 숨기면 창 조작 버튼 바탕이 메뉴바 오른쪽 끝과 이어집니다. 바탕화면·테마·창 크기·제목 표시줄 모드가 바뀔 때마다 다시 잽니다.
 - **설치 안내**: 브라우저가 설치를 제안할 때(`beforeinstallprompt`)만 설정 창 `앱` 섹션의 `앱으로 설치` 단추와 Relay 메뉴의 `앱으로 설치…`가 나타납니다. 앱 창 안에서는 `앱 창에서 실행 중`을 보이고, 운영체제가 창 제목 앞에 앱 이름을 붙이므로 문서 제목에서 `· Relay`를 뺍니다.
+
+## 9. YouTube 창
+
+크롬을 열듯 유튜브를 창 안에서 보는 앱입니다. 유튜브 본문 페이지는 `X-Frame-Options`로 다른 사이트 안에 들어가지 않으므로, 내장 플레이어(`https://www.youtube-nocookie.com/embed/…`)만 `iframe`으로 띄우고 나머지는 Relay가 브라우저처럼 감쌉니다.
+
+- **상단바**: 제목 옆에 뒤로·앞으로·새로 고침·시작 페이지 단추와 알약 모양 주소창(`.address-field`)이 들어갑니다. 주소창은 유리 컨트롤이고 초점을 받으면 불투명 바탕으로 바뀝니다. 오른쪽 끝의 `YouTube에서 열기`는 보고 있는 주소를 브라우저 탭으로 엽니다. 좁은 창(`@container youtube (max-width: 44em)`)에서는 주소창 줄이 제목 아래로 내려갑니다.
+- **주소 해석**(`lib/youtube.ts`): `watch?v=`, `youtu.be/`, `shorts/`, `live/`, `embed/`, `playlist?list=`와 11자리 영상 ID를 받고 `t=`·`start=` 시작 시각을 초로 바꿉니다. 알아볼 수 없는 입력은 창 안에서 열지 않고 상단 알림(`.browser-notice`)에서 `YouTube에서 검색`을 제안합니다.
+- **탐색 이력**: 창 안의 뒤로·앞으로는 Relay가 가진 페이지 배열(`pages`/`index`)로 움직이고, 같은 주소를 다시 열면 이력을 늘리지 않고 새로 고칩니다. 플레이어 `iframe`은 `페이지 키:reloadKey`로 다시 마운트하며, 불러오는 동안 검은 바탕의 스피너를 보입니다.
+- **시작 페이지**: 아이콘·안내와 `최근 본 항목` 격자(16:9 섬네일 `i.ytimg.com/vi/<id>/mqdefault.jpg`, 두 줄 제목). 제목은 `youtube.com/oembed`에서 읽어 두고, 목록은 `localStorage["relay-youtube-v1"]`에 최대 12개를 둡니다. 모서리의 `×`는 바탕화면 견본과 같은 유리 단추입니다.
+- **플레이어 래퍼**: 유튜브는 플레이어를 넣은 페이지의 Referer가 없거나(오류 153) IP 주소(`http://127.0.0.1:포트`)이면 광고가 붙는 영상 재생을 거부하고 `http://localhost:포트`는 받아들입니다. 그래서 메인 화면은 플레이어를 직접 넣지 않고 `http://localhost:<포트>/youtube/player?v=…&list=…&start=…`(`youtube-player.ts`, 스크립트 없는 HTML)를 `iframe`으로 넣고, 그 페이지가 `referrerpolicy="strict-origin-when-cross-origin"`으로 nocookie 플레이어를 띄웁니다. 래퍼는 `frame-ancestors`로 이 서버의 두 루프백 출처만 허용하고, 127.0.0.1 화면이 넣으면 브라우저가 `Sec-Fetch-Site: cross-site`로 표시하므로 서버는 이 경로에서만 그 표시를 허용합니다. 바깥 `iframe`은 `sandbox`로 상위 창 이동을 막고 전체 화면·PiP·자동 재생을 허용합니다. 창을 끌거나 크기를 바꾸는 동안에는 `pointer-events: none`으로 플레이어가 포인터를 삼키지 않게 하고, 플레이어 안을 눌러 초점이 `iframe`으로 가면 `blur` 이벤트로 알아채 창을 앞으로 가져옵니다.
+- **CSP**: 메인 화면은 `frame-src 'self' http://localhost:<포트>`, `img-src … https://i.ytimg.com`, `connect-src 'self' https://www.youtube.com`만 더하고, 래퍼 페이지는 `default-src 'none'; frame-src https://www.youtube-nocookie.com`입니다. 세션 데이터는 바깥으로 나가지 않습니다.
