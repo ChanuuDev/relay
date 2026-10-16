@@ -105,7 +105,29 @@ test("YouTube 창: 주소를 넣으면 창 안에서 재생하고 뒤로·새로
   await expect(page.locator(".recent-tile")).toHaveCount(2);
   await page.getByRole("button", { name: "모두 지우기" }).click();
   await expect(page.locator(".recent-tile")).toHaveCount(0);
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("relay-youtube-v1") ?? "{}"))).toEqual({ version: 1, recent: [] });
+  expect(await page.evaluate(() => localStorage.getItem("relay-youtube-v1"))).toBeNull();
+
+  // ×로 창을 닫으면 보던 영상·이력·최근 본 항목이 모두 지워진다. 최소화는 재생을 그대로 둔다.
+  await address.fill("dQw4w9WgXcQ");
+  await address.press("Enter");
+  await expect(frame).toHaveAttribute("src", /\/youtube\/player\?v=dQw4w9WgXcQ$/);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("relay-youtube-v1") ?? "{}").recent?.length)).toBe(1);
+  await page.locator(`${win("youtube")} .window-control[data-window-action="minimize"]`).click();
+  await expect(page.locator(win("youtube"))).toBeHidden();
+  await expect(page.locator(".browser-frame")).toHaveCount(1);
+  await page.locator(dock("YouTube")).click();
+  await expect(page.locator(win("youtube"))).toBeVisible();
+  await expect(frame).toHaveAttribute("src", /\/youtube\/player\?v=dQw4w9WgXcQ$/);
+  await page.locator(`${win("youtube")} .window-control[data-window-action="close"]`).click();
+  await expect(page.locator(win("youtube"))).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("relay-youtube-v1"))).toBeNull();
+  await page.locator(dock("YouTube")).click();
+  await expect(page.locator(win("youtube"))).toBeVisible();
+  await expect(page.locator(".start-page")).toBeVisible();
+  await expect(page.locator(".recent-tile")).toHaveCount(0);
+  await expect(page.locator(".browser-frame")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "뒤로" })).toBeDisabled();
+  await expect(address).toHaveValue("");
   expect(hits.some((url) => url.startsWith("https://www.youtube.com/watch"))).toBe(false);
   expect(errors).toEqual([]);
 });

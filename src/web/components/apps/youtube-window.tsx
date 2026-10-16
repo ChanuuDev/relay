@@ -20,8 +20,10 @@ export function YouTubeWindow() {
   const reloadKey = useYouTube((state) => state.reloadKey);
   const error = useYouTube((state) => state.error);
   const recent = useYouTube((state) => state.recent);
-  const { go, open, home, back, forward, reload, dismissError, setTitle, removeRecent, clearRecent } = useYouTube.getState();
+  const { go, open, home, back, forward, reload, dismissError, setTitle, removeRecent, clearRecent, reset } = useYouTube.getState();
   const focused = useDesktop((state) => state.focused === "youtube");
+  const isOpen = useDesktop((state) => state.windows.youtube.open);
+  const wasOpen = useRef(isOpen);
   const [address, setAddress] = useState("");
   const [loadedKey, setLoadedKey] = useState("");
   const addressRef = useRef<HTMLInputElement>(null);
@@ -29,6 +31,12 @@ export function YouTubeWindow() {
   const frameKey = page.kind === "home" ? "" : `${keyOf(page)}:${reloadKey}`;
   const loading = frameKey !== "" && loadedKey !== frameKey;
 
+  // X로 창을 닫으면 보던 영상·이력·최근 본 항목을 모두 지운다(시크릿 창처럼). 최소화는 재생을 그대로 둔다.
+  useEffect(() => {
+    const previous = wasOpen.current;
+    wasOpen.current = isOpen;
+    if (previous && !isOpen) reset();
+  }, [isOpen, reset]);
   // 주소창은 보고 있는 페이지를 따른다.
   useEffect(() => { setAddress(page.kind === "home" ? "" : displayUrl(page)); }, [page]);
   // 크롬의 새 탭처럼, 앞에 있는 창의 시작 페이지에서는 주소창에 초점을 둔다.

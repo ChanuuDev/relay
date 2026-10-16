@@ -108,7 +108,10 @@ function loadRecent(): Recent[] {
 }
 
 function saveRecent(recent: Recent[]) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, recent })); } catch { /* 저장 실패는 재생에 영향이 없다. */ }
+  try {
+    if (recent.length) localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, recent }));
+    else localStorage.removeItem(STORE_KEY);
+  } catch { /* 저장 실패는 재생에 영향이 없다. */ }
 }
 
 interface YouTubeState {
@@ -130,6 +133,8 @@ interface YouTubeState {
   setTitle: (target: Target, title: string) => void;
   removeRecent: (target: Target) => void;
   clearRecent: () => void;
+  /** 창을 닫을 때 보던 영상·이력·최근 본 항목을 모두 지운다. */
+  reset: () => void;
 }
 
 const push = (state: YouTubeState, page: Page) => ({ pages: [...state.pages.slice(0, state.index + 1), page], index: state.index + 1, error: null });
@@ -163,6 +168,7 @@ export const useYouTube = create<YouTubeState>((set, get) => ({
   }),
   removeRecent: (target) => set((state) => ({ recent: state.recent.filter((entry) => keyOf(entry.target) !== keyOf(target)) })),
   clearRecent: () => set({ recent: [] }),
+  reset: () => set({ pages: [{ kind: "home" }], index: 0, reloadKey: 0, recent: [], error: null }),
 }));
 
 let savedRecent = useYouTube.getState().recent;
