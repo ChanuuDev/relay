@@ -237,7 +237,11 @@ describe("Interactive terminal", () => {
       expect(text).toContain("relay show");
       expect(text).toContain(target.providerSessionId);
       expect(text).toContain(config.dataDirectory);
-      expect(text).toEndWith("명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요.");
+      expect(text).toContain("--history --json");
+      expect(text).toContain("확인된 사실과 추가 확인이 필요한 사항을 구분");
+      expect(text).toContain("현재 사용자 요청과 프로젝트 지침을 우선");
+      expect(text).toContain("작업을 이어서 수행하라는 요청이 있으면");
+      expect(text).toContain("`relay-session` 스킬의 `continue` 절차");
     } finally { cleanup(dir); }
   });
 

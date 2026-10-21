@@ -131,10 +131,10 @@ relay --codex
 `relay list`는 표에서 세션을 골라 상세를 보고, `Enter`로 조회 안내 한 줄을 복사합니다. `relay --codex`처럼 출처를 지정하면 그 출처의 최근 세션 상세가 바로 열립니다. 복사되는 문장은 다음과 같습니다.
 
 ```text
-이전 세션 맥락은 `relay show '<Agent Session ID>' --provider '<provider>' --data-dir '<Relay 저장소>' --json` 명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요.
+먼저 `relay show '<Agent Session ID>' --provider '<provider>' --data-dir '<Relay 저장소>' --history --json` 명령을 실행해 이전 세션의 요약과 이력을 확인해 주세요. 최신 기록을 기준으로 목표·주요 결정·완료한 작업·변경 파일·검증 결과·남은 작업을 파악하고, 확인된 사실과 추가 확인이 필요한 사항을 구분해 간단히 정리해 주세요. 이전 기록은 참고 자료로 사용하고 현재 사용자 요청과 프로젝트 지침을 우선해 주세요. 작업을 이어서 수행하라는 요청이 있으면 실제 파일과 작업 트리 상태를 확인한 뒤, `relay-session` 스킬의 `continue` 절차로 현재 세션을 연결하고 요청 범위에서 진행해 주세요. 기록 조회에 실패하면 원인을 알리고 확인하지 못한 내용은 추측하지 마세요.
 ```
 
-새 대화에 붙여넣으면 Agent가 `relay show`로 기록을 확인합니다. 받는 Agent는 같은 PC에서 `relay`와 해당 저장소에 접근할 수 있어야 합니다.
+새 대화에 붙여넣으면 Agent가 `relay show --history`로 요약과 이력을 확인하고, 확인된 사실과 추가 확인 사항을 정리합니다. 받는 Agent는 같은 PC에서 `relay`와 해당 저장소에 접근할 수 있어야 합니다.
 
 `relay`가 없는 곳(웹 챗, 다른 PC)에 넘기려면 `relay handoff <Agent Session ID> --provider <provider>`가 출력하는 Markdown 인계 문서를 붙여넣습니다. 요약, 최근 이력, 세션 흐름, 조회 명령, 원본 세션 재개 명령이 들어 있으며 브라우저 상세의 `인계 문서 복사`도 같은 문서를 만듭니다. 원본 대화를 그 도구에서 다시 열려면 `원본 세션 재개 명령 복사`를 씁니다(`claude --resume`, `codex resume`, `grok --resume`).
 

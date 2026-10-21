@@ -95,10 +95,12 @@ test("context copy is one shell-safe line handing over the lookup command, never
   // A line break arrives as Enter while the paste is still coming in: the receiving CLI would send
   // the first lines as a message and drop the rest.
   expect(listContext).not.toMatch(/[\r\n]/);
-  for (const value of ["relay show", "--provider 'openai'", "--data-dir", env.dir.replaceAll("\\", "/")]) expect(listContext).toContain(value);
+  for (const value of ["relay show", "--provider 'openai'", "--data-dir", env.dir.replaceAll("\\", "/"), "--history --json"]) expect(listContext).toContain(value);
   // The ID reaches the command quoted for whichever shell the platform defaults to.
   expect(listContext).toMatch(/literal(''|'"'"')id; echo untrusted/);
-  expect(listContext).toMatch(/명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요\.$/);
+  for (const value of ["목표·주요 결정·완료한 작업·변경 파일·검증 결과·남은 작업", "확인된 사실과 추가 확인이 필요한 사항을 구분",
+    "현재 사용자 요청과 프로젝트 지침을 우선", "작업을 이어서 수행하라는 요청이 있으면", "실제 파일과 작업 트리 상태를 확인", "`relay-session` 스킬의 `continue` 절차",
+    "기록 조회에 실패하면 원인을 알리고"]) expect(listContext).toContain(value);
   // The note stays in the store; the receiving agent reads it with the command.
   expect(listContext).not.toContain(payload);
   await page.getByRole("link", { name: "안전한 텍스트 검사" }).click();
@@ -117,7 +119,7 @@ test("context copy is one shell-safe line handing over the lookup command, never
   await page.getByRole("button", { name: "조회 명령 복사" }).click();
   expect(await clipboardText(page)).toBe(command);
   await contextCopy.click();
-  expect(await clipboardText(page)).toBe(`이전 세션 맥락은 \`${command}\` 명령을 실행해 확인하고, 그 기록을 참고해 다음 작업에 참고 해주세요.`);
+  expect(await clipboardText(page)).toContain(`\`${command.replace(" --json", " --history --json")}\``);
   await page.getByLabel("조회 명령 셸").selectOption("bash");
   await contextCopy.click();
   const bashContext = await clipboardText(page);
