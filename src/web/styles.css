@@ -706,3 +706,136 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
   .window[data-window="youtube"] .window-toolbar { order: 3; flex-basis: 100%; }
   .start-page { padding: 32px 16px 24px; }
 }
+
+/* ── 메모 창: 폴더 트리로 정리하는 여러 메모 ─────────────── */
+.window[data-window="notes"] { --notes-accent: #0f9478; --notes-drop: color-mix(in srgb, var(--primary) 18%, transparent); }
+.dark .window[data-window="notes"] { --notes-accent: #3dd0aa; }
+/* 창 바탕은 비워 두어 사이드바·상단바 유리 너머로 바탕화면이 비친다. 내용 쪽만 불투명하다. */
+.window[data-window="notes"] .window-frame { container: notes / inline-size; }
+.notes-tools { display: flex; align-items: center; gap: 2px; }
+.notes-tools [data-slot="button"] { width: 28px; height: 28px; border-radius: 6px; color: inherit; }
+.notes-tools [data-slot="button"] svg { width: 15px; height: 15px; }
+.notes-tools [data-slot="button"]:disabled { opacity: .3; }
+.window:not([data-focused]) .notes-tools [data-slot="button"] { color: var(--glass-text-muted); }
+.notes-body { position: relative; }
+.notes-layout { flex: 1; min-height: 0; display: flex; }
+
+/* 사이드바: 유리 위에 검색·트리·개수 */
+.notes-sidebar { width: 256px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.notes-search { padding: 10px 10px 6px; flex-shrink: 0; }
+.notes-search [data-slot="input-group"] { border-color: var(--glass-control-border); }
+.notes-search [data-slot="input-group"]:hover { background: var(--glass-control-hover); }
+.notes-search [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); }
+.notes-search [data-slot="input-group-addon"] { color: var(--glass-text-muted); }
+.notes-search [data-slot="input-group-addon"] svg { width: 13px; height: 13px; }
+.notes-search [data-slot="input-group-control"]::placeholder { color: var(--glass-text-muted); }
+.notes-tree, .notes-results { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 4px 8px 12px; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.notes-tree[data-drop-root] { background: color-mix(in srgb, var(--primary) 7%, transparent); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent); border-radius: 8px; }
+.notes-tree-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: var(--fs-12); line-height: 1.7; color: var(--glass-text-muted); }
+.tree-item { outline: none; }
+.tree-item:focus-visible { outline: none; }
+.tree-row { position: relative; display: flex; align-items: center; gap: 6px; height: calc(1em + 15px); padding: 0 6px 0 calc(4px + var(--depth, 0) * 16px); border-radius: 6px;
+  font-size: var(--fs-13); line-height: 1; cursor: default; user-select: none; transition: background-color .12s ease-out; }
+.tree-item:hover > .tree-row { background: var(--glass-control-fill); }
+.tree-item[aria-selected="true"] > .tree-row { background: var(--selected); }
+.window:not([data-focused]) .tree-item[aria-selected="true"] > .tree-row { background: var(--selected-inactive); }
+.tree-item:focus-visible > .tree-row { box-shadow: inset 0 0 0 2px var(--ring); }
+.tree-item[data-drop] > .tree-row { background: var(--notes-drop); box-shadow: inset 0 0 0 1.5px var(--primary); }
+.tree-item[data-dragging] > .tree-row { opacity: .45; }
+.tree-chevron { display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; border-radius: 4px; color: var(--glass-text-muted); transition: transform .16s ease-out; }
+.tree-chevron svg { width: 12px; height: 12px; stroke-width: 2px; }
+.tree-chevron[data-hidden] { visibility: hidden; }
+.tree-chevron:not([data-hidden]):hover { background: var(--glass-control-hover); color: var(--foreground); }
+.tree-item[aria-expanded="true"] > .tree-row .tree-chevron { transform: rotate(90deg); }
+.tree-icon { width: 15px; height: 15px; color: var(--glass-text-muted); }
+.tree-item[data-kind="folder"] .tree-icon, .tree-icon[data-kind="folder"] { color: var(--notes-accent); }
+.tree-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: var(--lh-20); }
+.tree-item[data-kind="folder"] > .tree-row .tree-label { font-weight: 500; }
+.tree-count { font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.tree-more { display: none; place-items: center; width: 22px; height: 22px; margin-right: -2px; border-radius: 5px; color: var(--glass-text-muted); }
+.tree-more svg { width: 14px; height: 14px; }
+.tree-more:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.tree-item:hover > .tree-row .tree-more { display: grid; }
+.tree-item:hover > .tree-row .tree-count { display: none; }
+.tree-rename { flex: 1; min-width: 0; height: calc(1em + 9px); margin-right: 2px; padding: 0 6px; border: 1px solid var(--ring); border-radius: 4px; outline: none;
+  background: var(--background); color: var(--foreground); font: inherit; font-size: var(--fs-13); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent); }
+.notes-result { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border-radius: 6px; text-align: left; transition: background-color .12s ease-out; }
+.notes-result:hover { background: var(--glass-control-fill); }
+.notes-result[aria-current] { background: var(--selected); }
+.notes-result-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.notes-result-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-11); line-height: var(--lh-14); color: var(--glass-text-muted); }
+.notes-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: calc(1em + 17px); padding: 0 14px; flex-shrink: 0;
+  border-top: 1px solid var(--border); font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.notes-move-menu { max-height: 60vh; overflow-y: auto; }
+
+/* 내용: 불투명 바탕 위에 위치·날짜, 제목, 본문 */
+.notes-content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background); }
+.notes-content-bar { display: flex; align-items: center; gap: 12px; min-height: calc(1em + 23px); padding: 0 20px; flex-shrink: 0; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.notes-back { display: none; margin-left: -8px; }
+.notes-back svg { width: 14px; height: 14px; }
+.notes-crumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; white-space: nowrap; }
+.notes-crumbs button { padding: 2px 5px; border-radius: 4px; color: inherit; transition: background-color .12s ease-out, color .12s ease-out; }
+.notes-crumbs button:hover { background: var(--glass-control-fill); color: var(--foreground); }
+.notes-crumb { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.notes-crumb > svg { width: 11px; height: 11px; opacity: .6; }
+.notes-crumb > span { padding: 2px 5px; color: var(--foreground); overflow: hidden; text-overflow: ellipsis; }
+.note-time { flex-shrink: 0; }
+.note-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.note-sheet { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 780px; margin: 0 auto; padding: 14px 44px 0; }
+.note-title { width: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--foreground); caret-color: var(--notes-accent);
+  font: inherit; font-size: var(--fs-24); font-weight: 700; letter-spacing: -.025em; line-height: 1.35; }
+.note-title::placeholder, .note-body::placeholder { color: color-mix(in srgb, var(--foreground) 30%, transparent); }
+.note-body { flex: 1; min-height: 0; width: 100%; margin-top: 14px; padding: 0 0 40px; border: 0; outline: none; resize: none; background: transparent; color: var(--foreground);
+  caret-color: var(--notes-accent); font: inherit; font-size: var(--fs-14); line-height: 1.8; letter-spacing: -.005em; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+
+/* 폴더 보기: 하위 폴더와 메모 카드 */
+.folder-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.folder-sheet { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 32px 32px; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.folder-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; max-width: 960px; margin: 0 auto; }
+.folder-head h3 { font-size: var(--fs-24); font-weight: 700; letter-spacing: -.025em; line-height: 1.3; overflow-wrap: anywhere; }
+.folder-head p { margin-top: 4px; font-size: var(--fs-12); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.folder-actions { display: flex; gap: 8px; }
+.folder-actions svg { width: 13px; height: 13px; }
+.folder-empty { max-width: 960px; margin: 28px auto 0; padding: 28px; border: 1px dashed var(--border); border-radius: 12px; text-align: center; font-size: var(--fs-12); line-height: 1.7; color: var(--muted-foreground); }
+.folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 14px; max-width: 960px; margin: 22px auto 0; padding: 0; list-style: none; }
+.note-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; height: 100%; min-height: 132px; padding: 14px 16px 12px; text-align: left;
+  border-radius: 12px; background: var(--muted); border: 1px solid var(--border); color: inherit; box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+  transition: transform .15s ease-out, box-shadow .15s ease-out, border-color .15s ease-out; }
+.note-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0, 0, 0, .16); }
+.note-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.note-card[data-kind="folder"] { min-height: 0; background: color-mix(in srgb, var(--notes-accent) 9%, var(--muted)); border-color: color-mix(in srgb, var(--notes-accent) 22%, var(--border)); }
+.note-card[data-kind="folder"] > svg { width: 22px; height: 22px; color: var(--notes-accent); margin-bottom: 4px; }
+.note-card-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-13); font-weight: 600; line-height: var(--lh-20); }
+/* 클램프 상자에는 padding을 두지 않는다(잘린 넷째 줄이 비치지 않도록). */
+.note-card-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--fs-12); line-height: var(--lh-20);
+  color: var(--muted-foreground); overflow-wrap: anywhere; }
+.note-card-meta { margin-top: auto; padding-top: 4px; font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+
+/* 아직 아무것도 없을 때: 아이콘·안내·두 단추 */
+.notes-empty { flex: 1; min-height: 0; overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: 32px 24px;
+  background: radial-gradient(60% 45% at 50% 0%, color-mix(in srgb, var(--notes-accent) 16%, transparent), transparent 70%), var(--background); }
+.notes-empty-actions { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
+.notes-empty-actions svg { width: 14px; height: 14px; }
+
+/* 삭제 되살리기 안내 */
+.notes-undo { position: absolute; left: 50%; bottom: 16px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px);
+  padding: 6px 6px 6px 14px; border-radius: 12px; font-size: var(--fs-12); white-space: nowrap; animation: notes-rise .22s cubic-bezier(.2, .8, .2, 1); }
+.notes-undo > span { overflow: hidden; text-overflow: ellipsis; }
+.notes-undo [data-slot="button"] svg { width: 13px; height: 13px; }
+@keyframes notes-rise { from { opacity: 0; transform: translate(-50%, 8px); } }
+
+@media (hover: none) {
+  .tree-more { display: grid; }
+  .tree-count { display: none; }
+}
+/* 좁은 창: 목록과 내용을 한 번에 하나씩 보인다(13px에서 520px). */
+@container notes (max-width: 40em) {
+  .notes-sidebar { width: 100%; border-right: 0; }
+  .notes-layout[data-pane="tree"] .notes-content { display: none; }
+  .notes-layout[data-pane="content"] .notes-sidebar { display: none; }
+  .notes-back { display: inline-flex; }
+  .notes-content-bar { padding: 0 14px; }
+  .note-time { display: none; }
+  .note-sheet { padding: 10px 20px 0; }
+  .folder-sheet { padding: 8px 16px 24px; }
+}

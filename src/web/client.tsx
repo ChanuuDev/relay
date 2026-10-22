@@ -14,6 +14,7 @@ import { GuideWindow } from "./components/apps/guide-window";
 import { CommandWindow } from "./components/apps/command-window";
 import { SettingsWindow } from "./components/apps/settings-window";
 import { YouTubeWindow } from "./components/apps/youtube-window";
+import { NotesWindow } from "./components/apps/notes-window";
 import { resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
@@ -182,6 +183,7 @@ function App() {
       <CommandWindow detail={detail} health={health.data} copy={copy} />
       <SettingsWindow health={health.data} healthError={health.error} connection={connection} />
       <YouTubeWindow />
+      <NotesWindow />
     </main>
     <Dock />
     {toast && <div id="copy-status" className="copy-toast material-toast" role="status" ref={toastRef} data-leaving={toastLeaving ? "" : undefined}><Check />{toast.text}</div>}
