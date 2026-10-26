@@ -6,6 +6,7 @@ import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { AppIcon } from "../desktop/app-icons";
 import { DesktopMenu, type MenuEntry } from "../desktop/menu";
+import { NoteDocument } from "./note-editor";
 import {
   childMap, isWithin, labelOf, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type Row,
@@ -400,20 +401,13 @@ function Crumbs({ items, parentId, onOpen, current }: { items: Items; parentId: 
 }
 
 function NoteEditor({ note, items, onBack, onOpen }: { note: Note; items: Items; onBack: () => void; onOpen: (id: string) => void }) {
-  const { update } = useNotes.getState();
   return <div className="note-editor">
     <div className="notes-content-bar">
       <Button type="button" variant="ghost" size="xs" className="notes-back" onClick={onBack}><ChevronLeft aria-hidden="true" />목록</Button>
       <Crumbs items={items} parentId={note.parentId} onOpen={onOpen} />
       <time className="note-time" dateTime={new Date(note.updatedAt).toISOString()}>{dateFormat.format(note.updatedAt)}</time>
     </div>
-    <div className="note-sheet">
-      <input id="note-title" className="note-title" value={note.title} placeholder={labelOf({ ...note, title: "" })} aria-label="제목" maxLength={200}
-        autoComplete="off" onChange={(event) => update(note.id, { title: event.target.value })}
-        onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); focusField("body"); } }} />
-      <textarea id="note-body" className="note-body" value={note.body} placeholder="내용을 입력하세요" aria-label="본문"
-        onChange={(event) => update(note.id, { body: event.target.value })} />
-    </div>
+    <NoteDocument note={note} />
   </div>;
 }
 

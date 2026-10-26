@@ -781,12 +781,102 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-crumb > span { padding: 2px 5px; color: var(--foreground); overflow: hidden; text-overflow: ellipsis; }
 .note-time { flex-shrink: 0; }
 .note-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.note-sheet { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 780px; margin: 0 auto; padding: 14px 44px 0; }
+
+/* 위쪽 서식 도구: 되돌리기 · 문단 스타일 · 글자 서식 · 목록 · 블록 · 링크·표 | 보기 전환 · 내려받기 */
+.note-toolbar { display: flex; align-items: center; gap: 2px; min-height: 44px; padding: 0 12px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 55%, var(--background)); }
+.note-toolbar::-webkit-scrollbar { display: none; }
+.format-group { display: flex; align-items: center; gap: 1px; flex-shrink: 0; }
+.format-sep { width: 1px; height: 18px; margin: 0 6px; flex-shrink: 0; background: var(--border); }
+.format-tool[data-slot="button"] { width: 30px; height: 30px; border-radius: 7px; color: color-mix(in srgb, var(--foreground) 72%, transparent); }
+.format-tool[data-slot="button"] svg { width: 16px; height: 16px; }
+.format-tool[data-slot="button"]:hover:not(:disabled) { background: var(--glass-control-hover); color: var(--foreground); }
+.format-tool[data-slot="button"][data-active] { background: color-mix(in srgb, var(--notes-accent) 16%, transparent); color: var(--notes-accent); }
+.format-tool[data-slot="button"][data-active]:hover { background: color-mix(in srgb, var(--notes-accent) 24%, transparent); color: var(--notes-accent); }
+.format-tool[data-slot="button"]:disabled { opacity: .3; }
+.format-keys { margin-left: 8px; font-family: var(--font-sans); font-size: 11px; color: var(--glass-text-muted); }
+.format-end { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 12px; flex-shrink: 0; }
+.format-mode { display: flex; padding: 2px; border-radius: 8px; background: var(--glass-control-fill); border: 1px solid var(--glass-control-border); }
+.format-mode button { height: calc(1em + 11px); padding: 0 10px; border-radius: 6px; font-size: var(--fs-12); font-weight: 500; color: var(--muted-foreground);
+  transition: background-color .15s ease-out, color .15s ease-out, box-shadow .15s ease-out; }
+.format-mode button:hover { color: var(--foreground); }
+.format-mode button[aria-pressed="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 0 0 .5px rgba(0, 0, 0, .06); }
+.format-popover { z-index: 90; padding: 6px; border-radius: 10px; color: var(--foreground); }
+.link-form { display: flex; align-items: center; gap: 6px; width: 320px; }
+.link-form [data-slot="input"] { flex: 1; min-width: 0; height: calc(1em + 13px); }
+.format-menu { min-width: 180px; padding: 4px; }
+.format-menu .menu-item[data-danger]:hover, .format-menu .menu-item[data-danger]:focus-visible { background: var(--destructive); }
+
+/* 아래쪽 입력 창: 가운데 단에 제목과 본문 */
+.note-scroll { flex: 1; min-height: 0; overflow-y: auto; cursor: text; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.note-sheet { display: flex; flex-direction: column; min-height: 100%; width: 100%; max-width: 780px; margin: 0 auto; padding: 22px 44px 0; }
 .note-title { width: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--foreground); caret-color: var(--notes-accent);
   font: inherit; font-size: var(--fs-24); font-weight: 700; letter-spacing: -.025em; line-height: 1.35; }
-.note-title::placeholder, .note-body::placeholder { color: color-mix(in srgb, var(--foreground) 30%, transparent); }
-.note-body { flex: 1; min-height: 0; width: 100%; margin-top: 14px; padding: 0 0 40px; border: 0; outline: none; resize: none; background: transparent; color: var(--foreground);
-  caret-color: var(--notes-accent); font: inherit; font-size: var(--fs-14); line-height: 1.8; letter-spacing: -.005em; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.note-title::placeholder, .note-source::placeholder { color: color-mix(in srgb, var(--foreground) 30%, transparent); }
+.note-rich { flex: 1; display: flex; flex-direction: column; margin-top: 12px; }
+.note-source { flex: 1; width: 100%; min-height: 320px; margin-top: 14px; padding: 0 0 48px; border: 0; outline: none; resize: none; background: transparent;
+  color: var(--foreground); caret-color: var(--notes-accent); font-size: var(--fs-13); line-height: 1.75; letter-spacing: 0;
+  /* 고정폭 글꼴에는 한글이 없으므로 한글은 Pretendard로 받는다(generic monospace의 넓은 한글 대신). */
+  font-family: "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, "Pretendard Variable", Pretendard, ui-monospace, monospace;
+  field-sizing: content; tab-size: 2; }
+
+/* ProseMirror 기본 규칙(@tiptap/core가 넣던 CSS. CSP가 인라인 <style>을 막아 여기에 둔다) */
+.ProseMirror { position: relative; word-wrap: break-word; white-space: pre-wrap; white-space: break-spaces; font-variant-ligatures: none; font-feature-settings: "liga" 0; }
+.ProseMirror [contenteditable="false"] { white-space: normal; }
+.ProseMirror [contenteditable="false"] [contenteditable="true"] { white-space: pre-wrap; }
+.ProseMirror pre { white-space: pre-wrap; }
+img.ProseMirror-separator { display: inline !important; border: none !important; margin: 0 !important; width: 0 !important; height: 0 !important; }
+.ProseMirror-gapcursor { display: none; pointer-events: none; position: absolute; margin: 0; }
+.ProseMirror-gapcursor::after { content: ""; display: block; position: absolute; top: -2px; width: 20px; border-top: 1px solid var(--foreground); animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite; }
+@keyframes ProseMirror-cursor-blink { to { visibility: hidden; } }
+.ProseMirror-hideselection *::selection { background: transparent; }
+.ProseMirror-hideselection * { caret-color: transparent; }
+.ProseMirror-focused .ProseMirror-gapcursor { display: block; }
+
+/* 본문 서식 */
+.note-prose { flex: 1; min-height: 240px; padding-bottom: 56px; outline: none; color: var(--foreground); caret-color: var(--notes-accent);
+  font-size: var(--fs-14); line-height: 1.8; letter-spacing: -.005em; }
+.note-prose > * + * { margin-top: .55em; }
+.note-prose p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: color-mix(in srgb, var(--foreground) 30%, transparent); }
+.note-prose h1, .note-prose h2, .note-prose h3 { font-weight: 700; letter-spacing: -.02em; line-height: 1.4; }
+.note-prose h1 { font-size: calc(var(--fs-14) * 1.55); margin-top: 1.25em; }
+.note-prose h2 { font-size: calc(var(--fs-14) * 1.3); margin-top: 1.15em; }
+.note-prose h3 { font-size: calc(var(--fs-14) * 1.12); margin-top: 1em; font-weight: 650; }
+.note-prose > :first-child { margin-top: 0; }
+.note-prose strong { font-weight: 700; }
+.note-prose em { font-style: italic; }
+.note-prose s { text-decoration-thickness: 1px; color: var(--muted-foreground); }
+.note-prose a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent); text-underline-offset: 3px; cursor: text; }
+.note-prose code { padding: .1em .38em; border-radius: 5px; border: 1px solid var(--border); background: var(--glass-control-fill); font-size: .86em; }
+.note-prose pre { padding: 12px 16px; border-radius: 10px; background: var(--terminal-bg); color: var(--terminal-fg); font-family: var(--font-mono); font-size: var(--fs-12); line-height: 1.7;
+  overflow-x: auto; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); }
+.note-prose pre code { padding: 0; border: 0; background: none; color: inherit; font-size: inherit; }
+/* 다크에서는 터미널 바탕이 창 바탕과 같아 보이므로 한 단계 밝힌다. */
+.dark .note-prose pre { background: #2b2b30; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
+.note-prose blockquote { padding: 2px 0 2px 14px; border-left: 3px solid var(--notes-accent); color: var(--muted-foreground); }
+.note-prose ul, .note-prose ol { padding-left: 1.45em; }
+.note-prose ul { list-style: disc; }
+.note-prose ul ul { list-style: circle; }
+.note-prose ul ul ul { list-style: square; }
+.note-prose ol { list-style: decimal; }
+.note-prose li::marker { color: var(--glass-text-muted); }
+.note-prose li > p, .note-prose li > ul, .note-prose li > ol { margin-top: 0; }
+.note-prose li + li { margin-top: .15em; }
+.note-prose ul[data-type="taskList"] { list-style: none; padding-left: 2px; }
+.note-prose ul[data-type="taskList"] > li { display: flex; align-items: flex-start; gap: 9px; }
+.note-prose ul[data-type="taskList"] > li > label { display: flex; align-items: center; height: 1.8em; flex-shrink: 0; user-select: none; }
+.note-prose ul[data-type="taskList"] > li > label input { width: 15px; height: 15px; margin: 0; accent-color: var(--notes-accent); cursor: pointer; }
+.note-prose ul[data-type="taskList"] > li > div { flex: 1; min-width: 0; }
+.note-prose ul[data-type="taskList"] > li[data-checked="true"] > div { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted-foreground) 60%, transparent); }
+.note-prose hr { margin: 1.3em 0; border: 0; border-top: 1px solid var(--border); }
+.note-prose hr.ProseMirror-selectednode { border-top-color: var(--notes-accent); }
+.note-prose img { max-width: 100%; border-radius: 8px; }
+.note-prose .tableWrapper { margin: .9em 0; overflow-x: auto; }
+.note-prose table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-13); line-height: 1.6; }
+.note-prose th, .note-prose td { position: relative; min-width: 60px; padding: 6px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.note-prose th { background: var(--muted); font-weight: 600; }
+.note-prose th > p, .note-prose td > p { margin: 0; }
+.note-prose .selectedCell::after { content: ""; position: absolute; inset: 0; background: var(--selected); pointer-events: none; }
 
 /* 폴더 보기: 하위 폴더와 메모 카드 */
 .folder-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -836,6 +926,7 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
   .notes-back { display: inline-flex; }
   .notes-content-bar { padding: 0 14px; }
   .note-time { display: none; }
-  .note-sheet { padding: 10px 20px 0; }
+  .note-sheet { padding: 16px 20px 0; }
+  .note-toolbar { padding: 0 8px; }
   .folder-sheet { padding: 8px 16px 24px; }
 }

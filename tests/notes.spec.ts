@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 import { ready, useRelayServer } from "./web-helpers";
 
@@ -60,7 +61,7 @@ test("메모 창: 폴더를 만들고 그 안에 메모를 여러 개 써서 저
   await expect(page.getByLabel("제목", { exact: true })).toBeFocused();
   await page.keyboard.type("회의록");
   await page.keyboard.press("Enter");
-  await expect(page.getByLabel("본문")).toBeFocused();
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
   await page.keyboard.type("첫 줄\n둘째 줄");
   await expect(item(page, "회의록")).toHaveAttribute("aria-level", "2");
   await expect(item(page, "업무")).toHaveAttribute("aria-expanded", "true");
@@ -90,13 +91,13 @@ test("메모 창: 폴더를 만들고 그 안에 메모를 여러 개 써서 저
   await expect.poll(async () => (await saved(page))?.items?.length).toBe(4);
   const data = await saved(page);
   expect(data.version).toBe(1);
-  expect(data.items.find((entry: { title?: string }) => entry.title === "회의록").body).toBe("첫 줄\n둘째 줄");
+  expect(data.items.find((entry: { title?: string }) => entry.title === "회의록").body).toBe("첫 줄\n\n둘째 줄");
 
   // 다시 불러와도 창·트리·고른 메모가 그대로다.
   await page.reload();
   await expect(notes).toBeVisible();
   await expect(item(page, "회의록")).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByLabel("본문")).toHaveValue("첫 줄\n둘째 줄");
+  await expect(page.locator("#note-body p")).toHaveText(["첫 줄", "둘째 줄"]);
   await expect(page.getByLabel("제목", { exact: true })).toHaveValue("회의록");
   // 창을 닫아도 메모는 지워지지 않는다.
   await notes.locator('[data-window-action="close"]').click();
@@ -176,7 +177,7 @@ test("메모 창: 키보드로 트리를 다루고 검색한다", async ({ page 
   await page.keyboard.press("End");
   await expect(item(page, "장보기")).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByLabel("본문")).toBeFocused();
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
   // F2로 이름을 고치고 Esc로 취소한다.
   await item(page, "아이디어").click();
   await page.keyboard.press("F2");
@@ -227,6 +228,124 @@ test("메모 창: 깨진 저장본도 열린다(순환·없는 부모·모양이
   expect(errors).toEqual([]);
 });
 
+test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창에 보이고 Markdown으로 저장된다", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // CSP 위반(편집기가 인라인 <style>을 넣는 등)도 콘솔 오류로 잡는다.
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  await seed(page, [
+    { id: "n", kind: "note", parentId: null, title: "서식 연습", body: "" },
+    { id: "untitled", kind: "note", parentId: null, title: "", body: "## 굵은 **제목** 메모\n\n- [ ] 첫 할 일" },
+  ], { selected: "n" });
+  const notes = page.locator(win("notes"));
+  const toolbar = notes.getByRole("toolbar", { name: "서식" });
+  const body = page.locator("#note-body");
+  const stored = async () => (await saved(page))?.items?.find((entry: { id: string }) => entry.id === "n")?.body as string | undefined;
+  // 트리 이름은 Markdown 기호를 걷어 낸 첫 줄이다.
+  await expect(item(page, "굵은 제목 메모")).toBeVisible();
+  // 서식 도구는 입력 창 위에 있다.
+  await expect(toolbar).toBeVisible();
+  const bar = await toolbar.boundingBox();
+  const input = await body.boundingBox();
+  expect(bar!.y + bar!.height).toBeLessThanOrEqual(input!.y);
+
+  await body.click();
+  const heading = toolbar.getByRole("button", { name: "제목 1" });
+  await expect(toolbar.getByRole("button", { name: "본문 텍스트" })).toHaveAttribute("aria-pressed", "true");
+  await heading.click();
+  await page.keyboard.type("회의 요약");
+  await expect(body.locator("h1")).toHaveText("회의 요약");
+  await expect(heading).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Enter");
+  const bold = toolbar.getByRole("button", { name: "굵게" });
+  await bold.click();
+  await expect(bold).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.type("중요");
+  await bold.click();
+  await page.keyboard.type(" 그리고 ");
+  await page.keyboard.press("Control+i");
+  await page.keyboard.type("기울임");
+  await page.keyboard.press("Control+i");
+  await expect(body.locator("strong")).toHaveText("중요");
+  await expect(body.locator("em")).toHaveText("기울임");
+  await page.keyboard.press("Enter");
+  await toolbar.getByRole("button", { name: "체크리스트" }).click();
+  await page.keyboard.type("할 일");
+  await expect(body.locator('ul[data-type="taskList"] > li')).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  // 글자를 고르고 링크를 넣는다. 프로토콜이 없으면 https를 붙인다.
+  await page.keyboard.type("문서");
+  await page.keyboard.press("Shift+Home");
+  await toolbar.getByRole("button", { name: "링크" }).click();
+  const url = page.getByLabel("링크 주소");
+  await expect(url).toBeFocused();
+  await url.fill("tiptap.dev");
+  await url.press("Enter");
+  await expect(body.locator("a")).toHaveAttribute("href", "https://tiptap.dev");
+  await expect(body).toBeFocused();
+  // Ctrl+K도 링크 칸을 연다.
+  await page.keyboard.press("Control+k");
+  await expect(url).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(url).toHaveCount(0);
+  await expect.poll(stored).toContain("[문서](https://tiptap.dev)");
+  const markdown = (await stored())!;
+  expect(markdown).toContain("# 회의 요약");
+  expect(markdown).toContain("**중요** 그리고 *기울임*");
+  expect(markdown).toContain("- [ ] 할 일");
+
+  // 표 넣기 → 표 안에서는 행·열 편집 목록.
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await toolbar.getByRole("button", { name: "표 넣기" }).click();
+  await expect(body.locator("table tr")).toHaveCount(3);
+  await toolbar.getByRole("button", { name: "표 편집" }).click();
+  await page.getByRole("menuitem", { name: "아래에 행 추가" }).click();
+  await expect(body.locator("table tr")).toHaveCount(4);
+  await toolbar.getByRole("button", { name: "표 편집" }).click();
+  await page.getByRole("menuitem", { name: "표 삭제" }).click();
+  await expect(body.locator("table")).toHaveCount(0);
+
+  // Markdown 보기: 원문을 직접 고치고 서식 보기로 돌아오면 그대로 보인다. 보기만 바꿔서는 원문이 바뀌지 않는다.
+  await toolbar.getByRole("button", { name: "Markdown", exact: true }).click();
+  const source = page.locator("textarea#note-body");
+  await expect(source).toHaveValue(/\[문서\]\(https:\/\/tiptap\.dev\)/);
+  await expect(bold).toBeDisabled();
+  const raw = "## 원문에서 고침\n\n- [x] 끝난 일\n\n| 가 | 나 |\n| --- | --- |\n| 1 | 2 |\n\n```js\nconst a = 1;\n```";
+  await source.fill(raw);
+  await expect.poll(stored).toBe(raw);
+  await toolbar.getByRole("button", { name: "서식", exact: true }).click();
+  await expect(body.locator("h2")).toHaveText("원문에서 고침");
+  await expect(body.locator('ul[data-type="taskList"] input[type="checkbox"]')).toBeChecked();
+  await expect(body.locator("table th")).toHaveText(["가", "나"]);
+  await expect(body.locator("pre code")).toHaveText("const a = 1;");
+  expect(await stored()).toBe(raw);
+  // 체크 상자를 누르면 원문도 바뀐다.
+  await body.locator('ul[data-type="taskList"] input[type="checkbox"]').click();
+  await expect.poll(stored).toContain("- [ ] 끝난 일");
+
+  // .md 파일로 내려받으면 제목이 맨 위 제목 1로 들어간다.
+  const [download] = await Promise.all([page.waitForEvent("download"), toolbar.getByRole("button", { name: "Markdown 파일로 저장" }).click()]);
+  expect(download.suggestedFilename()).toBe("서식 연습.md");
+  const file = readFileSync((await download.path())!, "utf8");
+  expect(file.startsWith("# 서식 연습\n\n## 원문에서 고침\n")).toBe(true);
+  // 편집기가 인라인 <style>을 넣지 않는다(CSP style-src 'self').
+  expect(await page.locator("style[data-tiptap-style]").count()).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("메모 창: 예전 평문 메모는 줄바꿈을 지키고, 열어 보기만 해서는 원문이 바뀌지 않는다", async ({ page }) => {
+  const plain = "잘된 점: 세션 인계가 빨라짐\n아쉬운 점: 검색 범위\n- 다음에 할 일";
+  await seed(page, [{ id: "old", kind: "note", parentId: null, title: "회고", body: plain }], { selected: "old" });
+  const body = page.locator("#note-body");
+  await expect(body.locator("br")).toHaveCount(1);
+  await expect(body.locator("p").first()).toContainText("잘된 점: 세션 인계가 빨라짐");
+  await expect(body.locator("ul li")).toHaveText(["다음에 할 일"]);
+  await page.waitForTimeout(400);
+  expect((await saved(page)).items[0].body).toBe(plain);
+});
+
 test("메모 창: 좁은 화면에서는 목록과 내용을 번갈아 보인다", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seed(page, SAMPLE, { expanded: ["f-work"] });
@@ -235,8 +354,8 @@ test("메모 창: 좁은 화면에서는 목록과 내용을 번갈아 보인다
   await expect(notes.locator(".notes-content")).toBeHidden();
   await item(page, "분기 계획").click();
   await expect(notes.locator(".notes-sidebar")).toBeHidden();
-  await expect(page.getByLabel("본문")).toBeVisible();
-  await notes.getByRole("button", { name: "목록" }).click();
+  await expect(page.getByLabel("본문", { exact: true })).toBeVisible();
+  await notes.getByRole("button", { name: "목록", exact: true }).click();
   await expect(notes.locator(".notes-sidebar")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath("notes-mobile.png") });
@@ -263,4 +382,19 @@ test("감사용 스크린샷: 메모 창 다크·라이트", async ({ page }) =>
   await page.locator(win("notes")).locator(".titlebar").dblclick({ position: { x: 200, y: 20 } });
   await page.waitForTimeout(400);
   await page.screenshot({ path: test.info().outputPath("notes-window-light.png") });
+});
+
+test("감사용 스크린샷: 서식 편집기와 Markdown 원문", async ({ page }) => {
+  const body = "## 이번 주 목표\n\n**Relay 메모장**을 Markdown으로 바꾸고 *서식 도구*를 붙인다. `getMarkdown()`으로 저장.\n\n- 폴더 트리 정리\n- 끌어서 옮기기\n  - 하위 항목\n\n1. 첫째\n2. 둘째\n\n- [x] 서식 도구\n- [ ] 원문 보기\n\n> 인용문은 이렇게 보인다.\n\n```ts\nconst editor = useEditor({ extensions });\n```\n\n| 항목 | 상태 |\n| --- | --- |\n| 굵게 | 완료 |\n| 링크 | [문서](https://tiptap.dev) |";
+  await seed(page, [{ id: "n", kind: "note", parentId: null, title: "주간 회의", body }], { selected: "n" });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.locator(win("notes")).locator(".titlebar").dblclick({ position: { x: 200, y: 20 } });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: test.info().outputPath("notes-rich-dark.png") });
+  await page.getByRole("button", { name: "라이트 모드로 전환" }).click();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: test.info().outputPath("notes-rich-light.png") });
+  await page.getByRole("button", { name: "Markdown", exact: true }).click();
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: test.info().outputPath("notes-source-light.png") });
 });

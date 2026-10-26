@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-/** 폴더와 메모는 parentId로 트리를 이룬다. null은 최상위다. */
+/** 폴더와 메모는 parentId로 트리를 이룬다. null은 최상위다. 메모 본문(body)은 Markdown 원문이다. */
 export type Folder = { id: string; kind: "folder"; parentId: string | null; name: string; createdAt: number };
 export type Note = { id: string; kind: "note"; parentId: string | null; title: string; body: string; createdAt: number; updatedAt: number };
 export type Item = Folder | Note;
@@ -13,15 +13,49 @@ const MAX_TITLE = 200;
 const MAX_BODY = 200_000;
 const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
 
-/** 본문 전체를 나누지 않고 첫 번째 비어 있지 않은 줄만 찾는다(긴 메모에서 입력마다 부른다). */
-const firstLine = (text: string) => /\S[^\n]*/.exec(text)?.[0].trim() ?? "";
+/** 글로 보이지 않는 줄: 코드 울타리, 구분선, 표 구분 줄. */
+const SKIP_LINE = /^\s*(?:`{3,}|~{3,}|(?:[-*_]\s*){3,}$|\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$)/;
+/** Markdown 한 줄에서 문법 기호를 걷어 낸 글. 트리 이름과 카드 미리 보기에 쓴다. */
+export function plainLine(line: string) {
+  if (SKIP_LINE.test(line)) return "";
+  return line
+    .replace(/^\s{0,3}(?:#{1,6}\s+|(?:>\s?)+)/, "")
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|`)/g, "")
+    .replace(/(^|[^\w*])[*_](?=\S)([^*_]*?\S)[*_](?=$|[^\w*])/g, "$1$2")
+    .replace(/&nbsp;|\u00a0/g, " ")
+    .replace(/\\([\\`*_{}[\]()#+\-.!>|~])/g, "$1")
+    .replace(/\s*\|\s*/g, " ")
+    .trim();
+}
+/** 본문 전체를 나누지 않고 글이 있는 첫 줄만 찾는다(긴 메모에서 입력마다 부른다). */
+function firstLine(text: string) {
+  for (let start = 0; start < text.length;) {
+    const end = text.indexOf("\n", start);
+    const line = plainLine(text.slice(start, end === -1 ? undefined : end));
+    if (line) return line;
+    if (end === -1) break;
+    start = end + 1;
+  }
+  return "";
+}
 /** 트리와 카드에 보일 이름. 메모는 제목이 없으면 본문 첫 줄을 쓴다. */
 export const labelOf = (item: Item) => (item.kind === "folder" ? item.name : item.title.trim() || firstLine(item.body).slice(0, 80) || "새 메모");
-/** 메모 카드의 미리 보기. 제목을 본문 첫 줄에서 빌렸으면 그 다음 줄부터 보인다. */
+/** 메모 카드의 미리 보기(서식 기호 없이). 제목을 본문 첫 줄에서 빌렸으면 그 다음 줄부터 보인다. */
 export function previewOf(note: Note) {
-  const lines = note.body.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = note.body.split("\n").map(plainLine).filter(Boolean);
   return (note.title.trim() ? lines : lines.slice(1)).join(" ").slice(0, 160);
 }
+/** 내려받을 .md 파일 내용. 제목이 있으면 맨 위 제목 1로 넣는다. */
+export function markdownFile(note: Note) {
+  const body = note.body.replace(/\s+$/, "");
+  const title = note.title.trim();
+  return `${title ? `# ${title}\n\n` : ""}${body}\n`;
+}
+/** 파일 이름으로 쓸 수 없는 글자를 걷어 낸 이름. */
+export const fileNameOf = (note: Note) => `${labelOf(note).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "메모"}.md`;
 export const isEmptyNote = (item: Item | undefined): item is Note => item?.kind === "note" && !item.title.trim() && !item.body.trim();
 
 /** 폴더가 먼저, 같은 종류끼리는 이름 순(숫자는 크기 순). 이름은 미리 구해 둔 것을 쓴다. */
@@ -297,6 +331,17 @@ export const useNotes = create<NotesState>((set, get) => ({
   dismissTrash: () => set({ trash: null }),
   // 다른 탭이 저장하면 그 내용을 따른다.
   reload: () => set({ ...load(), renaming: null }),
+}));
+
+/** 본문을 서식이 보이게 쓸지(rich), Markdown 원문으로 쓸지(source). 메모마다가 아니라 창 전체 설정이다. */
+export type NoteMode = "rich" | "source";
+const MODE_KEY = "relay-notes-mode";
+export const useNoteMode = create<{ mode: NoteMode; setMode: (mode: NoteMode) => void }>((set) => ({
+  mode: (() => { try { return localStorage.getItem(MODE_KEY) === "source" ? "source" : "rich"; } catch { return "rich"; } })(),
+  setMode: (mode) => {
+    try { if (mode === "rich") localStorage.removeItem(MODE_KEY); else localStorage.setItem(MODE_KEY, mode); } catch { /* 저장하지 못해도 지금 창에서는 바뀐다. */ }
+    set({ mode });
+  },
 }));
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
