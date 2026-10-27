@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
-/** 폴더와 메모는 parentId로 트리를 이룬다. null은 최상위다. 메모 본문(body)은 Markdown 원문이다. */
+/** 폴더와 메모는 parentId로 트리를 이룬다. null은 최상위다. 메모 본문(body)은 Markdown 원문이다.
+ *  내용은 Relay 저장소(relay.db)에 두고 `/api/v1/notes`로 읽고 쓴다. 이 브라우저에는 펼친 폴더·고른 항목과 아직 보내지 못한 변경만 남는다. */
 export type Folder = { id: string; kind: "folder"; parentId: string | null; name: string; createdAt: number };
 export type Note = { id: string; kind: "note"; parentId: string | null; title: string; body: string; createdAt: number; updatedAt: number };
 export type Item = Folder | Note;
@@ -8,7 +9,14 @@ export type Items = Record<string, Item>;
 /** 트리에 실제로 보이는 한 줄. depth는 0부터, index는 형제 사이 순서(0부터), size는 형제 수. */
 export type Row = { item: Item; depth: number; hasChildren: boolean; index: number; size: number };
 
-const STORE_KEY = "relay-notes-v1";
+const API = "/api/v1/notes";
+/** 예전(브라우저에만 저장하던) 메모. 처음 연결될 때 DB로 옮기고 원본은 BACKUP_KEY로 남긴다. */
+const LEGACY_KEY = "relay-notes-v1";
+const BACKUP_KEY = "relay-notes-v1-backup";
+const VIEW_KEY = "relay-notes-view-v1";
+const PENDING_KEY = "relay-notes-pending-v1";
+const SAVE_DELAY = 400;
+const POLL_MS = 3000;
 const MAX_TITLE = 200;
 const MAX_BODY = 200_000;
 const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
@@ -156,19 +164,28 @@ const str = (value: unknown, max: number) => (typeof value === "string" ? value.
 
 type Saved = { items: Items; selected: string | null; expanded: Record<string, true> };
 
-/** 저장본을 읽고 모양이 틀린 항목은 버린다. 부모가 없거나 순환하는 항목은 최상위로 올린다. */
+/** 항목 하나의 모양을 고정한다. 틀리면 null. 부모 관계는 보지 않는다. */
+function shape(raw: unknown): Item | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.id !== "string" || !value.id) return null;
+  const parentId = typeof value.parentId === "string" ? value.parentId : null;
+  const createdAt = num(value.createdAt, 0);
+  if (value.kind === "folder") return { id: value.id, kind: "folder", parentId, name: str(value.name, MAX_TITLE).trim() || "새 폴더", createdAt };
+  if (value.kind === "note") return { id: value.id, kind: "note", parentId, title: str(value.title, MAX_TITLE), body: str(value.body, MAX_BODY), createdAt, updatedAt: num(value.updatedAt, createdAt) };
+  return null;
+}
+
+/** 예전 저장본을 읽고 모양이 틀린 항목은 버린다. 부모가 없거나 순환하는 항목은 최상위로 올린다. */
 export function sanitize(raw: unknown): Saved {
   const empty: Saved = { items: {}, selected: null, expanded: {} };
   if (!raw || typeof raw !== "object") return empty;
   const data = raw as { version?: unknown; items?: unknown; selected?: unknown; expanded?: unknown };
   if (data.version !== 1 || !Array.isArray(data.items)) return empty;
   const items: Items = {};
-  for (const value of data.items as Array<Record<string, unknown>>) {
-    if (!value || typeof value !== "object" || typeof value.id !== "string" || !value.id || items[value.id]) continue;
-    const parentId = typeof value.parentId === "string" ? value.parentId : null;
-    const createdAt = num(value.createdAt, 0);
-    if (value.kind === "folder") items[value.id] = { id: value.id, kind: "folder", parentId, name: str(value.name, MAX_TITLE).trim() || "새 폴더", createdAt };
-    else if (value.kind === "note") items[value.id] = { id: value.id, kind: "note", parentId, title: str(value.title, MAX_TITLE), body: str(value.body, MAX_BODY), createdAt, updatedAt: num(value.updatedAt, createdAt) };
+  for (const value of data.items) {
+    const item = shape(value);
+    if (item && !items[item.id]) items[item.id] = item;
   }
   for (const item of Object.values(items)) {
     const parent = item.parentId === null ? null : items[item.parentId];
@@ -180,19 +197,31 @@ export function sanitize(raw: unknown): Saved {
   return { items, selected, expanded };
 }
 
-function load(): Saved {
-  try { return sanitize(JSON.parse(localStorage.getItem(STORE_KEY) ?? "null")); } catch { return sanitize(null); }
+/** 이 브라우저에 남기는 보기 상태(고른 항목·펼친 폴더). 예전 저장본이 있으면 그 상태를 이어받는다. */
+function loadView(): Pick<Saved, "selected" | "expanded"> {
+  try {
+    const view = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null") as { selected?: unknown; expanded?: unknown } | null;
+    const source = view ?? JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "null") as { selected?: unknown; expanded?: unknown } | null;
+    const expanded: Record<string, true> = {};
+    if (Array.isArray(source?.expanded)) for (const id of source.expanded) if (typeof id === "string") expanded[id] = true;
+    return { selected: typeof source?.selected === "string" ? source.selected : null, expanded };
+  } catch { return { selected: null, expanded: {} }; }
 }
 
 /** 지운 항목을 되살릴 수 있게 한 번만 남겨 둔다. */
 export type Trash = { items: Item[]; label: string; kind: Item["kind"]; notes: number; expanded: string[]; at: number };
 
+/** 처음 불러오기: loading → ready, 서버에 닿지 않으면 error(다시 시도한다). */
+export type NotesStatus = "loading" | "ready" | "error";
+/** 저장: 모두 보냄(saved) · 보내는 중(saving) · 연결이 끊겨 다시 시도 중(offline) · 서버가 거부함(rejected). */
+export type NotesSync = "saved" | "saving" | "offline" | "rejected";
+
 interface NotesState extends Saved {
   /** 이름을 고치는 중인 항목. */
   renaming: string | null;
   trash: Trash | null;
-  /** 브라우저 저장소에 쓰지 못했을 때(용량 초과 등) 켜진다. */
-  saveFailed: boolean;
+  status: NotesStatus;
+  sync: NotesSync;
   select: (id: string | null) => void;
   setExpanded: (id: string, open: boolean) => void;
   createNote: (parentId: string | null) => string;
@@ -205,7 +234,6 @@ interface NotesState extends Saved {
   remove: (id: string) => void;
   undoRemove: () => void;
   dismissTrash: () => void;
-  reload: () => void;
 }
 
 /** 새 항목을 넣을 폴더: 고른 것이 폴더면 그 안, 메모면 그 메모가 있는 폴더. */
@@ -231,7 +259,7 @@ function reveal(items: Items, expanded: Record<string, true>, parentId: string |
 }
 
 export const useNotes = create<NotesState>((set, get) => ({
-  ...load(), renaming: null, trash: null, saveFailed: false,
+  items: {}, ...loadView(), renaming: null, trash: null, status: "loading", sync: "saved",
   select: (id) => set((state) => {
     if (state.selected === id) return state;
     const items = leave(state.items, state.selected, id);
@@ -329,8 +357,6 @@ export const useNotes = create<NotesState>((set, get) => ({
     return { items, selected, trash: null, expanded: root ? reveal(items, expanded, items[root.id]!.parentId) : expanded };
   }),
   dismissTrash: () => set({ trash: null }),
-  // 다른 탭이 저장하면 그 내용을 따른다.
-  reload: () => set({ ...load(), renaming: null }),
 }));
 
 /** 본문을 서식이 보이게 쓸지(rich), Markdown 원문으로 쓸지(source). 메모마다가 아니라 창 전체 설정이다. */
@@ -344,39 +370,176 @@ export const useNoteMode = create<{ mode: NoteMode; setMode: (mode: NoteMode) =>
   },
 }));
 
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
-let saved = (() => { const { items, selected, expanded } = useNotes.getState(); return { items, selected, expanded }; })();
+// ── DB와 맞추기 ─────────────────────────────────────────────
+// 고친 항목만 모아 SAVE_DELAY 뒤에 한 번에 보낸다(POST). 보내지 못한 변경은 PENDING_KEY에 남겨 창을 닫아도 다음에 보낸다.
+// POLL_MS마다 저장 번호(ETag)만 묻고, 다른 탭·창이 고쳤을 때만 목록을 다시 받는다. 아직 보내지 못한 이 창의 변경이 이긴다.
 
-/** 미뤄 둔 저장을 바로 쓴다. 탭을 닫거나 가릴 때 부른다. */
-export function flushNotes() {
+type Pending = { upserts: Map<string, Item>; deletes: Map<string, number> };
+let stamp = 0;
+const pending: Pending = readPending();
+/** 마지막으로 반영한 서버 저장 번호. */
+let revision = -1;
+let remote = false;
+let seen = useNotes.getState().items;
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let viewTimer: ReturnType<typeof setTimeout> | undefined;
+let flushing = false;
+let polling = false;
+let retryDelay = 3000;
+
+function readPending(): Pending {
+  const result: Pending = { upserts: new Map(), deletes: new Map() };
+  try {
+    const raw = JSON.parse(localStorage.getItem(PENDING_KEY) ?? "null") as { upserts?: unknown; deletes?: unknown } | null;
+    if (Array.isArray(raw?.upserts)) for (const value of raw.upserts) { const item = shape(value); if (item) result.upserts.set(item.id, item); }
+    if (Array.isArray(raw?.deletes)) for (const id of raw.deletes) if (typeof id === "string" && !result.upserts.has(id)) result.deletes.set(id, ++stamp);
+  } catch { /* 읽지 못하면 보낼 것이 없다. */ }
+  return result;
+}
+const hasPending = () => pending.upserts.size > 0 || pending.deletes.size > 0;
+function writePending() {
+  try {
+    if (!hasPending()) localStorage.removeItem(PENDING_KEY);
+    else localStorage.setItem(PENDING_KEY, JSON.stringify({ upserts: [...pending.upserts.values()], deletes: [...pending.deletes.keys()] }));
+  } catch { /* 브라우저에 남기지 못해도 서버로는 보낸다. */ }
+}
+const setSync = (sync: NotesSync) => { if (useNotes.getState().sync !== sync) useNotes.setState({ sync }); };
+const batchOf = () => ({ upserts: [...pending.upserts.values()], deletes: [...pending.deletes.entries()] });
+
+function schedule(delay = SAVE_DELAY) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => void flush(), delay);
+}
+
+/** 모아 둔 변경을 서버에 보낸다. 보내는 사이 다시 고친 항목은 남겨 두었다가 다음에 보낸다. */
+export async function flush() {
   clearTimeout(saveTimer);
   saveTimer = undefined;
-  const { items, selected, expanded } = useNotes.getState();
-  if (saved.items === items && saved.selected === selected && saved.expanded === expanded) return;
-  saved = { items, selected, expanded };
+  writePending();
+  if (flushing || useNotes.getState().status !== "ready" || !hasPending()) return;
+  const batch = batchOf();
+  flushing = true;
+  setSync("saving");
+  let retry = false;
   try {
-    if (!Object.keys(items).length) localStorage.removeItem(STORE_KEY);
-    else localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, items: Object.values(items), selected, expanded: Object.keys(expanded) }));
-    if (useNotes.getState().saveFailed) useNotes.setState({ saveFailed: false });
+    const response = await fetch(API, {
+      method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ upserts: batch.upserts, deletes: batch.deletes.map(([id]) => id) }),
+    });
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+      setSync("rejected");
+      return;
+    }
+    if (!response.ok) throw new Error(String(response.status));
+    const data = await response.json() as { revision: number };
+    for (const item of batch.upserts) if (pending.upserts.get(item.id) === item) pending.upserts.delete(item.id);
+    for (const [id, mark] of batch.deletes) if (pending.deletes.get(id) === mark) pending.deletes.delete(id);
+    writePending();
+    retryDelay = 3000;
+    // 그사이 다른 곳에서도 저장했다면 목록을 다시 받는다.
+    const missed = data.revision !== revision + 1;
+    revision = data.revision;
+    setSync(hasPending() ? "saving" : "saved");
+    if (missed) void poll(true);
   } catch {
-    // 다음 변경 때 다시 시도하도록 저장본 표시를 되돌린다.
-    saved = { items: {}, selected: null, expanded: {} };
-    useNotes.setState({ saveFailed: true });
+    setSync("offline");
+    retry = true;
+  } finally {
+    flushing = false;
+    if (retry) { schedule(retryDelay); retryDelay = Math.min(retryDelay * 2, 30000); }
+    else if (hasPending() && useNotes.getState().sync !== "rejected") schedule();
+  }
+}
+
+const sameItem = (a: Item | undefined, b: Item) => Boolean(a) && a!.kind === b.kind && a!.parentId === b.parentId && a!.createdAt === b.createdAt
+  && (a!.kind === "folder" ? a!.name === (b as Folder).name : a!.title === (b as Note).title && a!.body === (b as Note).body && a!.updatedAt === (b as Note).updatedAt);
+
+/** 서버 목록을 반영한다. 보내지 못한 이 창의 변경(넣기·지우기)은 그대로 두고, 내용이 같은 항목은 이전 객체를 다시 쓴다. */
+function applyRemote(list: unknown[]) {
+  const state = useNotes.getState();
+  const items: Items = {};
+  for (const value of list) {
+    const item = shape(value);
+    if (!item || pending.deletes.has(item.id)) continue;
+    items[item.id] = sameItem(state.items[item.id], item) ? state.items[item.id]! : item;
+  }
+  for (const [id, item] of pending.upserts) items[id] = item;
+  const expanded = { ...state.expanded };
+  for (const id of Object.keys(expanded)) if (items[id]?.kind !== "folder") delete expanded[id];
+  remote = true;
+  try {
+    useNotes.setState({ items, status: "ready", expanded, selected: state.selected && items[state.selected] ? state.selected : null,
+      renaming: state.renaming && items[state.renaming] ? state.renaming : null });
+  } finally { remote = false; }
+}
+
+/** 저장 번호가 바뀌었을 때만 목록을 다시 받는다. 보내는 중이면 건너뛴다(보낸 뒤 번호를 맞춘다). */
+async function poll(force = false) {
+  if (polling || flushing || (!force && document.hidden)) return;
+  polling = true;
+  try {
+    const response = await fetch(API, { cache: "no-store", headers: revision >= 0 && !force ? { "If-None-Match": `"${revision}"` } : {} });
+    if (response.status === 304) return;
+    if (!response.ok) throw new Error(String(response.status));
+    const data = await response.json() as { revision: number; items: unknown[] };
+    // 보내는 사이 받은 오래된 목록은 버린다.
+    if (flushing || data.revision < revision) return;
+    revision = data.revision;
+    applyRemote(data.items);
+  } catch { /* 다음 확인 때 다시 묻는다. */ } finally { polling = false; }
+}
+
+/** 예전에 이 브라우저에만 저장하던 메모를 DB로 옮긴다. 서버에 없는 항목만 보내고, 원본은 백업으로 남긴다. */
+function migrateLegacy(serverIds: Set<string>) {
+  try {
+    const raw = localStorage.getItem(LEGACY_KEY);
+    if (!raw) return;
+    const legacy = sanitize(JSON.parse(raw));
+    for (const item of Object.values(legacy.items)) if (!serverIds.has(item.id) && !pending.upserts.has(item.id)) pending.upserts.set(item.id, item);
+    localStorage.setItem(BACKUP_KEY, raw);
+    localStorage.removeItem(LEGACY_KEY);
+    writePending();
+  } catch { /* 옮기지 못한 원본은 그대로 둔다. */ }
+}
+
+/** 처음 목록을 받는다. 서버에 닿지 않으면 error로 두고 3초 뒤 다시 시도한다. */
+async function start() {
+  try {
+    const response = await fetch(API, { cache: "no-store" });
+    if (!response.ok) throw new Error(String(response.status));
+    const data = await response.json() as { revision: number; items: unknown[] };
+    migrateLegacy(new Set(data.items.map((item) => (item as { id?: string }).id ?? "")));
+    revision = data.revision;
+    applyRemote(data.items);
+    if (hasPending()) schedule(0);
+    setInterval(() => void poll(), POLL_MS);
+  } catch {
+    useNotes.setState({ status: "error" });
+    setTimeout(() => void start(), 3000);
   }
 }
 
 useNotes.subscribe((state) => {
-  if (saved.items === state.items && saved.selected === state.selected && saved.expanded === state.expanded) return;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushNotes, 250);
+  if (state.items !== seen && !remote) {
+    for (const [id, item] of Object.entries(state.items)) if (seen[id] !== item) { pending.upserts.set(id, item); pending.deletes.delete(id); }
+    for (const id of Object.keys(seen)) if (!state.items[id]) { pending.upserts.delete(id); pending.deletes.set(id, ++stamp); }
+    if (state.sync === "rejected") setSync("saving");
+    schedule();
+  }
+  seen = state.items;
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(() => {
+    const { selected, expanded } = useNotes.getState();
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify({ selected, expanded: Object.keys(expanded) })); } catch { /* 보기 상태는 잃어도 된다. */ }
+  }, 250);
 });
-window.addEventListener("pagehide", flushNotes);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushNotes(); });
-window.addEventListener("storage", (event: StorageEvent) => {
-  if (event.key !== STORE_KEY && event.key !== null) return;
-  // 이 탭에 아직 쓰지 않은 변경이 있으면 그것이 이긴다.
-  if (saveTimer !== undefined) return;
-  useNotes.getState().reload();
-  const { items, selected, expanded } = useNotes.getState();
-  saved = { items, selected, expanded };
-});
+// 창을 닫거나 가릴 때: 보내지 못한 변경을 브라우저에 남기고, 작으면 바로 보낸다(keepalive는 64KB까지).
+function leaveNow() {
+  writePending();
+  if (!hasPending() || useNotes.getState().status !== "ready") return;
+  const body = JSON.stringify({ upserts: [...pending.upserts.values()], deletes: [...pending.deletes.keys()] });
+  if (body.length < 60_000) void fetch(API, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body }).catch(() => {});
+}
+window.addEventListener("pagehide", leaveNow);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush(); else void poll(); });
+void start();

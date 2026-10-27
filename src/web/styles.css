@@ -778,6 +778,11 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: calc(1em + 17px); padding: 0 14px; flex-shrink: 0;
   border-top: 1px solid var(--border); font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .notes-move-menu { max-height: 60vh; overflow-y: auto; }
+.notes-sync { display: inline-flex; align-items: center; gap: 6px; }
+.notes-sync::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--system-green); }
+.notes-sync[data-sync="saving"]::before, .notes-sync[data-sync="loading"]::before { background: var(--muted-foreground); }
+.notes-sync[data-sync="offline"]::before, .notes-sync[data-sync="error"]::before { background: var(--system-yellow); }
+.notes-sync[data-sync="rejected"]::before { background: var(--destructive); }
 
 /* 내용: 불투명 바탕 위에 위치·날짜, 제목, 본문 */
 .notes-content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background); }

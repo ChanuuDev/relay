@@ -4,13 +4,14 @@ import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db/database";
 import { RelayError } from "../src/errors";
 import { fixture, input } from "./helpers";
+import { NoteStore } from "../src/notes/notes.store";
 
 describe("Local read-only HTTP API", () => {
   let f: ReturnType<typeof fixture>;
   let request: (url: string, init?: RequestInit) => Response;
   beforeEach(() => {
     f = fixture(); const handle = handler(f.service, f.config);
-    request = (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+    request = (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } })) as Response;
   });
   afterEach(() => f.close());
 
@@ -175,4 +176,94 @@ describe("Local read-only HTTP API", () => {
     expect((await request(`/api/v1/sessions/${child.id}/updates`).json()).items[0].status).toBe("handoff");
   });
 
+});
+
+describe("Notes API: the only write the web server accepts", () => {
+  let f: ReturnType<typeof fixture>;
+  let send: (url: string, init?: RequestInit) => Promise<Response>;
+  const origin = "http://127.0.0.1:7474";
+  const post = (body: unknown, headers: Record<string, string> = {}) => send("/api/v1/notes", {
+    method: "POST", body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers },
+  });
+  const list = async () => (await send("/api/v1/notes")).json() as Promise<{ revision: number; items: Array<Record<string, unknown>> }>;
+  beforeEach(() => {
+    f = fixture(); const handle = handler(f.service, f.config, new NoteStore(f.db));
+    send = async (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+  });
+  afterEach(() => f.close());
+
+  test("lists, saves a batch, answers 304 while nothing changed and cascades folder deletion", async () => {
+    const empty = await send("/api/v1/notes");
+    expect(await empty.json()).toEqual({ schemaVersion: 1, revision: 0, items: [] });
+    expect(empty.headers.get("ETag")).toBe('"0"');
+    expect((await send("/api/v1/notes", { headers: { "if-none-match": '"0"' } })).status).toBe(304);
+    const saved = await post({ upserts: [
+      { id: "f1", kind: "folder", parentId: null, name: "  업무  ", createdAt: 1, updatedAt: 1 },
+      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "# 제목\n\n- [ ] 할 일", createdAt: 2, updatedAt: 3 },
+      { id: "n2", kind: "note", parentId: null, title: "", body: "최상위", createdAt: 4, updatedAt: 4 },
+    ], deletes: [] });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ schemaVersion: 1, revision: 1 });
+    const after = await list();
+    expect(after.revision).toBe(1);
+    expect(after.items).toEqual([
+      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
+      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "# 제목\n\n- [ ] 할 일", createdAt: 2, updatedAt: 3 },
+      { id: "n2", kind: "note", parentId: null, title: "", body: "최상위", createdAt: 4, updatedAt: 4 },
+    ]);
+    expect((await send("/api/v1/notes", { headers: { "if-none-match": '"0"' } })).status).toBe(200);
+    // 고치기는 같은 id로 다시 보낸다. 폴더를 지우면 안의 메모도 지운다.
+    expect((await post({ upserts: [{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", createdAt: 4, updatedAt: 9 }], deletes: ["f1"] })).status).toBe(200);
+    expect((await list()).items).toEqual([{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", createdAt: 4, updatedAt: 9 }]);
+    // 세션은 그대로이고 세션 쪽 쓰기는 여전히 막혀 있다.
+    const blocked = await send("/api/v1/sessions", { method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}" });
+    expect(blocked.status).toBe(405); expect(blocked.headers.get("Allow")).toBe("GET");
+    const put = await send("/api/v1/notes", { method: "PUT", headers: { origin, "content-type": "application/json" }, body: "{}" });
+    expect(put.status).toBe(405); expect(put.headers.get("Allow")).toBe("GET, POST");
+  });
+
+  test("only accepts JSON posted by the same-origin screen and rejects malformed batches without writing", async () => {
+    const batch = { upserts: [{ id: "n1", kind: "note", parentId: null, title: "t", body: "b" }], deletes: [] };
+    const cases: Array<[Record<string, string>, number]> = [
+      [{ origin: "" }, 403],
+      [{ origin: "http://evil.example" }, 403],
+      [{ "sec-fetch-site": "cross-site" }, 403],
+      [{ "sec-fetch-site": "same-site" }, 403],
+      [{ "content-type": "text/plain" }, 415],
+      [{ "content-type": "application/x-www-form-urlencoded" }, 415],
+    ];
+    for (const [headers, status] of cases) {
+      const response = await post(batch, headers);
+      expect(response.status, JSON.stringify(headers)).toBe(status);
+    }
+    expect((await post(batch, { host: "evil.example:7474" })).status).toBe(403);
+    for (const bad of ["{", "[]", { upserts: "x" }, { upserts: [{ id: "a b", kind: "note" }] }, { upserts: [{ id: "a", kind: "page" }] },
+      { upserts: [{ id: "a", kind: "note", body: "x".repeat(200_001) }] }, { upserts: [{ id: "a", kind: "folder", parentId: "a" }] }, { deletes: [1] }]) {
+      const response = await post(bad);
+      expect(response.status, JSON.stringify(bad).slice(0, 80)).toBe(400);
+      expect((await response.json()).error.code).toBe("INVALID_ARGUMENT");
+    }
+    expect((await post({}, { "content-length": String(9 * 1024 * 1024) })).status).toBe(413);
+    expect((await list()).revision).toBe(0);
+  });
+
+  test("keeps the tree valid: missing or note parents and folder cycles fall back to the top level", async () => {
+    await post({ upserts: [
+      { id: "a", kind: "folder", parentId: "b", name: "가" },
+      { id: "b", kind: "folder", parentId: "a", name: "나" },
+      { id: "n", kind: "note", parentId: "gone", title: "길 잃은 메모" },
+      { id: "m", kind: "note", parentId: "n", title: "메모 아래 메모" },
+    ], deletes: [] });
+    const items = Object.fromEntries((await list()).items.map((item) => [item.id, item.parentId]));
+    expect(items.n).toBeNull(); expect(items.m).toBeNull();
+    expect([items.a, items.b].filter((parent) => parent === null)).toHaveLength(1);
+  });
+
+  test("without a note store the screen gets no write route", async () => {
+    const plain = handler(f.service, f.config);
+    const response = await plain(new Request("http://127.0.0.1:7474/api/v1/notes", { method: "POST", body: "{}",
+      headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json" } }));
+    expect(response.status).toBe(405); expect(response.headers.get("Allow")).toBe("GET");
+  });
 });

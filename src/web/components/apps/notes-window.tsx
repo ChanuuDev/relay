@@ -40,7 +40,8 @@ export function NotesWindow() {
   const selected = useNotes((state) => state.selected);
   const expanded = useNotes((state) => state.expanded);
   const trash = useNotes((state) => state.trash);
-  const saveFailed = useNotes((state) => state.saveFailed);
+  const status = useNotes((state) => state.status);
+  const sync = useNotes((state) => state.sync);
   const { select, createNote, createFolder, remove, startRename, move, undoRemove, dismissTrash, setExpanded } = useNotes.getState();
   const [query, setQuery] = useState("");
   const [pane, setPane] = useState<"tree" | "content">("tree");
@@ -175,14 +176,17 @@ export function NotesWindow() {
           ? <SearchResults items={items} query={query} selected={selected} onOpen={open} />
           : <NotesTree items={items} map={tree.map} counts={tree.notes} expanded={expanded} selected={selected} onOpen={open}
               onMenu={(id, left, top) => openMenu("item", id, left, top)} onDelete={removeItem} onToggle={setExpanded} />}
-        <div className="notes-footer"><span>메모 {counts.notes}개{counts.folders ? ` · 폴더 ${counts.folders}개` : ""}</span><span>이 브라우저에 저장</span></div>
+        <div className="notes-footer"><span>메모 {counts.notes}개{counts.folders ? ` · 폴더 ${counts.folders}개` : ""}</span><span className="notes-sync" data-sync={status === "ready" ? sync : status}>{status === "loading" ? "불러오는 중…" : status === "error" ? "서버 연결 대기"
+          : sync === "saving" ? "저장 중…" : sync === "offline" ? "저장 대기 · 다시 시도 중" : sync === "rejected" ? "저장 실패" : "Relay DB에 저장됨"}</span></div>
       </aside>
       <section className="notes-content" aria-label={current?.kind === "note" ? "메모 편집" : "폴더 내용"}>
-        {saveFailed && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>브라우저 저장 공간이 부족해 마지막 변경을 저장하지 못했습니다.</span></div>}
+        {status === "error" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>메모를 불러오지 못했습니다. Relay 서버에 다시 연결하는 중입니다.</span></div>}
+        {status === "ready" && sync === "offline" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버에 저장하지 못했습니다. 변경은 이 브라우저에 남겨 두었다가 연결되면 다시 저장합니다.</span></div>}
+        {status === "ready" && sync === "rejected" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버가 마지막 변경을 받지 않았습니다. 다시 고치면 다시 저장을 시도합니다.</span></div>}
         {current?.kind === "note"
           ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open} />
           : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")}
-              onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} empty={counts.notes + counts.folders === 0} />}
+              onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
       </section>
     </div>
     {trash && <div className="notes-undo material-toast" role="status">
@@ -411,19 +415,20 @@ function NoteEditor({ note, items, onBack, onOpen }: { note: Note; items: Items;
   </div>;
 }
 
-function FolderView({ folder, items, map, counts, empty, onOpen, onBack, onNewNote, onNewFolder }: {
-  folder: Folder | null; items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; empty: boolean; onOpen: (id: string) => void; onBack: () => void;
+function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onNewNote, onNewFolder }: {
+  folder: Folder | null; items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; empty: boolean; loading: boolean; onOpen: (id: string) => void; onBack: () => void;
   onNewNote: (parentId: string | null) => void; onNewFolder: (parentId: string | null) => void;
 }) {
   const id = folder?.id ?? null;
   const children = map.get(id) ?? [];
   const notes = children.filter((item): item is Note => item.kind === "note");
   const folders = children.filter((item): item is Folder => item.kind === "folder");
+  if (empty && loading) return <div className="notes-empty" role="status"><div className="start-hero"><AppIcon app="notes" size={72} /><h3>메모</h3><p>메모를 불러오는 중…</p></div></div>;
   if (empty) return <div className="notes-empty">
     <div className="start-hero">
       <AppIcon app="notes" size={72} />
       <h3>메모</h3>
-      <p>메모를 여러 개 쓰고 폴더와 하위 폴더로 정리할 수 있습니다. 메모는 끌어서 다른 폴더로 옮기고, 내용은 이 브라우저에만 저장됩니다.</p>
+      <p>메모를 여러 개 쓰고 폴더와 하위 폴더로 정리할 수 있습니다. 메모는 끌어서 다른 폴더로 옮기고, 내용은 Relay 저장소(relay.db)에 저장되어 어느 브라우저에서 열어도 같습니다.</p>
       <div className="notes-empty-actions">
         <Button type="button" size="sm" onClick={() => onNewNote(null)}><SquarePen aria-hidden="true" />새 메모</Button>
         <Button type="button" size="sm" variant="outline" onClick={() => onNewFolder(null)}><FolderPlus aria-hidden="true" />새 폴더</Button>

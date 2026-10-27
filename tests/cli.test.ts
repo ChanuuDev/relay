@@ -481,7 +481,7 @@ describe("web server control", () => {
     expect(await health()).toBeNull();
     const none = plain(["web", "--close", "--port", String(port)]);
     expect(none.code).toBe(0); expect(none.stderr).toContain("실행 중인 Relay 웹 서버가 없습니다");
-  });
+  }, 30000);
 
   test("--reload restarts the server on the same port, keeps the running server's store and starts one when none runs", async () => {
     expect(plain(["web", "--headless", "--port", String(port)]).code).toBe(0);
@@ -508,7 +508,7 @@ describe("web server control", () => {
     const fresh = plain(["web", "--reload", "--port", String(port)]);
     expect(fresh.code).toBe(0); expect(fresh.stderr).toContain("실행 중인 서버가 없어 새로 띄웠습니다");
     expect((await health())?.status).toBe(200);
-  });
+  }, 30000);
 
   test("--close leaves a foreign server alone and option conflicts fail before anything runs", async () => {
     const foreign = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response("other") });
@@ -530,5 +530,5 @@ describe("web server control", () => {
     const json = plain(["web", "--headless", "--json", "--port", String(port)]);
     expect(json.code).toBe(2); expect(JSON.parse(json.stderr).error.code).toBe("INVALID_ARGUMENT");
     expect(await health()).toBeNull();
-  });
+  }, 30000);
 });

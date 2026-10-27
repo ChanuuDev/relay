@@ -72,8 +72,8 @@ export function SettingsWindow({ health, healthError, connection }: {
       <div className="settings-row"><span>데이터베이스</span><code>{health?.databasePath ?? "확인 중…"}</code></div>
       <div className="settings-row"><span>버전</span><span>RELAY {health?.appVersion ? `v${health.appVersion}` : "—"}</span></div>
       <div className="settings-row"><span>연결</span><span className="settings-connection"><span className="connection-dot" data-state={connection} />{CONNECTION_LABEL[connection]}</span></div>
-      <div className="settings-row"><span>모드</span><Badge variant="outline">읽기 전용</Badge></div>
-      <p className="settings-note">127.0.0.1에서만 열리는 읽기 전용 로컬 서버입니다.</p>
+      <div className="settings-row"><span>모드</span><Badge variant="outline">세션 읽기 전용</Badge></div>
+      <p className="settings-note">127.0.0.1에서만 열리는 로컬 서버입니다. 세션 기록은 읽기만 하고, 쓰기는 메모 저장(같은 화면에서 보낸 JSON)뿐입니다.</p>
     </section>
   </Window>;
 }

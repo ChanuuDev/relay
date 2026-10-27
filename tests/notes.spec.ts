@@ -8,7 +8,8 @@ const KEY = "relay-notes-v1";
 const dock = (name: string) => `.dock-item[aria-label="${name}"]`;
 const win = (id: string) => `.window[data-window="${id}"]`;
 const item = (page: Page, name: string) => page.getByRole("treeitem", { name, exact: true });
-const saved = (page: Page) => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "null"), KEY);
+/** DB에 저장된 메모(화면이 보내 둔 것). */
+const saved = (page: Page) => page.evaluate(async () => (await fetch("/api/v1/notes", { cache: "no-store" })).json());
 
 type Seed = { id: string; kind: "folder" | "note"; parentId: string | null; name?: string; title?: string; body?: string };
 /** 브라우저 저장소에 메모를 넣고 다시 불러온 뒤 메모 창을 연다. */
@@ -90,7 +91,7 @@ test("메모 창: 폴더를 만들고 그 안에 메모를 여러 개 써서 저
 
   await expect.poll(async () => (await saved(page))?.items?.length).toBe(4);
   const data = await saved(page);
-  expect(data.version).toBe(1);
+  expect(data.schemaVersion).toBe(1);
   expect(data.items.find((entry: { title?: string }) => entry.title === "회의록").body).toBe("첫 줄\n\n둘째 줄");
 
   // 다시 불러와도 창·트리·고른 메모가 그대로다.
@@ -289,6 +290,8 @@ test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창�
   await expect(url).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(url).toHaveCount(0);
+  // 링크 칸이 닫히고 편집기가 초점을 되찾은 뒤에 이어서 친다(그 전에 친 키는 링크 칸으로 간다).
+  await expect(body).toBeFocused();
   await expect.poll(stored).toContain("[문서](https://tiptap.dev)");
   const markdown = (await stored())!;
   expect(markdown).toContain("# 회의 요약");
@@ -296,8 +299,12 @@ test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창�
   expect(markdown).toContain("- [ ] 할 일");
 
   // 표 넣기 → 표 안에서는 행·열 편집 목록.
+  // 편집기는 커서 이동을 selectionchange로 늦게 받으므로, 선택(링크 글자)이 접힌 것을 확인한 뒤 줄을 바꾼다.
   await page.keyboard.press("End");
+  await expect.poll(() => page.evaluate(() => document.getSelection()?.isCollapsed)).toBe(true);
+  await page.waitForTimeout(100);
   await page.keyboard.press("Enter");
+  await expect(body.locator("a")).toHaveText("문서");
   await toolbar.getByRole("button", { name: "표 넣기" }).click();
   await expect(body.locator("table tr")).toHaveCount(3);
   await toolbar.getByRole("button", { name: "표 편집" }).click();
@@ -342,8 +349,35 @@ test("메모 창: 예전 평문 메모는 줄바꿈을 지키고, 열어 보기�
   await expect(body.locator("br")).toHaveCount(1);
   await expect(body.locator("p").first()).toContainText("잘된 점: 세션 인계가 빨라짐");
   await expect(body.locator("ul li")).toHaveText(["다음에 할 일"]);
-  await page.waitForTimeout(400);
+  await expect.poll(async () => (await saved(page)).items[0]?.body).toBe(plain);
+  await page.waitForTimeout(600);
   expect((await saved(page)).items[0].body).toBe(plain);
+});
+
+test("메모 창: 메모는 Relay DB에 저장되어 다른 브라우저에서도 같고, 예전 브라우저 저장본은 DB로 옮긴다", async ({ page, browser }) => {
+  // 예전 저장본(브라우저에만 있던 메모)은 처음 연결될 때 DB로 올라가고 원본은 백업으로 남는다.
+  await seed(page, SAMPLE.slice(0, 3), { selected: "f-work" });
+  await expect.poll(async () => (await saved(page)).items.length).toBe(3);
+  expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("relay-notes-v1-backup"))).toContain("f-work");
+  await expect(page.locator(win("notes")).locator(".notes-sync")).toHaveText("Relay DB에 저장됨");
+  // 다른 브라우저(저장소가 다른 새 컨텍스트)에서도 같은 메모가 보인다.
+  const other = await browser.newContext();
+  const second = await other.newPage();
+  try {
+    await ready(second);
+    await second.locator(dock("메모")).click();
+    await expect(second.getByRole("treeitem", { name: "업무", exact: true })).toBeVisible();
+    // 그 브라우저에서 만든 메모가 처음 창에도 나타난다(3초마다 저장 번호를 확인한다).
+    await second.locator(win("notes")).getByRole("button", { name: "새 메모" }).first().click();
+    await expect(second.getByLabel("제목", { exact: true })).toBeFocused();
+    await second.keyboard.type("다른 창에서 쓴 메모");
+    await expect(second.locator(win("notes")).locator(".notes-sync")).toHaveText("Relay DB에 저장됨");
+    await expect(item(page, "다른 창에서 쓴 메모")).toBeVisible({ timeout: 10000 });
+  } finally { await other.close(); }
+  // 서버를 다시 띄워도(같은 저장소) 그대로다.
+  await page.reload();
+  await expect(item(page, "다른 창에서 쓴 메모")).toBeVisible();
 });
 
 test("메모 창: 좁은 화면에서는 목록과 내용을 번갈아 보인다", async ({ page }) => {

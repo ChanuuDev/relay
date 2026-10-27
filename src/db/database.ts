@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/004_init.sql" with { type: "text" };
+import schema from "./migrations/005_init.sql" with { type: "text" };
 
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -81,9 +81,32 @@ function migrateV3(db: Database) {
     ALTER TABLE session_updates ADD COLUMN status TEXT CHECK(status IS NULL OR status IN ('working', 'blocked', 'handoff', 'done'));`);
 }
 
+// v5 adds the desktop notes (folders and Markdown notes in a tree) that the web screen writes. Sessions are untouched.
+function migrateV4(db: Database) {
+  db.exec(`CREATE TABLE notes (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('folder', 'note')),
+  parent_id TEXT,
+  name TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  CHECK(parent_id IS NULL OR parent_id <> id)
+);
+CREATE INDEX idx_notes_parent ON notes(parent_id);
+CREATE TABLE notes_meta (
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
+INSERT INTO notes_meta (key, value) VALUES ('revision', 0);
+`);
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current !== 0 && current !== 1 && current !== 2 && current !== 3) {
+  if (current !== 0 && current !== 1 && current !== 2 && current !== 3 && current !== 4) {
     checkVersion(db);
     return;
   }
@@ -101,13 +124,19 @@ function initializeOrMigrate(db: Database) {
       migrateV1(db);
       migrateV2(db);
       migrateV3(db);
+      migrateV4(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 2) {
       migrateV2(db);
       migrateV3(db);
+      migrateV4(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 3) {
       migrateV3(db);
+      migrateV4(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 4) {
+      migrateV4(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);

@@ -6,6 +6,8 @@ import { DB_VERSION, openDatabase } from "../src/db/database";
 import legacySchema from "../src/db/migrations/001_init.sql" with { type: "text" };
 import v2Schema from "../src/db/migrations/002_init.sql" with { type: "text" };
 import v3Schema from "../src/db/migrations/003_init.sql" with { type: "text" };
+import v4Schema from "../src/db/migrations/004_init.sql" with { type: "text" };
+import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
 import { SessionService } from "../src/session/session.service";
 import { cleanup, cliAsync, input, root, temporary } from "./helpers";
@@ -145,6 +147,26 @@ describe("Database record migration", () => {
       expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 0 });
       expect(db.query("SELECT count(*) AS n FROM sessions").get()).toEqual({ n: 2 });
     } finally { db.close(); }
+  });
+
+  test("v4 databases gain the notes tables in place and keep every session", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v4Schema);
+    db.exec("PRAGMA user_version = 4");
+    const at = "2026-10-27T00:00:00.000Z";
+    db.query(`INSERT INTO sessions (id, provider, agent, provider_session_id, working_directory, summary, created_at, updated_at, status, pinned)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run("ses_v4", "anthropic", "claude-code", "v4", root, "맥락", at, at, "done", 1);
+    const before = db.query("SELECT * FROM sessions").all();
+    db.close();
+    const writer = openDatabase(loadConfig(dir));
+    try {
+      expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(writer.query("SELECT * FROM sessions").all()).toEqual(before);
+      const notes = new NoteStore(writer);
+      expect(notes.list()).toEqual({ schemaVersion: 1, revision: 0, items: [] });
+      expect(notes.apply({ upserts: [{ id: "n", kind: "note", parentId: null, title: "첫 메모", body: "본문", createdAt: 1, updatedAt: 1 }], deletes: [] }).revision).toBe(1);
+      expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { writer.close(); }
   });
 
   test("v3 records gain the declared state, pin and history state columns in place", () => {
