@@ -29,7 +29,7 @@ div.desktop (fixed inset-0)
 | `.material-bar` | 20px | 메뉴바 |
 | `.material-dock` | 30px | Dock 캡슐, 모바일 탭바 |
 | `.material-chrome` | 40px | 창 상단바, 세션 목록 패널·상태바·필터 행, 설정 창 바깥 |
-| `.material-menu` | 30px | 드롭다운 메뉴, 선택 목록(shadcn Select), Dock 툴팁, Radix 툴팁, 복사 폴백 |
+| `.material-menu` | 30px | 드롭다운 메뉴, 선택 목록(shadcn Select), Radix 툴팁, 복사 폴백 |
 | `.material-toast` | 24px | 복사 토스트 |
 | `.material-control` | 없음 | 검색·Provider 입력, 세그먼트 컨트롤, 아이콘 버튼 |
 
@@ -71,7 +71,7 @@ div.desktop (fixed inset-0)
 해당 컴포넌트는 `useGSAP`으로 그 헬퍼를 부릅니다. 애니메이션 대상은 transform·opacity이며(상세 필터 행의 `height: auto`는 예외),
 설계 근거는 `.tasks/motion-design.md`입니다.
 
-Dock의 확대와 라벨은 사용자가 제공한 21st.dev 컴포넌트를 `components/ui/dock.tsx`에 적용한 Framer Motion 스프링으로 처리합니다. 포인터로부터 150px 이내의 아이콘은 기본 48px에서 최대 80px로 확대됩니다. 아이콘 PNG·앱 실행·열림 표시점은 유지하고, 라벨은 Dock의 backdrop 경계 밖 포털에 표시합니다. 실제 `button`을 사용해 Enter·Space 실행을 지원하고 키보드 초점도 확대합니다. 모바일과 동작 줄이기 설정에서는 고정 크기로 표시합니다.
+Dock의 확대와 라벨은 사용자가 제공한 21st.dev 컴포넌트를 `components/ui/dock.tsx`에 적용한 Framer Motion 스프링으로 처리합니다. 포인터로부터 150px 이내의 아이콘은 기본 48px에서 최대 80px로 확대됩니다. 아이콘 PNG·앱 실행·열림 표시점은 유지하고, 라벨은 Dock의 backdrop 경계 밖 포털에 표시합니다. 라벨은 Dock 전체에 **하나**만 두어 포인터에서 가장 가까운 아이콘(키보드 초점이 있으면 그 아이콘)을 따라 미끄러지며 글자만 바꿉니다. 아이콘마다 라벨을 따로 띄우면 아이콘 사이 틈을 지날 때마다 사라졌다 나타나고 사라지는 라벨이 겹쳐 깜빡였습니다. 라벨 위치는 상태 대신 MotionValue로 매 프레임 아이콘 위 34px에 맞추고, 바탕은 거의 불투명한 알약(`--dock-tip-fill`, 블러 없음)이라 아래 창 글자가 비치지 않습니다. 눌러서 생긴 초점은 라벨을 붙잡지 않습니다. 창은 화면 아래 104px(`DOCK_RESERVED` = Dock 아래 여백 12 + 막대 안쪽 여백 7 + 가장 커진 아이콘 80 + 5)를 비워 두어, 커진 아이콘이 최대화한 창을 덮지 않습니다. 실제 `button`을 사용해 Enter·Space 실행을 지원하고 키보드 초점도 확대합니다. 모바일과 동작 줄이기 설정에서는 고정 크기로 표시합니다.
 
 | 토큰 | 값 | 용도 |
 | --- | --- | --- |

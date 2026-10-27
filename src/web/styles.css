@@ -38,6 +38,7 @@
   --glass-chrome-fill: rgba(255, 255, 255, .64);
   --glass-chrome-dim: rgba(255, 255, 255, .76);
   --glass-menu-fill: rgba(255, 255, 255, .74);
+  --dock-tip-fill: rgba(246, 246, 248, .97); --dock-tip-border: rgba(0, 0, 0, .08);
   --glass-toast-fill: rgba(255, 255, 255, .72);
   --glass-control-fill: rgba(0, 0, 0, .05);
   --glass-control-hover: rgba(0, 0, 0, .09);
@@ -82,6 +83,7 @@
   --glass-chrome-fill: rgba(36, 36, 40, .62);
   --glass-chrome-dim: rgba(36, 36, 40, .74);
   --glass-menu-fill: rgba(36, 36, 40, .68);
+  --dock-tip-fill: rgba(46, 46, 52, .97); --dock-tip-border: rgba(255, 255, 255, .12);
   --glass-toast-fill: rgba(44, 44, 48, .66);
   --glass-control-fill: rgba(255, 255, 255, .08);
   --glass-control-hover: rgba(255, 255, 255, .13);
@@ -290,9 +292,12 @@ body[data-window-dragging] .window-frame { transition: none; }
 .dock-item:active .app-icon { transform: scale(.95); }
 .dock-dot { position: absolute; top: calc(100% + 2px); width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0; }
 .dock-item[data-open] .dock-dot { opacity: .6; }
+/* Dock 라벨: Dock 전체에 하나뿐이며 가까운 아이콘을 따라 미끄러진다. 거의 불투명한 알약이라 아래 창 글자가 비치지 않고,
+   움직이는 동안 아래 유리(backdrop-filter)를 매 프레임 다시 흐리지 않는다. */
 .dock-tip { position: fixed; z-index: 95; pointer-events: none; display: flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 8px;
-  white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--foreground); }
-.dock-tip::after { content: ""; position: absolute; top: 100%; left: 50%; width: 10px; height: 6px; transform: translateX(-50%); background: var(--glass-menu-fill); clip-path: polygon(0 0, 100% 0, 50% 100%); }
+  white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--foreground); background: var(--dock-tip-fill);
+  border: 1px solid var(--dock-tip-border); box-shadow: var(--glass-highlight), 0 6px 18px rgba(0, 0, 0, .28); }
+.dock-tip::after { content: ""; position: absolute; top: 100%; left: 50%; width: 10px; height: 6px; transform: translateX(-50%); background: var(--dock-tip-fill); clip-path: polygon(0 0, 100% 0, 50% 100%); }
 
 /* ── 세션 창 ─────────────────────────────────────────────── */
 .sessions-header { display: flex; flex-direction: column; flex-shrink: 0; }

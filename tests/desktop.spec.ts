@@ -89,6 +89,39 @@ test("Dock은 포인터 주변 아이콘을 확대하고 원래 크기로 복귀
   expect(errors).toEqual([]);
 });
 
+test("Dock 위에서 움직이는 동안 라벨은 하나로 끊기지 않고, 커진 아이콘은 최대화한 창을 덮지 않는다", async ({ page }) => {
+  record("dock-label", "라벨 확인");
+  await ready(page);
+  await page.locator(`${win("sessions")} .window-title`).dblclick();
+  await expect(page.locator(win("sessions"))).toHaveAttribute("data-maximized", "");
+  const windowBottom = await page.locator(win("sessions")).evaluate((element) => element.getBoundingClientRect().bottom);
+  const bar = await box(page, ".dock-bar");
+  const y = bar.y + bar.height / 2;
+  await page.mouse.move(bar.x + 20, y);
+  await expect(page.locator(".dock-tip")).toHaveCount(1);
+  // 아이콘 사이 틈을 지나도 라벨은 사라지거나 둘로 겹치지 않고, 가장 가까운 아이콘 이름으로 바뀐다.
+  const seen = new Set<string>();
+  let highest = Infinity;
+  for (let x = bar.x + 20; x <= bar.x + bar.width - 20; x += 9) {
+    await page.mouse.move(x, y);
+    const state = await page.evaluate(() => ({
+      tips: Array.from(document.querySelectorAll<HTMLElement>(".dock-tip")).map((tip) => ({ text: tip.textContent ?? "", opacity: Number(getComputedStyle(tip).opacity) })),
+      top: Math.min(...Array.from(document.querySelectorAll(".dock-item img")).map((image) => image.getBoundingClientRect().top)),
+    }));
+    expect(state.tips).toHaveLength(1);
+    seen.add(state.tips[0]!.text);
+    highest = Math.min(highest, state.top);
+  }
+  expect([...seen].sort()).toEqual(["YouTube", "가이드", "메모", "명령", "설정", "세션"].sort());
+  expect(highest).toBeGreaterThanOrEqual(windowBottom);
+  // 라벨은 아래 창 글자가 비치는 유리가 아니다.
+  expect(await page.locator(".dock-tip").evaluate((tip) => getComputedStyle(tip).backdropFilter)).toBe("none");
+  // 눌러서 생긴 초점은 포인터가 떠나면 라벨을 남기지 않는다.
+  await page.locator(dock("설정")).click();
+  await page.mouse.move(0, 400);
+  await expect(page.locator(".dock-tip")).toHaveCount(0);
+});
+
 test("동작 줄이기 설정을 켜면 확대 중인 Dock도 즉시 고정 크기로 돌아간다", async ({ page }) => {
   record("dock-reduced", "Dock 접근성 확인");
   await ready(page);
@@ -180,7 +213,7 @@ test("창 열기·최소화·최대화·닫기가 Dock 표시와 함께 동작�
   expect(Math.abs(maximized.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(maximized.y - 28)).toBeLessThanOrEqual(1);
   expect(Math.abs(maximized.x + maximized.width - viewport.width)).toBeLessThanOrEqual(1);
-  expect(Math.abs(maximized.y + maximized.height - (viewport.height - 88))).toBeLessThanOrEqual(1);
+  expect(Math.abs(maximized.y + maximized.height - (viewport.height - 104))).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "설정 창 복원" }).click();
   const back = await box(page, win("settings"));
   expect(Math.round(back.x)).toBe(Math.round(restored.x));
