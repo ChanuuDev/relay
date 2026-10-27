@@ -560,6 +560,12 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 /* 토스트와 복사 폴백 */
 .copy-toast { z-index: 100; position: fixed; bottom: 104px; left: 50%; translate: -50%; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: 999px; color: var(--foreground); font-size: 13px; }
 .copy-toast svg { width: 16px; height: 16px; color: var(--system-green); }
+/* 서버가 새 빌드로 다시 떴는데 입력 중이라 바로 새로 고치지 않을 때: 메뉴바 아래 가운데 */
+.update-toast { z-index: 100; position: fixed; top: calc(var(--menubar-height) + 10px); left: 50%; translate: -50%; display: flex; align-items: center; gap: 10px;
+  height: 40px; padding: 0 6px 0 16px; border-radius: 999px; color: var(--foreground); font-size: 13px; white-space: nowrap; animation: update-drop .22s cubic-bezier(.2, .8, .2, 1); }
+@keyframes update-drop { from { opacity: 0; transform: translateY(-6px); } }
+.update-toast > svg { width: 15px; height: 15px; color: var(--primary); }
+.update-toast [data-slot="button"] svg { width: 13px; height: 13px; }
 .copy-fallback { z-index: 100; position: fixed; bottom: 104px; right: 20px; max-width: calc(100vw - 40px); width: 460px; padding: 16px; border-radius: 12px; color: var(--foreground); }
 .copy-fallback > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--fs-12); margin-bottom: 8px; }
 .copy-fallback [data-slot="textarea"] { background: var(--background); }

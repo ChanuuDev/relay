@@ -26,6 +26,6 @@
 
 1. **검증**: `npm run check`(typecheck → test → build → test:web)가 통과해야 한다. 실패하면 고친 뒤 다시 돌린다. 끝내 고치지 못하면 커밋·설치·푸시하지 않고 실패 내용을 그대로 알린다.
 2. **커밋**: `main`에 바로 커밋한다. 브랜치나 PR은 사용자가 요청할 때만 만든다.
-3. **다시 설치**: 현재 커밋으로 `npm run build`를 다시 돌린 뒤 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-cli.ps1 -Force`로 `~/.local/bin/relay.exe`와 훅·스킬을 바꾼다. 설치된 `relay.exe`로 떠 있는 `relay web` 서버가 실행 파일을 잠그므로, 먼저 `Get-CimInstance Win32_Process -Filter "Name='relay.exe'"`의 명령줄에서 포트와 `--data-dir`을 확인해 `relay web --close --port <포트>`로 닫는다. 설치 뒤 같은 인자로 `relay web --headless --port <포트> --data-dir <경로>`를 다시 띄우고 `/api/v1/health`가 200인지 확인한다.
+3. **다시 설치**: 현재 커밋으로 `npm run build`를 다시 돌린 뒤 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-cli.ps1 -Force`로 `~/.local/bin/relay.exe`와 훅·스킬을 바꾼다. 서버를 미리 닫지 않는다. 스크립트가 실행 중이라 잠긴 옛 파일을 옆으로 옮겨 교체하고, 옛 파일로 떠 있던 `relay web`을 같은 포트·저장소로 `relay web --reload` 해 출력에 `Web server restarted`를 남긴다. 그 줄이 없거나 `restart failed`면 `relay web --reload [--port <포트>]`를 직접 실행한다. 끝나면 `/api/v1/health`가 200이고 `build`가 새 값인지 확인한다(열린 화면은 그 값을 보고 스스로 새로 고친다).
 4. **푸시**: `git push origin main`. 원격이 앞서 있으면 `git pull --rebase` 뒤 다시 검증하고 푸시한다. 강제 푸시는 하지 않는다.
 5. **보고**: 커밋 해시, 설치와 서버 재시작 결과, 푸시 범위(`이전..이후`)를 짧게 알린다.

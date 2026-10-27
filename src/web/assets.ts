@@ -29,10 +29,13 @@ export type Asset = { body: string; type: string } | { file: string; type: strin
 
 const image = (file: string, type: string): Asset => ({ file, type, cache: "public, max-age=86400" });
 
+/** 화면 빌드 식별자. 화면 파일이 바뀌면 달라진다. HTML에 심고 health로도 알려, 열린 화면이 서버가 새 빌드로 다시 떴는지 알아챈다. */
+export const buildId = Bun.hash(`${html as unknown as string}\0${js}\0${css}\0${serviceWorker}`).toString(36);
+
 // Bun's ambient *.html type describes HTML bundles, but the explicit text loader returns a string.
 export const assets = new Map<string, Asset>([
   ["/icon.svg", { body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#0a5ce0"/><path d="M10 24V8h7a5 5 0 0 1 1 10l5 6h-5l-5-6v6zm3-10h4a1 1 0 0 0 0-2h-4z" fill="#ffffff"/></svg>', type: "image/svg+xml" }],
-  ["/", { body: html as unknown as string, type: "text/html; charset=utf-8" }],
+  ["/", { body: (html as unknown as string).replace("%RELAY_BUILD%", buildId), type: "text/html; charset=utf-8" }],
   ["/theme.js", { body: themeScript, type: "text/javascript; charset=utf-8" }],
   // 설치형 앱(PWA): 매니페스트와 서버가 꺼져 있을 때 화면을 여는 서비스 워커.
   ["/manifest.webmanifest", { body: manifest, type: "application/manifest+json; charset=utf-8" }],

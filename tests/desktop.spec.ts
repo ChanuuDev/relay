@@ -113,6 +113,38 @@ test("동작 줄이기 설정을 켜면 확대 중인 Dock도 즉시 고정 크�
   await expect.poll(async () => (await box(page, dock("가이드"))).width).toBeGreaterThan(76);
 });
 
+test("서버가 새 빌드로 다시 뜨면 열린 화면이 스스로 새로 고치고, 입력 중이면 끊지 않고 알린다", async ({ page }) => {
+  let build: string | null = null;
+  await page.route("**/api/v1/health", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: build ? { ...body, build } : body });
+  });
+  await ready(page);
+  const original = await page.locator('meta[name="relay-build"]').getAttribute("content");
+  expect(original).toMatch(/^[0-9a-z]+$/);
+  // 입력 중에는 새로 고치지 않고 안내만 띄운다.
+  await page.locator("#search").focus();
+  build = "next-build-1";
+  const notice = page.locator("#update-status");
+  await expect(notice).toContainText("새 버전으로 다시 시작됐습니다", { timeout: 10000 });
+  await expect(page.locator("#search")).toBeFocused();
+  await page.screenshot({ path: test.info().outputPath("update-toast.png"), clip: { x: 360, y: 0, width: 720, height: 120 } });
+  // 새로 고침 단추를 누르면 새 화면을 받는다.
+  const reloaded = page.waitForEvent("load");
+  await notice.getByRole("button", { name: "새로 고침" }).click();
+  await reloaded;
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  // 입력 중이 아니면 곧바로 새로 고친다. 같은 빌드로는 한 번만 새로 고친다.
+  build = "next-build-2";
+  await page.locator("#search").blur();
+  await page.waitForEvent("load", { timeout: 10000 });
+  let loads = 0; page.on("load", () => { loads += 1; });
+  await page.waitForTimeout(4000);
+  expect(loads).toBe(0);
+  await expect(page.locator("#update-status")).toHaveCount(0);
+});
+
 test("데스크톱 기본 배치: Dock 여섯 앱, 세션·가이드 창이 열린다", async ({ page }) => {
   record("layout", "기본 배치");
   await ready(page);
@@ -270,6 +302,12 @@ test("메뉴바 메뉴로 테마·창·배치를 키보드로 다룰 수 있다"
   await page.getByRole("menuitem", { name: "닫기" }).click();
   await expect(page.locator(win("sessions"))).toHaveCount(0);
   await page.locator(dock("세션")).click();
+  // 여는 애니메이션이 끝나 제목 위치가 멈춘 뒤에 끈다(부하가 크면 애니메이션 도중 잡아 끌기가 빗나간다).
+  let settled = "";
+  await expect.poll(async () => {
+    const now = JSON.stringify(await box(page, `${win("sessions")} .window-title`));
+    const same = now === settled; settled = now; return same;
+  }, { intervals: [100] }).toBe(true);
   const title = await box(page, `${win("sessions")} .window-title`);
   await page.mouse.move(title.x + title.width / 2, title.y + title.height / 2);
   await page.mouse.down();

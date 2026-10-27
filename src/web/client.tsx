@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useGSAP } from "@gsap/react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { Check, RotateCw, X } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 import { TooltipProvider } from "./components/ui/tooltip";
@@ -25,6 +25,19 @@ import { listCustomImages } from "./lib/wallpaper";
 import { setupPwa, useInstall } from "./lib/pwa";
 
 const queryClient = new QueryClient();
+/** 이 화면이 받은 빌드. 서버가 HTML에 심는다(자리표시자 그대로면 비교하지 않는다). */
+const pageBuild = document.querySelector<HTMLMetaElement>('meta[name="relay-build"]')?.content ?? "";
+const RELOADED_KEY = "relay-reloaded-build";
+const editing = () => {
+  const element = document.activeElement as HTMLElement | null;
+  return Boolean(element && (element.isContentEditable || element.matches("input, textarea, select")));
+};
+/** 같은 빌드로는 한 번만 새로 고친다(보관본과 서버가 엇갈려도 새로 고침이 되풀이되지 않게). */
+function reloadFor(build: string, force = false) {
+  try { if (!force && sessionStorage.getItem(RELOADED_KEY) === build) return false; sessionStorage.setItem(RELOADED_KEY, build); } catch { /* 저장소가 없어도 한 번은 새로 고친다. */ }
+  location.reload();
+  return true;
+}
 // 제목 표시줄 영역이 바뀌면(설치한 앱에서 제목 표시줄을 숨기거나 보일 때) 창을 메뉴바 아래로 다시 맞춘다.
 setupPwa(() => useDesktop.getState().clampAll(window.innerWidth, window.innerHeight));
 // 저장한 글자 크기는 첫 렌더 전에 적용한다. 그 전에는 빈 바탕만 보이므로 테마처럼 선적용 스크립트가 필요 없다.
@@ -56,6 +69,8 @@ function App() {
   const [toastLeaving, setToastLeaving] = useState(false);
   const [fallback, setFallback] = useState<{ value: string } | null>(null);
   const [fallbackLeaving, setFallbackLeaving] = useState(false);
+  const [updateReady, setUpdateReady] = useState(false);
+  const serverBuild = health.data?.build;
   const copyRef = useRef<HTMLTextAreaElement>(null);
   const toastRef = useRef<HTMLDivElement>(null);
   const fallbackRef = useRef<HTMLElement>(null);
@@ -125,6 +140,16 @@ function App() {
     }
   }, [id, detail.data?.session.sessionName, currentLocation, standalone]);
   useEffect(() => { if (fallback !== null && !fallbackLeaving) { copyRef.current?.focus(); copyRef.current?.select(); } }, [fallback, fallbackLeaving]);
+  // 서버가 다른 화면 빌드로 다시 떴으면(relay web --reload, 재설치) 새 화면으로 바꾼다.
+  // 입력 중이면 끊지 않고 알리며, 탭이 가려지면 그때 새로 고친다. 메모는 pagehide에서 저장된다.
+  useEffect(() => {
+    if (!serverBuild || !pageBuild || pageBuild.startsWith("%") || serverBuild === pageBuild) return;
+    if (!editing()) { reloadFor(serverBuild); return; }
+    setUpdateReady(true);
+    const hidden = () => { if (document.hidden) reloadFor(serverBuild); };
+    document.addEventListener("visibilitychange", hidden);
+    return () => document.removeEventListener("visibilitychange", hidden);
+  }, [serverBuild]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToastLeaving(true), 3000);
@@ -186,6 +211,11 @@ function App() {
       <NotesWindow />
     </main>
     <Dock />
+    {updateReady && <div id="update-status" className="update-toast material-toast" role="status">
+      <RotateCw aria-hidden="true" /><span>Relay가 새 버전으로 다시 시작됐습니다.</span>
+      <Button type="button" size="xs" onClick={() => { if (serverBuild) reloadFor(serverBuild, true); }}>새로 고침</Button>
+      <Button type="button" variant="ghost" size="icon-xs" aria-label="안내 닫기" onClick={() => setUpdateReady(false)}><X aria-hidden="true" /></Button>
+    </div>}
     {toast && <div id="copy-status" className="copy-toast material-toast" role="status" ref={toastRef} data-leaving={toastLeaving ? "" : undefined}><Check />{toast.text}</div>}
     {fallback !== null && <section id="copy-fallback" className="copy-fallback material-menu" aria-labelledby="copy-label" ref={fallbackRef}
       data-leaving={fallbackLeaving ? "" : undefined}

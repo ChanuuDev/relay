@@ -27,6 +27,16 @@ export async function probe(url: string, timeoutMs = 1500): Promise<Probe> {
   return { kind: relay ? "legacy" : "foreign" };
 }
 
+/** 실행 중인 Relay 서버가 쓰는 저장소 경로. Relay가 아니거나 응답이 없거나 알려 주지 않으면 null. */
+export async function runningDataDirectory(url: string, timeoutMs = 1500): Promise<string | null> {
+  try {
+    const response = await fetch(`${url}/api/v1/health`, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual" });
+    if (!response.headers.has(PID_HEADER)) return null;
+    const body = await response.json() as { dataDirectory?: unknown };
+    return typeof body.dataDirectory === "string" && body.dataDirectory ? body.dataDirectory : null;
+  } catch { return null; }
+}
+
 /** 컴파일된 실행 파일 안의 진입점 경로. Bun은 이 가상 경로를 fs에서도 있는 것처럼 보여 주므로 존재 여부로는 가릴 수 없다. */
 const EMBEDDED = /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/;
 

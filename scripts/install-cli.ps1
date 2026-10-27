@@ -29,7 +29,23 @@ while ($cursor) {
     $cursor = Split-Path -Parent $cursor
 }
 
+# A running relay.exe cannot be overwritten, but it can be renamed. Replaced copies keep this suffix until their process exits.
+function Remove-StaleCopies([string]$Directory) {
+    Get-ChildItem -LiteralPath $Directory -Filter 'relay.exe.*.old' -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+# Web servers started from the installed executable; they are restarted from the new one with `relay web --reload`.
+function Get-WebServers([string]$Executable) {
+    @(Get-CimInstance Win32_Process -Filter "Name='relay.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $Executable) -and ($_.CommandLine -match '(^|\s)web(\s|$)') })
+}
+function Format-Argument([string]$Value) {
+    if ($Value -match '[\s"]') { return '"' + $Value.Replace('"', '\"') + '"' }
+    return $Value
+}
+
 $copyNeeded = $true
+$servers = @()
 if (Test-Path -LiteralPath $target) {
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw "Target is not a file: $target" }
     $copyNeeded = (Get-ExecutableHash $source) -ne (Get-ExecutableHash $target)
@@ -37,7 +53,19 @@ if (Test-Path -LiteralPath $target) {
 }
 if ($copyNeeded) {
     [IO.Directory]::CreateDirectory($installRoot) | Out-Null
-    Copy-Item -LiteralPath $source -Destination $target -Force:$Force
+    Remove-StaleCopies $installRoot
+    try { Copy-Item -LiteralPath $source -Destination $target -Force:$Force -ErrorAction Stop }
+    catch {
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw }
+        # The executable is in use (usually by `relay web`): move it aside, then put the new one in place.
+        # A function returns a one-item array unrolled, so wrap it again.
+        $servers = @(Get-WebServers $target)
+        $aside = '{0}.{1}.old' -f $target, (Get-Date -Format 'yyyyMMddHHmmssfff')
+        Move-Item -LiteralPath $target -Destination $aside
+        try { Copy-Item -LiteralPath $source -Destination $target -ErrorAction Stop }
+        catch { Move-Item -LiteralPath $aside -Destination $target; throw }
+        Write-Output "Replaced the running executable; the old copy is removed once it exits: $aside"
+    }
 }
 
 function Test-PathEntry([string]$PathValue, [string]$Directory) {
@@ -74,6 +102,30 @@ try {
     else { Write-Output 'Skill installation skipped. Run: relay install-skills' }
 } catch {
     Write-Output 'Skill installation skipped. Run: relay install-skills'
+}
+# Restart the web servers that ran the old executable, keeping their port and store.
+# Start-Process uses ShellExecute, which passes no handles, so the restarted server never holds this script's output pipe open.
+foreach ($server in $servers) {
+    $arguments = @('web', '--reload')
+    if ($server.CommandLine -match '--port[= ]+(\d+)') { $arguments += @('--port', $Matches[1]) }
+    if ($server.CommandLine -match '--data-dir[= ]+(?:"([^"]+)"|(\S+))') { $arguments += @('--data-dir', $(if ($Matches[1]) { $Matches[1] } else { $Matches[2] })) }
+    $line = ($arguments | ForEach-Object { Format-Argument $_ }) -join ' '
+    try {
+        $process = Start-Process -FilePath $target -ArgumentList $line -WindowStyle Hidden -PassThru
+        $null = $process.Handle
+        $process.WaitForExit()
+        if ($process.ExitCode -eq 0) { Write-Output "Web server restarted: relay $line" }
+        else { Write-Output "Web server restart failed. Run: relay $line" }
+    } catch {
+        Write-Output "Web server restart failed. Run: relay $line"
+    }
+}
+if ($servers.Count -gt 0) {
+    # The old process exits shortly after the reload stops it; a copy still in use is removed by the next install.
+    for ($attempt = 0; $attempt -lt 25 -and (Get-ChildItem -LiteralPath $installRoot -Filter 'relay.exe.*.old' -File -ErrorAction SilentlyContinue); $attempt++) {
+        Start-Sleep -Milliseconds 200
+        Remove-StaleCopies $installRoot
+    }
 }
 if ($NoPath) { Write-Output 'PATH was not changed.' }
 else { Write-Output 'Ready: relay --codex. Reopen other terminals if the command is not found.' }

@@ -19,6 +19,9 @@ describe("Local read-only HTTP API", () => {
     // 모든 응답이 서버 PID를 알려 준다. relay web --close가 이 값으로 끝낼 서버를 찾는다.
     expect(request("/api/v1/health").headers.get("Relay-Pid")).toBe(String(process.pid));
     expect(request("/missing").headers.get("Relay-Pid")).toBe(String(process.pid));
+    // 화면 빌드 식별자는 HTML과 health가 같다. 열린 화면은 둘이 달라지면(서버가 새 빌드로 다시 뜨면) 스스로 새로 고친다.
+    expect(health.build).toMatch(/^[0-9a-z]+$/);
+    for (const page of ["/", "/sessions/any"]) expect(await request(page).text()).toContain(`<meta name="relay-build" content="${health.build}">`);
     const a = f.service.record(input("provider-a")).session;
     f.service.update("provider-a", "다음 대화에 필요한 맥락");
     const child = f.service.record(input("provider-b", { provider: "anthropic", agent: "claude-code" }), "provider-a").session;

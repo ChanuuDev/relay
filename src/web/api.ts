@@ -3,6 +3,7 @@ import { checkVersion } from "../db/database";
 import { RelayError, storageError } from "../errors";
 import type { SessionService } from "../session/session.service";
 import { version } from "../../package.json";
+import { buildId } from "./assets";
 
 function params(url: URL, allowed: string[]) {
   const result: Record<string, string> = {};
@@ -18,7 +19,7 @@ export function api(url: URL, service: SessionService, config: Config): unknown 
     params(url, []);
     try { checkVersion(service.repo.db); service.repo.db.query("SELECT id FROM sessions LIMIT 1").get(); }
     catch (error) { throw storageError(error); }
-    return { schemaVersion: 1, status: "ok", appVersion: version,
+    return { schemaVersion: 1, status: "ok", appVersion: version, build: buildId,
       dataDirectory: config.dataDirectory, databasePath: config.databasePath };
   }
   if (url.pathname === "/api/v1/sessions") return service.list(params(url, ["provider", "agent", "cwd", "q", "status", "pinned", "limit", "offset"]));

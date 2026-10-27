@@ -483,6 +483,33 @@ describe("web server control", () => {
     expect(none.code).toBe(0); expect(none.stderr).toContain("실행 중인 Relay 웹 서버가 없습니다");
   });
 
+  test("--reload restarts the server on the same port, keeps the running server's store and starts one when none runs", async () => {
+    expect(plain(["web", "--headless", "--port", String(port)]).code).toBe(0);
+    const first = await health();
+    const before = Number(first!.headers.get("Relay-Pid"));
+    const store = (await first!.json()).dataDirectory as string;
+    // 저장소를 주지 않으면 RELAY_DATA_DIR이 다른 곳을 가리켜도 실행 중인 서버의 저장소를 이어받는다.
+    const other = temporary();
+    try {
+      const result = Bun.spawnSync([process.execPath, index, "web", "--reload", "--port", String(port)],
+        { cwd: root, env: { ...process.env, RELAY_DATA_DIR: other, RELAY_SKIP_HOOK_INSTALL: "1" }, stdout: "pipe", stderr: "pipe" });
+      const stderr = result.stderr.toString();
+      expect(result.exitCode).toBe(0); expect(result.stdout.toString()).toBe("");
+      const response = await health();
+      const after = Number(response!.headers.get("Relay-Pid"));
+      expect(after).toBeGreaterThan(0); expect(after).not.toBe(before);
+      expect(stderr).toContain(`다시 시작했습니다: ${url()} (PID ${before} → ${after})`);
+      expect((await response!.json()).dataDirectory).toBe(store);
+      expect(stderr).toContain(path.join(store, "relay.db"));
+    } finally { cleanup(other); }
+    // 떠 있는 서버가 없으면 새로 띄운다.
+    expect(plain(["web", "--close", "--port", String(port)]).code).toBe(0);
+    expect(await health()).toBeNull();
+    const fresh = plain(["web", "--reload", "--port", String(port)]);
+    expect(fresh.code).toBe(0); expect(fresh.stderr).toContain("실행 중인 서버가 없어 새로 띄웠습니다");
+    expect((await health())?.status).toBe(200);
+  });
+
   test("--close leaves a foreign server alone and option conflicts fail before anything runs", async () => {
     const foreign = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response("other") });
     try {
@@ -491,8 +518,12 @@ describe("web server control", () => {
       expect(await (await fetch(`${url()}/`)).text()).toBe("other");
       const headless = plain(["web", "--headless", "--port", String(port)]);
       expect(headless.code).toBe(6); expect(headless.stderr).toStartWith("PORT_IN_USE:");
+      // Relay가 아닌 서버는 --reload도 건드리지 않는다.
+      const reload = plain(["web", "--reload", "--port", String(port)]);
+      expect(reload.code).toBe(6); expect(reload.stderr).toStartWith("SERVER_FOREIGN:");
+      expect(await (await fetch(`${url()}/`)).text()).toBe("other");
     } finally { foreign.stop(true); }
-    for (const args of [["web", "--close", "--headless"], ["web", "--close", "--open"]]) {
+    for (const args of [["web", "--close", "--headless"], ["web", "--close", "--open"], ["web", "--close", "--reload"]]) {
       const result = plain([...args, "--port", String(port)]);
       expect(result.code).toBe(2); expect(result.stderr).toStartWith("INVALID_ARGUMENT:");
     }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, root, temporary } from "./helpers";
 
@@ -104,6 +104,48 @@ test.skipIf(process.platform !== "win32")("CLI installation preserves an existin
     { cwd: dir, env });
   expect(lookup.exitCode).toBe(0); expect(lookup.stdout.toString().trim()).toBe(target);
 }, 15000);
+
+// 설치한 relay.exe로 떠 있는 웹 서버가 실행 파일을 잠가도, 옛 파일을 옆으로 옮겨 교체하고 그 서버를 새 파일로 다시 띄운다.
+const built = path.join(root, "dist", "relay.exe");
+test.skipIf(process.platform !== "win32" || !existsSync(built))("CLI installation replaces a running executable and reloads its web server", async () => {
+  const destination = path.join(dir, "local bin"); const target = path.join(destination, "relay.exe");
+  const data = path.join(dir, "data");
+  mkdirSync(destination);
+  // 끝에 바이트를 붙인 사본을 "이전 빌드"로 쓴다. 해시가 달라 교체 대상이 된다.
+  writeFileSync(target, Buffer.concat([readFileSync(built), Buffer.from("relay-test-older-build")]));
+  const env = { ...process.env, RELAY_SKIP_HOOK_INSTALL: "1", RELAY_USER_HOME: path.join(dir, "home"), RELAY_HOOK_BIN_DIR: path.join(dir, "hook-bin"),
+    CODEX_HOME: undefined, GROK_HOME: undefined };
+  const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = reservation.port!; reservation.stop(true);
+  const url = `http://127.0.0.1:${port}/api/v1/health`;
+  const pidOf = async () => { try { return Number((await fetch(url, { signal: AbortSignal.timeout(2000) })).headers.get("Relay-Pid")) || 0; } catch { return 0; } };
+  const started = Bun.spawnSync([target, "web", "--headless", "--port", String(port), "--data-dir", data], { env, stdout: "pipe", stderr: "pipe" });
+  expect(started.exitCode).toBe(0);
+  const before = await pidOf();
+  expect(before).toBeGreaterThan(0);
+  try {
+    const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(root, "scripts/install-cli.ps1"), "-ExecutablePath", built, "-InstallDirectory", destination, "-NoPath", "-Force"],
+      { env, stdout: "pipe", stderr: "pipe", timeout: 60000 });
+    const output = result.stdout.toString();
+    expect(result.exitCode).toBe(0);
+    expect(output).toContain("Replaced the running executable");
+    expect(output).toContain(`Web server restarted: relay web --reload --port ${port} --data-dir`);
+    expect(readFileSync(target).equals(readFileSync(built))).toBe(true);
+    const after = await pidOf();
+    expect(after).toBeGreaterThan(0); expect(after).not.toBe(before);
+    const body = await (await fetch(url)).json() as { dataDirectory: string };
+    expect(path.resolve(body.dataDirectory)).toBe(path.resolve(data));
+    // 옛 파일은 그 프로세스가 끝나면 지워진다.
+    expect(readdirSync(destination).filter((name) => name.endsWith(".old"))).toEqual([]);
+  } finally {
+    for (const pid of [before, await pidOf()]) if (pid) try { process.kill(pid); } catch { /* 이미 끝났다 */ }
+    // 끝낸 서버의 실행 파일 잠금이 풀린 뒤에야 임시 폴더를 지울 수 있다.
+    for (const deadline = Date.now() + 10000; Date.now() < deadline; await Bun.sleep(200)) {
+      try { rmSync(target, { force: true }); break; } catch { /* 아직 쓰는 중 */ }
+    }
+  }
+}, 90000);
 
 test.skipIf(process.platform !== "win32")("CLI installation rejects invalid paths and linked targets", () => {
   const source = path.join(dir, "source.exe"); writeFileSync(source, "relay test executable");
