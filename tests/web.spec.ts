@@ -83,7 +83,7 @@ test("filters, >100 records, pagination, keyboard navigation, parent/child and b
   await expect(page.getByText("검색 결과가 없습니다.", { exact: true })).toBeVisible();
 });
 
-test("context copy is one shell-safe line handing over the lookup command, never the note itself", async ({ page, context }) => {
+test("context copy is a step-by-step guide with a shell-safe lookup command, never the note itself", async ({ page, context }) => {
   const id = "literal'id; echo untrusted";
   const payload = '<img src=x onerror="window.pwned=1">\n<script>window.pwned=1</script>';
   record(id, "안전한 텍스트 검사", "openai", "codex", payload);
@@ -92,18 +92,19 @@ test("context copy is one shell-safe line handing over the lookup command, never
   await page.getByRole("button", { name: "세션 컨텍스트 복사", exact: true }).click();
   await expect(page).toHaveURL(env.url + "/");
   const listContext = await clipboardText(page);
-  // A line break arrives as Enter while the paste is still coming in: the receiving CLI would send
-  // the first lines as a message and drop the rest.
-  expect(listContext).not.toMatch(/[\r\n]/);
+  // 메모장에서도 읽히도록 단계마다 문단을 나눈다. 조회 명령은 한 줄에 그대로 둔다.
+  const lines = listContext.split("\n");
+  expect(lines[0]).toBe("이전 Codex 세션을 이어서 작업해 주세요.");
+  expect(lines.filter((line) => /^\d\. /.test(line))).toHaveLength(4);
+  expect(lines.find((line) => line.includes("relay show"))).toMatch(/^   `relay show .* --history --json`$/);
   for (const value of ["relay show", "--provider 'openai'", "--data-dir", env.dir.replaceAll("\\", "/"), "--history --json"]) expect(listContext).toContain(value);
   // The ID reaches the command quoted for whichever shell the platform defaults to.
   expect(listContext).toMatch(/literal(''|'"'"')id; echo untrusted/);
   // Relay 기록은 원본 세션을 찾는 색인일 뿐이고, 받는 쪽은 원본 대화에서 요구사항을 원문대로 확인한 뒤 이어서 작업한다.
-  for (const value of ["이전 Codex 세션", "요약과 이력은 앞선 에이전트가 줄여 쓴 참고용 메모", "작업 기준으로 삼지 마세요",
-    "원본 세션에 직접 들어가 실제 대화를 확인하세요", "`resume-codex` 스킬이 있으면 그 스킬로 Relay 기록의 세션 ID를 열고",
-    "rollout-*-<세션 ID>.jsonl", "요구사항과 지시를 원문 그대로 확인", "Relay 요약과 다르면 원본 대화를 따르세요",
-    "실제 파일과 작업 트리가 원본 대화의 마지막 상태와 맞는지", "`relay-session` 스킬의 `continue` 절차로 현재 세션을 연결하고 남은 작업을 이어서 진행",
-    "원본 대화를 찾지 못하거나 읽지 못하면 먼저 알리고"]) expect(listContext).toContain(value);
+  for (const value of ["Relay 요약은 줄여 쓴 참고용", "작업 기준으로 삼지 마세요", "원본 세션에 들어가 실제 대화를 읽으세요",
+    "`resume-codex` 스킬이 있으면 그것으로 Relay 기록의 세션 ID를 열고", "rollout-*-<세션 ID>.jsonl", "사용자 요구사항을 원문대로 확인",
+    "요약과 다르면 원본을 따르고", "실제 파일과 작업 트리를 확인한 뒤", "`relay-session` 스킬의 continue 절차로 현재 세션을 연결하고 이어서 작업하세요",
+    "원본 대화를 찾지 못하면 먼저 알리고"]) expect(listContext).toContain(value);
   // 따옴표·세미콜론이 든 ID는 대화 기록 경로에 넣지 않는다.
   expect(listContext).not.toMatch(/rollout-\*-literal/);
   // The note stays in the store; the receiving agent reads it with the command.
@@ -129,7 +130,8 @@ test("context copy is one shell-safe line handing over the lookup command, never
   await contextCopy.click();
   const bashContext = await clipboardText(page);
   expect(bashContext).toContain("'literal'\"'\"'id; echo untrusted'");
-  expect(bashContext).not.toMatch(/[\r\n]/);
+  // 조회 명령은 셸이 바뀌어도 한 줄에 그대로 있다.
+  expect(bashContext.split("\n").filter((line) => line.includes("relay show"))).toHaveLength(1);
   const latest = "새 진행 기록\n```bash\necho note\n```\n한글 요약 끝";
   cli(["update", "--session-id", id, "--summary", latest]);
   await expect(page.locator(".summary")).toHaveText(latest);
@@ -173,7 +175,7 @@ test("context falls back to the default store command when storage lookup is una
   for (const value of ["relay show 'same-id'", "--provider 'anthropic'", "--json"]) expect(copied).toContain(value);
   expect(copied).not.toContain("--data-dir");
   expect(copied).not.toContain("'openai'");
-  expect(copied).not.toMatch(/[\r\n]/);
+  expect(copied.split("\n").filter((line) => line.includes("relay show"))).toEqual(["   `relay show 'same-id' --provider 'anthropic' --history --json`"]);
 });
 
 test("partial section failure keeps detail; missing ID and invalid input are not empty state", async ({ page }) => {

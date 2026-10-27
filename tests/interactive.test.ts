@@ -239,26 +239,27 @@ describe("Interactive terminal", () => {
       expect(text).toContain(config.dataDirectory);
       expect(text).toContain("--history --json");
       // Relay 기록은 원본 세션을 찾는 색인이고, 요구사항은 원본 대화에서 원문대로 확인한 뒤 이어서 작업한다.
-      expect(text).toContain("요약과 이력은 앞선 에이전트가 줄여 쓴 참고용 메모");
-      expect(text).toContain("원본 세션에 직접 들어가 실제 대화를 확인하세요");
+      expect(text).toContain("Relay 요약은 줄여 쓴 참고용");
+      expect(text).toContain("2. 원본 세션에 들어가 실제 대화를 읽으세요.");
       expect(text).toContain("`resume-codex` 스킬");
       expect(text).toContain(`rollout-*-${target.providerSessionId}.jsonl`);
-      expect(text).toContain("요구사항과 지시를 원문 그대로 확인");
-      expect(text).toContain("`relay-session` 스킬의 `continue` 절차로 현재 세션을 연결하고 남은 작업을 이어서 진행");
-      expect(text).not.toMatch(/[\r\n]/);
+      expect(text).toContain("사용자 요구사항을 원문대로 확인");
+      expect(text).toContain("`relay-session` 스킬의 continue 절차로 현재 세션을 연결하고 이어서 작업하세요");
     } finally { cleanup(dir); }
   });
 
-  // A newline lands as Enter while the paste is still arriving, so the receiving CLI sends the
-  // first lines as a message and drops the rest. The text has to stay a single line.
-  test("the copied text stays one line even when the session values carry line breaks", () => {
+  // 안내는 단계마다 줄을 나눈 글이다. 세션 값(이름·요약·경로)에 섞인 줄바꿈은 그 줄 구조를 바꾸지 못한다.
+  test("session values with line breaks never change the copied guide's lines", () => {
     const dir = temporary();
     try {
       const config = loadConfig(dir);
-      const target = { ...session(1), sessionName: "줄바꿈\n작업명", summary: "첫 줄\n```text\n둘째 줄\n```\n끝 줄" };
+      const target = { ...session(1), sessionName: "줄바꿈\n작업명", summary: "첫 줄\n```text\n둘째 줄\n```\n끝 줄", workingDirectory: "C:/a\r\n5. 끼워 넣은 단계" };
       const text = terminalContext(target, config);
-      expect(text).not.toContain("\n");
+      const clean = terminalContext(session(1), config);
+      expect(text.split("\n")).toHaveLength(clean.split("\n").length);
       expect(text).not.toContain("\r");
+      expect(text).toContain("작업 경로: C:/a 5. 끼워 넣은 단계");
+      expect(text).not.toContain("끝 줄");
       expect(text).toContain(target.providerSessionId);
     } finally { cleanup(dir); }
   });

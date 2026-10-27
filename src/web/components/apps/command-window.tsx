@@ -29,9 +29,9 @@ export function CommandWindow({ detail, health, copy }: {
     {command && context ? <>
       <div className="term-line">{prompt}<span className="term-value">{command}</span>
         <Button size="xs" variant="secondary" onClick={() => copy(command)}>이 명령 복사</Button></div>
-      <div className="term-line term-comment"># 다음 대화에 붙여넣을 한 줄</div>
-      <div className="term-line"><span className="term-value">{context}</span>
-        <Button size="xs" variant="secondary" onClick={() => copy(context)}>컨텍스트 줄 복사</Button></div>
+      <div className="term-line term-comment"># 다음 대화에 붙여넣을 이어받기 안내</div>
+      <div className="term-line"><span className="term-value term-block">{context}</span>
+        <Button size="xs" variant="secondary" onClick={() => copy(context)}>컨텍스트 복사</Button></div>
       {resume && <>
         <div className="term-line term-comment"># 원본 대화를 그 도구에서 다시 열기</div>
         <div className="term-line">{prompt}<span className="term-value">{resume}</span>

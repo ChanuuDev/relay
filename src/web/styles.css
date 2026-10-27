@@ -503,6 +503,8 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 .term-line > span { overflow-wrap: anywhere; }
 .term-prompt { color: var(--terminal-prompt); flex-shrink: 0; }
 .term-value { flex: 1; min-width: 0; }
+/* 이어받기 안내는 단계마다 줄을 나눈 글이라 줄바꿈을 그대로 보인다. */
+.term-block { white-space: pre-wrap; padding-bottom: 8px; }
 .term-output { color: #b8b8c0; }
 .term-comment { color: #8a8a94; }
 .terminal-body [data-slot="button"] { font-family: var(--font-sans); background: rgba(255, 255, 255, .12); color: var(--terminal-fg); border-color: rgba(255, 255, 255, .16); }

@@ -115,7 +115,7 @@ export function SessionDetail({ detail, updates, children, chain, storeDirectory
         <Button size="sm" variant="outline" onClick={() => copy(sessionCommand(s, storeDirectory, shell))}><Terminal data-icon="inline-start" />조회 명령 복사</Button>
         <Button size="sm" variant="outline" onClick={() => copy(handoff())}><FileText data-icon="inline-start" />인계 문서 복사</Button>
         {resume && <Button size="sm" variant="outline" onClick={() => copy(resume)}><RotateCcw data-icon="inline-start" />원본 세션 재개 명령 복사</Button>}</div>
-      <p className="context-copy-hint">붙여넣는 순간 대화가 먼저 전송되지 않도록, 이 기록을 읽는 조회 명령만 줄바꿈 없이 한 줄로 복사합니다. 인계 문서는 요약·이력·흐름·재개 명령을 담은 Markdown이라 relay가 없는 곳에도 붙여넣을 수 있습니다.</p>
+      <p className="context-copy-hint">Relay 기록으로 원본 세션을 찾아 실제 대화를 읽고 이어서 작업하라는 안내를 단계별로 복사합니다. Relay 요약은 줄인 메모라 요구사항은 원본 대화에서 확인하게 합니다. 인계 문서는 요약·이력·흐름·재개 명령을 담은 Markdown이라 relay가 없는 곳에도 붙여넣을 수 있습니다.</p>
       <div className="shell-select"><label htmlFor="command-shell">조회 명령 셸</label><NativeSelect id="command-shell" size="sm" value={shell} onChange={(event) => setShell(event.target.value as typeof shell)}>
         <NativeSelectOption value="powershell">PowerShell</NativeSelectOption><NativeSelectOption value="bash">Bash</NativeSelectOption></NativeSelect></div>
       <Tabs value={tab} onValueChange={(value) => setTab(value as DetailTab)} ref={tabsRef}>
