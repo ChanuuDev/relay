@@ -19,3 +19,13 @@
 - 요약은 다음 대화에서 바로 쓸 사실을 중심으로 짧게 쓴다. 목표·현재 상태·변경 파일·검증 결과·남은 위험이나 다음 작업을 담고, 전체 채팅·reasoning·키·로그인 정보·파일 전문은 넣지 않는다.
 
 이전 세션을 이어받을 때는 `relay-session` 스킬을 사용한다.
+
+## 작업 마무리 지침
+
+이 저장소에서 작업 단위를 끝내면 사용자에게 따로 묻지 않고 **검증 → 커밋 → 다시 설치 → 푸시**까지 무조건 수행한다. 문서만 바꾼 작업도 같다. 재설치나 푸시를 건너뛴 채 작업을 끝냈다고 보고하지 않는다.
+
+1. **검증**: `npm run check`(typecheck → test → build → test:web)가 통과해야 한다. 실패하면 고친 뒤 다시 돌린다. 끝내 고치지 못하면 커밋·설치·푸시하지 않고 실패 내용을 그대로 알린다.
+2. **커밋**: `main`에 바로 커밋한다. 브랜치나 PR은 사용자가 요청할 때만 만든다.
+3. **다시 설치**: 현재 커밋으로 `npm run build`를 다시 돌린 뒤 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-cli.ps1 -Force`로 `~/.local/bin/relay.exe`와 훅·스킬을 바꾼다. 설치된 `relay.exe`로 떠 있는 `relay web` 서버가 실행 파일을 잠그므로, 먼저 `Get-CimInstance Win32_Process -Filter "Name='relay.exe'"`의 명령줄에서 포트와 `--data-dir`을 확인해 `relay web --close --port <포트>`로 닫는다. 설치 뒤 같은 인자로 `relay web --headless --port <포트> --data-dir <경로>`를 다시 띄우고 `/api/v1/health`가 200인지 확인한다.
+4. **푸시**: `git push origin main`. 원격이 앞서 있으면 `git pull --rebase` 뒤 다시 검증하고 푸시한다. 강제 푸시는 하지 않는다.
+5. **보고**: 커밋 해시, 설치와 서버 재시작 결과, 푸시 범위(`이전..이후`)를 짧게 알린다.
