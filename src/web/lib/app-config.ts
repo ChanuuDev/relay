@@ -35,4 +35,6 @@ export const APPS: Record<AppId, AppDef> = {
     box: (W, H) => { const w = Math.min(960, W - 80); return { x: Math.round((W - w) / 2), y: 84, w, h: Math.min(640, free(H) - 40) }; } },
 };
 
-export const appIcon = (id: AppId) => `/icons/${id}.png`;
+/** 아이콘 그림을 바꾸면 판 번호를 올린다. 아이콘은 하루 동안 브라우저 캐시에 남으므로 주소가 달라야 바로 바뀐다(서버는 query를 보지 않는다). */
+const ICON_REVISION: Partial<Record<AppId, number>> = { files: 2 };
+export const appIcon = (id: AppId) => `/icons/${id}.png${ICON_REVISION[id] ? `?v=${ICON_REVISION[id]}` : ""}`;
