@@ -1,6 +1,6 @@
 import type { ChainNode, Session, SessionUpdate } from "../../session/session.types";
 import { endLabel, gitLabel, statusLabel } from "./format";
-import { resumeCommand } from "./resume-command";
+import { resumeCommand, transcriptGuide } from "./resume-command";
 import { sessionCommand } from "./session-context";
 
 /** A linked session as the API briefs it. */
@@ -70,8 +70,10 @@ export function handoffMarkdown(input: HandoffInput, { shell, storeDirectory }: 
     const total = input.childrenTotal ?? input.children?.length ?? 0;
     if (total > (input.children?.length ?? 0)) lines.push(`- 이어받은 세션 ${total - (input.children?.length ?? 0)}건 더 있음`);
   }
+  const transcript = transcriptGuide(s);
   lines.push("", "## 다시 열기", "", `- Relay 기록 조회: \`${sessionCommand(s, storeDirectory, shell)}\``);
   if (resume) lines.push(`- 원본 세션 재개: \`${resume}\``);
-  lines.push("", "작업을 이어가기 전, 실제 프로젝트 파일도 확인하세요.", "");
+  if (transcript) lines.push(`- 원본 대화 기록: \`${transcript.path}\`${transcript.note ? ` (${transcript.note})` : ""}${transcript.skill ? ` · 읽기 스킬 \`${transcript.skill}\`` : ""}`);
+  lines.push("", "위 요약은 앞선 에이전트가 줄여 쓴 참고용입니다. 요구사항은 원본 세션의 실제 대화에서 원문대로 확인하고, 작업을 이어가기 전 실제 프로젝트 파일도 확인하세요.", "");
   return lines.join("\n");
 }

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { ChainNode, Session, SessionUpdate } from "../src/session/session.types";
 import { gitLabel, isStale, STALE_HOURS, statusLabel } from "../src/web/lib/format";
 import { handoffMarkdown } from "../src/web/lib/handoff";
-import { resumeCommand } from "../src/web/lib/resume-command";
+import { resumeCommand, transcriptGuide } from "../src/web/lib/resume-command";
+import { sessionContext } from "../src/web/lib/session-context";
 
 const at = "2026-10-16T03:00:00.000Z";
 const session: Session = { id: "ses_1", provider: "anthropic", agent: "claude-code", providerSessionId: "id'1", sessionName: "로그인 수정",
@@ -14,6 +15,41 @@ const update = (sequence: number, summary: string, status: SessionUpdate["status
 const node = (id: string, depth: number, current: boolean, extra: Partial<ChainNode> = {}): ChainNode => ({ id: `ses_${id}`, provider: "openai", agent: "codex",
   providerSessionId: id, sessionName: `세션 ${id}`, summary: `${id} 요약`, status: null, pinned: false, createdAt: at, updatedAt: at, endedAt: null,
   parentSessionId: null, depth, current, ...extra });
+
+describe("Continuing from the original session, not the Relay summary", () => {
+  test("each host's own transcript is located from the recorded session id and working directory", () => {
+    const base = { providerSessionId: "7cdfe6ba-04e3-43fe-8ae2-56752e5c5885", workingDirectory: "C:/workspace/agent-session-chain" };
+    expect(transcriptGuide({ ...base, agent: "claude-code" })).toEqual({ tool: "Claude Code", exact: true, skill: "resume-claude",
+      path: "~/.claude/projects/C--workspace-agent-session-chain/7cdfe6ba-04e3-43fe-8ae2-56752e5c5885.jsonl", note: "CLAUDE_CONFIG_DIR를 쓰면 그 아래 projects" });
+    expect(transcriptGuide({ ...base, agent: "codex" })?.path).toBe("~/.codex/sessions/<년>/<월>/<일>/rollout-*-7cdfe6ba-04e3-43fe-8ae2-56752e5c5885.jsonl");
+    expect(transcriptGuide({ ...base, agent: "grok" })?.path).toEndWith("/7cdfe6ba-04e3-43fe-8ae2-56752e5c5885/chat_history.jsonl");
+    expect(transcriptGuide({ ...base, agent: "cursor-agent" })?.skill).toBe("resume-cursor");
+    expect(transcriptGuide({ ...base, agent: "aider" })).toBeNull();
+    // 경로에 넣을 수 없는 ID는 경로에 그 값을 넣지 않고 자리만 남긴다.
+    const unsafe = transcriptGuide({ ...base, agent: "claude-code", providerSessionId: "x'; rm -rf ~" });
+    expect(unsafe).toMatchObject({ exact: false, path: "~/.claude/projects/C--workspace-agent-session-chain/<세션 ID>.jsonl" });
+  });
+
+  test("the copied line sends the next agent into the original conversation and back to work", () => {
+    const text = sessionContext({ ...session, providerSessionId: "abc-1" }, { shell: "bash", storeDirectory: "/data/relay" });
+    expect(text).toStartWith("이전 Claude Code 세션(작업 경로 `C:/workspace/app`)을 이어서 작업해 주세요.");
+    expect(text).toContain("`relay show 'abc-1' --provider 'anthropic' --data-dir '/data/relay' --history --json` 명령으로 Relay 기록을 열어");
+    expect(text).toContain("작업 기준으로 삼지 마세요");
+    expect(text).toContain("`resume-claude` 스킬이 있으면 그 스킬로 세션 `abc-1`를 열고");
+    expect(text).toContain("`~/.claude/projects/C--workspace-app/abc-1.jsonl`");
+    expect(text).toContain("Relay 요약과 다르면 원본 대화를 따르세요");
+    expect(text).toContain("사용자 요청만 요구사항으로 삼으세요");
+    expect(text).toContain("요구사항이 축약됐을 수 있음을 밝힌 뒤 사용자 확인을 받으세요");
+    expect(text).not.toMatch(/[\r\n]/);
+    // 모르는 도구는 ID로 찾게 하고, 경로로 쓸 수 없는 ID는 경로에 넣지 않고 Relay 기록의 ID로 찾게 한다.
+    const odd = sessionContext({ ...session, agent: "aider", providerSessionId: "a b" }, { shell: "bash" });
+    expect(odd).toContain("aider가 남긴 원본 대화 기록을 Relay 기록의 세션 ID로 찾아 읽으세요");
+    expect(odd).not.toContain(".jsonl");
+    const unsafe = sessionContext({ ...session, providerSessionId: "a b" }, { shell: "bash" });
+    expect(unsafe).toContain("`resume-claude` 스킬이 있으면 그 스킬로 Relay 기록의 세션 ID를 열고");
+    expect(unsafe).toContain("`~/.claude/projects/C--workspace-app/<세션 ID>.jsonl`");
+  });
+});
 
 describe("Hand-over note and host commands", () => {
   test("each host reopens its own session; the id is quoted for the shell and unknown tools get no command", () => {

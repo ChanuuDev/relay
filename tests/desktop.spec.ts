@@ -11,6 +11,14 @@ const box = async (page: Page, selector: string) => {
   if (!rect) throw new Error(`no box for ${selector}`);
   return rect;
 };
+/** 여는 애니메이션이 끝나 위치가 멈출 때까지 기다린다. 부하가 크면 애니메이션 도중 잰 자리를 누르다 빗나간다. */
+const settled = async (page: Page, selector: string) => {
+  let last = "";
+  await expect.poll(async () => {
+    const now = JSON.stringify(await box(page, selector));
+    const same = now === last; last = now; return same;
+  }, { intervals: [100] }).toBe(true);
+};
 
 test("기본 테마는 다크, 토글과 시스템 모드가 저장된다", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -239,6 +247,7 @@ test("상단바 드래그로 창을 옮기면 위치가 저장되고, 입력에�
   await page.waitForTimeout(400); // 배치 저장 디바운스
   await page.reload();
   await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await settled(page, "#search");
   const reloaded = await box(page, win("sessions"));
   expect(Math.round(reloaded.x)).toBe(Math.round(moved.x));
   expect(Math.round(reloaded.y)).toBe(Math.round(moved.y));
@@ -335,12 +344,7 @@ test("메뉴바 메뉴로 테마·창·배치를 키보드로 다룰 수 있다"
   await page.getByRole("menuitem", { name: "닫기" }).click();
   await expect(page.locator(win("sessions"))).toHaveCount(0);
   await page.locator(dock("세션")).click();
-  // 여는 애니메이션이 끝나 제목 위치가 멈춘 뒤에 끈다(부하가 크면 애니메이션 도중 잡아 끌기가 빗나간다).
-  let settled = "";
-  await expect.poll(async () => {
-    const now = JSON.stringify(await box(page, `${win("sessions")} .window-title`));
-    const same = now === settled; settled = now; return same;
-  }, { intervals: [100] }).toBe(true);
+  await settled(page, `${win("sessions")} .window-title`);
   const title = await box(page, `${win("sessions")} .window-title`);
   await page.mouse.move(title.x + title.width / 2, title.y + title.height / 2);
   await page.mouse.down();

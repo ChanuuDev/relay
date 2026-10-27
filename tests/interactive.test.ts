@@ -238,10 +238,14 @@ describe("Interactive terminal", () => {
       expect(text).toContain(target.providerSessionId);
       expect(text).toContain(config.dataDirectory);
       expect(text).toContain("--history --json");
-      expect(text).toContain("확인된 사실과 추가 확인이 필요한 사항을 구분");
-      expect(text).toContain("현재 사용자 요청과 프로젝트 지침을 우선");
-      expect(text).toContain("작업을 이어서 수행하라는 요청이 있으면");
-      expect(text).toContain("`relay-session` 스킬의 `continue` 절차");
+      // Relay 기록은 원본 세션을 찾는 색인이고, 요구사항은 원본 대화에서 원문대로 확인한 뒤 이어서 작업한다.
+      expect(text).toContain("요약과 이력은 앞선 에이전트가 줄여 쓴 참고용 메모");
+      expect(text).toContain("원본 세션에 직접 들어가 실제 대화를 확인하세요");
+      expect(text).toContain("`resume-codex` 스킬");
+      expect(text).toContain(`rollout-*-${target.providerSessionId}.jsonl`);
+      expect(text).toContain("요구사항과 지시를 원문 그대로 확인");
+      expect(text).toContain("`relay-session` 스킬의 `continue` 절차로 현재 세션을 연결하고 남은 작업을 이어서 진행");
+      expect(text).not.toMatch(/[\r\n]/);
     } finally { cleanup(dir); }
   });
 
