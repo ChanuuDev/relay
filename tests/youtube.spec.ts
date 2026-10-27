@@ -138,9 +138,12 @@ test("YouTube 창: 모바일에서는 전체 화면이고 주소창이 제목 �
   await ready(page);
   await page.locator(dock("YouTube")).click();
   await expect(page.locator(win("youtube"))).toBeVisible();
-  const title = await page.locator(`${win("youtube")} .window-title`).boundingBox();
-  const toolbar = await page.locator(`${win("youtube")} .window-toolbar`).boundingBox();
-  expect(title && toolbar && toolbar.y > title.y + title.height - 1).toBe(true);
+  // 열리는 애니메이션 중에 두 상자를 따로 재면 그 사이 프레임이 바뀔 수 있어, 한 번에 재고 자리 잡을 때까지 다시 본다.
+  await expect.poll(() => page.locator(win("youtube")).evaluate((section) => {
+    const title = section.querySelector(".window-title")!.getBoundingClientRect();
+    const toolbar = section.querySelector(".window-toolbar")!.getBoundingClientRect();
+    return toolbar.top > title.bottom - 1;
+  })).toBe(true);
   await page.getByLabel("주소", { exact: true }).fill("dQw4w9WgXcQ");
   await page.getByLabel("주소", { exact: true }).press("Enter");
   await expect(page.locator(".browser-frame")).toBeVisible();

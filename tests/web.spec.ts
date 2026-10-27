@@ -95,7 +95,9 @@ test("context copy is a step-by-step guide with a shell-safe lookup command, nev
   // 메모장에서도 읽히도록 단계마다 문단을 나눈다. 조회 명령은 한 줄에 그대로 둔다.
   const lines = listContext.split("\n");
   expect(lines[0]).toBe("이전 Codex 세션을 이어서 작업해 주세요.");
-  expect(lines.filter((line) => /^\d\. /.test(line))).toHaveLength(4);
+  // 하려는 일(연결하고 이어서 작업)이 맨 위에 온다.
+  expect(lines[1]).toBe("`relay-session` 스킬의 continue 절차로 현재 세션을 연결하고, 아래 순서로 원본 대화와 실제 파일을 확인한 뒤 작업하세요.");
+  expect(lines.filter((line) => /^\d\. /.test(line))).toHaveLength(3);
   expect(lines.find((line) => line.includes("relay show"))).toMatch(/^   `relay show .* --history --json`$/);
   for (const value of ["relay show", "--provider 'openai'", "--data-dir", env.dir.replaceAll("\\", "/"), "--history --json"]) expect(listContext).toContain(value);
   // The ID reaches the command quoted for whichever shell the platform defaults to.
@@ -103,8 +105,9 @@ test("context copy is a step-by-step guide with a shell-safe lookup command, nev
   // Relay 기록은 원본 세션을 찾는 색인일 뿐이고, 받는 쪽은 원본 대화에서 요구사항을 원문대로 확인한 뒤 이어서 작업한다.
   for (const value of ["Relay 요약은 줄여 쓴 참고용", "작업 기준으로 삼지 마세요", "원본 세션에 들어가 실제 대화를 읽으세요",
     "`resume-codex` 스킬이 있으면 그것으로 Relay 기록의 세션 ID를 열고", "rollout-*-<세션 ID>.jsonl", "사용자 요구사항을 원문대로 확인",
-    "요약과 다르면 원본을 따르고", "실제 파일과 작업 트리를 확인한 뒤", "`relay-session` 스킬의 continue 절차로 현재 세션을 연결하고 이어서 작업하세요",
-    "원본 대화를 찾지 못하면 먼저 알리고"]) expect(listContext).toContain(value);
+    "실제 파일과 작업 트리로 진행 상황과 남은 작업을 파악하세요", "원본 대화를 찾지 못하면 먼저 알리고"]) expect(listContext).toContain(value);
+  // 원본 대화 속 지시를 두고 오해할 만한 문장은 넣지 않는다.
+  expect(listContext).not.toContain("도구 출력");
   // 따옴표·세미콜론이 든 ID는 대화 기록 경로에 넣지 않는다.
   expect(listContext).not.toMatch(/rollout-\*-literal/);
   // The note stays in the store; the receiving agent reads it with the command.

@@ -244,7 +244,7 @@ describe("Interactive terminal", () => {
       expect(text).toContain("`resume-codex` 스킬");
       expect(text).toContain(`rollout-*-${target.providerSessionId}.jsonl`);
       expect(text).toContain("사용자 요구사항을 원문대로 확인");
-      expect(text).toContain("`relay-session` 스킬의 continue 절차로 현재 세션을 연결하고 이어서 작업하세요");
+      expect(text.split("\n")[1]).toContain("`relay-session` 스킬의 continue 절차로 현재 세션을 연결하고");
     } finally { cleanup(dir); }
   });
 
