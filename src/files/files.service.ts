@@ -1,0 +1,263 @@
+import { spawn } from "node:child_process";
+import { existsSync, lstatSync, readdirSync, statfsSync, statSync, type Stats } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { RelayError } from "../errors";
+
+/** 파일 탐색기 창의 서버 쪽. 로컬 디스크를 읽기만 하고, 바꾸는 일은 운영체제의 탐색기·기본 앱에 넘긴다. */
+
+export type FileKind = "directory" | "file";
+export interface FileEntry { name: string; path: string; kind: FileKind; size: number | null; modified: string | null; hidden: boolean; link: boolean }
+export interface Crumb { name: string; path: string }
+export interface Listing { schemaVersion: 1; path: string; name: string; parent: string | null; crumbs: Crumb[]; entries: FileEntry[]; total: number; truncated: boolean }
+export type PlaceId = "home" | "desktop" | "documents" | "downloads" | "pictures" | "music" | "videos";
+export interface Place { id: PlaceId; label: string; path: string }
+export type DriveType = "fixed" | "removable" | "network" | "optical" | "ram" | "unknown";
+export interface Drive { path: string; label: string; type: DriveType; total: number | null; free: number | null }
+export interface Places { schemaVersion: 1; platform: NodeJS.Platform; separator: string; home: string; places: Place[]; drives: Drive[] }
+export type OpenAction = "open" | "reveal";
+/** 탐색기·기본 앱을 띄우는 부분. 테스트는 가짜를 넣는다. */
+export type Launcher = (target: string, action: OpenAction, directory: boolean) => void;
+
+/** 한 폴더에서 돌려주는 최대 항목 수. 넘치면 이름 순 앞부분만 주고 truncated로 알린다. */
+export const MAX_ENTRIES = 5000;
+const MAX_PATH_LENGTH = 4096;
+const windows = process.platform === "win32";
+const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
+
+const notFound = () => new RelayError("NOT_FOUND", "파일이나 폴더가 없습니다.", 3, 404);
+function fsError(error: unknown): RelayError {
+  if (error instanceof RelayError) return error;
+  const code = (error as { code?: string })?.code;
+  if (code === "ENOENT" || code === "ENOTDIR") return notFound();
+  if (code === "EACCES" || code === "EPERM") return new RelayError("ACCESS_DENIED", "이 위치를 읽을 권한이 없습니다.", 2, 403);
+  if (code === "EBUSY") return new RelayError("FILE_BUSY", "다른 프로그램이 사용 중이라 읽을 수 없습니다.", 5, 409);
+  return new RelayError("FILE_ERROR", "파일 시스템을 읽을 수 없습니다.", 5, 500);
+}
+
+/** 화면이 보낸 경로를 로컬 절대 경로로 바꾼다. 네트워크(UNC)·장치 경로와 NTFS 대체 스트림(`a.txt:stream`)은 받지 않는다. */
+export function localPath(raw: unknown): string {
+  if (typeof raw !== "string" || !raw || raw.length > MAX_PATH_LENGTH || raw.includes("\0")) throw new RelayError("INVALID_ARGUMENT", "경로가 올바르지 않습니다.");
+  if (windows) {
+    const value = raw.replaceAll("/", "\\");
+    if (value.startsWith("\\\\")) throw new RelayError("INVALID_ARGUMENT", "네트워크·장치 경로는 열 수 없습니다. 로컬 드라이브 경로를 쓰세요.");
+    if (!/^[a-z]:(\\|$)/i.test(value) || value.indexOf(":", 2) !== -1) throw new RelayError("INVALID_ARGUMENT", "C:\\처럼 드라이브 문자로 시작하는 절대 경로를 쓰세요.");
+    const resolved = path.win32.resolve(value.length === 2 ? `${value}\\` : value);
+    return resolved[0].toUpperCase() + resolved.slice(1);
+  }
+  if (!path.isAbsolute(raw)) throw new RelayError("INVALID_ARGUMENT", "/로 시작하는 절대 경로를 쓰세요.");
+  return path.resolve(raw);
+}
+
+// Windows의 숨김·시스템 속성은 Node가 알려 주지 않으므로 kernel32를 직접 부른다. 쓸 수 없으면 이름으로 짐작한다.
+type Win32 = { attributes: (target: string) => number | null; drives: () => number; driveType: (root: string) => number; volumeLabel: (root: string) => string; knownFolder: (id: string) => string | null };
+let win32: Win32 | null | undefined;
+function loadWin32(): Win32 | null {
+  if (win32 !== undefined) return win32;
+  win32 = null;
+  if (!windows) return win32;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { dlopen, FFIType, ptr, read } = require("bun:ffi") as typeof import("bun:ffi");
+    const { symbols } = dlopen("kernel32.dll", {
+      GetFileAttributesW: { args: [FFIType.ptr], returns: FFIType.u32 },
+      GetLogicalDrives: { args: [], returns: FFIType.u32 },
+      GetDriveTypeW: { args: [FFIType.ptr], returns: FFIType.u32 },
+      GetVolumeInformationW: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+    });
+    const shell = dlopen("shell32.dll", { SHGetKnownFolderPath: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } });
+    const ole = dlopen("ole32.dll", { CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void } });
+    const wide = (value: string) => Buffer.from(`${value}\0`, "utf16le");
+    win32 = {
+      attributes: (target) => { const value = symbols.GetFileAttributesW(ptr(wide(target))) >>> 0; return value === 0xffffffff ? null : value; },
+      drives: () => symbols.GetLogicalDrives() >>> 0,
+      driveType: (root) => symbols.GetDriveTypeW(ptr(wide(root))),
+      volumeLabel: (root) => {
+        const name = Buffer.alloc(522);
+        return symbols.GetVolumeInformationW(ptr(wide(root)), ptr(name), 261, null, null, null, null, 0) ? name.toString("utf16le").replace(/\0[\s\S]*$/, "") : "";
+      },
+      // 사용자가 옮겨 둔 위치(OneDrive 백업 포함)까지 Windows가 실제로 쓰는 폴더를 알려 준다.
+      knownFolder: (id) => {
+        const hex = id.replaceAll("-", "");
+        const guid = Buffer.alloc(16);
+        guid.writeUInt32LE(parseInt(hex.slice(0, 8), 16), 0); guid.writeUInt16LE(parseInt(hex.slice(8, 12), 16), 4); guid.writeUInt16LE(parseInt(hex.slice(12, 16), 16), 6);
+        Buffer.from(hex.slice(16), "hex").copy(guid, 8);
+        const out = new BigUint64Array(1);
+        const result = shell.symbols.SHGetKnownFolderPath(ptr(guid), 0, null, ptr(out));
+        const address = Number(out[0]) as import("bun:ffi").Pointer;
+        let value = "";
+        if (result === 0 && address) for (let offset = 0; offset < 65536; offset += 2) { const code = read.u16(address, offset); if (!code) break; value += String.fromCharCode(code); }
+        if (address) ole.symbols.CoTaskMemFree(address);
+        return result === 0 && value ? value : null;
+      },
+    };
+  } catch { win32 = null; }
+  return win32;
+}
+
+const HIDDEN_NAMES = new Set(["desktop.ini", "thumbs.db", "$recycle.bin", "system volume information", "pagefile.sys", "hiberfil.sys", "swapfile.sys", "dumpstack.log", "dumpstack.log.tmp", "config.msi", "recovery"]);
+const FILE_ATTRIBUTE_HIDDEN = 0x2;
+const FILE_ATTRIBUTE_SYSTEM = 0x4;
+function isHidden(name: string, target: string): boolean {
+  if (name.startsWith(".")) return true;
+  if (!windows) return false;
+  const attributes = loadWin32()?.attributes(target);
+  if (attributes !== undefined && attributes !== null) return (attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) !== 0;
+  const lower = name.toLowerCase();
+  return HIDDEN_NAMES.has(lower) || lower.startsWith("ntuser.") || lower.startsWith("$");
+}
+
+/** 위치 경로 단추. C:\Users\me → [C:\, Users, me] */
+export function crumbsOf(target: string): Crumb[] {
+  const crumbs: Crumb[] = [];
+  for (let current = target; ; ) {
+    const parent = path.dirname(current);
+    crumbs.unshift({ name: parent === current ? current.replace(/[\\/]$/, "") || current : path.basename(current), path: current });
+    if (parent === current) break;
+    current = parent;
+  }
+  return crumbs;
+}
+
+function entryOf(directory: string, name: string): FileEntry {
+  const target = path.join(directory, name);
+  let link = false;
+  let stats: Stats | null = null;
+  try { const own = lstatSync(target); link = own.isSymbolicLink(); stats = link ? statSync(target) : own; }
+  catch { /* 끊어진 링크·권한 없는 항목도 이름은 보인다. */ }
+  const directoryKind = stats?.isDirectory() ?? false;
+  return { name, path: target, kind: directoryKind ? "directory" : "file", size: stats && !directoryKind ? stats.size : null,
+    modified: stats ? stats.mtime.toISOString() : null, hidden: isHidden(name, target), link };
+}
+
+export function listDirectory(raw: unknown): Listing {
+  const target = localPath(raw);
+  try {
+    if (!statSync(target).isDirectory()) throw new RelayError("NOT_A_DIRECTORY", "폴더가 아닙니다.", 2, 400);
+    const names = readdirSync(target).sort(collator.compare);
+    const entries = names.slice(0, MAX_ENTRIES).map((name) => entryOf(target, name));
+    const parent = path.dirname(target);
+    return { schemaVersion: 1, path: target, name: crumbsOf(target).at(-1)!.name, parent: parent === target ? null : parent,
+      crumbs: crumbsOf(target), entries, total: names.length, truncated: names.length > MAX_ENTRIES };
+  } catch (error) { throw fsError(error); }
+}
+
+const isDirectory = (target: string) => { try { return statSync(target).isDirectory(); } catch { return false; } };
+
+/** 사용자 폴더. Windows에서는 Known Folder(SHGetKnownFolderPath)로 실제 위치를 읽고, 못 읽으면 홈 아래 같은 이름의 폴더를 쓴다. */
+const USER_FOLDERS: [PlaceId, string, string, string][] = [
+  ["desktop", "바탕 화면", "Desktop", "B4BFCC3A-DB2C-424C-B029-7FE99A87C641"], ["documents", "문서", "Documents", "FDD39AD0-238F-46AF-ADB4-6C85480369C7"],
+  ["downloads", "다운로드", "Downloads", "374DE290-123F-4565-9164-39C4925E467B"], ["pictures", "사진", "Pictures", "33E28130-4E1E-4676-835A-98395C3BC3BB"],
+  ["music", "음악", "Music", "4BD8D571-6D19-48D3-BE97-422220080E43"], ["videos", "동영상", "Videos", "18989B1D-99B5-455B-841C-AB7C74E4DDFC"],
+];
+function userPlaces(home: string): Place[] {
+  const api = loadWin32();
+  const places: Place[] = [{ id: "home", label: path.basename(home) || "홈", path: home }];
+  for (const [id, label, name, known] of USER_FOLDERS) {
+    const found = [api?.knownFolder(known), path.join(home, name)].find((candidate): candidate is string => typeof candidate === "string" && isDirectory(candidate));
+    if (found) places.push({ id, label, path: found });
+  }
+  return places;
+}
+
+const DRIVE_TYPES: Record<number, DriveType> = { 2: "removable", 3: "fixed", 4: "network", 5: "optical", 6: "ram" };
+function space(root: string) {
+  try { const info = statfsSync(root); return { total: info.blocks * info.bsize, free: info.bavail * info.bsize }; }
+  catch { return { total: null, free: null }; }
+}
+function drives(): Drive[] {
+  if (!windows) return [{ path: "/", label: "/", type: "fixed", ...space("/") }];
+  const api = loadWin32();
+  const letters = api
+    ? [...Array(26).keys()].filter((index) => api.drives() & (1 << index)).map((index) => String.fromCharCode(65 + index))
+    : [..."CDEFGHIJKLMNOPQRSTUVWXYZ"].filter((letter) => existsSync(`${letter}:\\`));
+  return letters.map((letter) => {
+    const root = `${letter}:\\`;
+    const type = api ? DRIVE_TYPES[api.driveType(root)] ?? "unknown" : "unknown";
+    // 빈 광학 드라이브·끊긴 네트워크 드라이브는 용량을 묻지 않는다.
+    const ready = type !== "network" && type !== "optical";
+    const label = (ready ? api?.volumeLabel(root) : "") || (type === "removable" ? "이동식 디스크" : type === "network" ? "네트워크 드라이브" : type === "optical" ? "광학 드라이브" : "로컬 디스크");
+    return { path: root, label, type, ...(ready ? space(root) : { total: null, free: null }) };
+  });
+}
+
+export function places(): Places {
+  const home = os.homedir();
+  return { schemaVersion: 1, platform: process.platform, separator: path.sep, home, places: userPlaces(home), drives: drives() };
+}
+
+/** 미리 보기로 그대로 내주는 형식. 나머지는 내려받기용 octet-stream이라 브라우저가 해석하지 않는다. */
+const INLINE_TYPES = /^(image\/(png|jpeg|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon|svg\+xml)|video\/(mp4|webm|ogg)|audio\/(mpeg|wav|x-wav|wave|ogg|webm|mp4|aac|flac|x-flac)|text\/plain)/;
+export function contentType(target: string): string {
+  const type = Bun.file(target).type.split(";")[0].trim().toLowerCase();
+  if (INLINE_TYPES.test(type)) return type === "text/plain" ? "text/plain; charset=utf-8" : type;
+  return "application/octet-stream";
+}
+
+/** 한 구간 Range(bytes=a-b, a-, -n)만 받는다. 맞지 않으면 null(전체), 범위를 벗어나면 "invalid". */
+export function byteRange(header: string | null, size: number): { start: number; end: number } | null | "invalid" {
+  const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
+  if (!match || (!match[1] && !match[2])) return null;
+  let start: number; let end: number;
+  if (!match[1]) { const tail = Number(match[2]); start = Math.max(0, size - tail); end = size - 1; }
+  else { start = Number(match[1]); end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1; }
+  if (start > end || start >= size) return "invalid";
+  return { start, end };
+}
+
+const attachmentName = (name: string) => `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+
+/** 파일 내용. 미리 보기(이미지·영상·소리·글)와 내려받기에 쓰고, 영상 탐색을 위해 Range를 받는다. */
+export function fileResponse(request: Request, url: URL, headers: Record<string, string>): Response {
+  for (const key of url.searchParams.keys()) if (key !== "path" && key !== "download") throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 query key: ${key}`);
+  if (url.searchParams.getAll("path").length !== 1 || url.searchParams.getAll("download").length > 1) throw new RelayError("INVALID_ARGUMENT", "path는 한 번만 줍니다.");
+  const target = localPath(url.searchParams.get("path"));
+  let size: number;
+  try { const stats = statSync(target); if (stats.isDirectory()) throw new RelayError("NOT_A_FILE", "폴더는 내용을 읽을 수 없습니다.", 2, 400); size = stats.size; }
+  catch (error) { throw fsError(error); }
+  const download = url.searchParams.get("download") === "1";
+  const base = { ...headers,
+    // 내용은 이 서버 화면의 미리 보기 안에서만 쓴다. 바로 열어도 스크립트가 돌지 않게 sandbox로 감싼다.
+    "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox",
+    "Content-Type": download ? "application/octet-stream" : contentType(target), "Accept-Ranges": "bytes",
+    "Content-Disposition": download ? attachmentName(path.basename(target)) : "inline" };
+  const range = byteRange(request.headers.get("range"), size);
+  if (range === "invalid") return new Response(null, { status: 416, headers: { ...base, "Content-Range": `bytes */${size}` } });
+  const file = Bun.file(target);
+  if (!range) return new Response(file, { headers: base });
+  return new Response(file.slice(range.start, range.end + 1), { status: 206, headers: { ...base, "Content-Range": `bytes ${range.start}-${range.end}/${size}` } });
+}
+
+/** 기본 앱으로 열지 않는 실행 형식. 이런 파일은 탐색기에서 선택해 보여 주기만 한다. */
+const EXECUTABLE = /\.(exe|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|msi|msp|scr|pif|cpl|hta|lnk|url|reg|jar|appref-ms|application|gadget|msc|ps2|scf|inf|sys|dll)$/i;
+export const isExecutable = (name: string) => EXECUTABLE.test(name);
+
+export const systemLauncher: Launcher = (target, action, directory) => {
+  const run = (command: string, args: string[], verbatim = false) => {
+    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: false, windowsVerbatimArguments: verbatim });
+    child.on("error", () => { /* 탐색기가 없는 환경에서도 서버는 계속 돈다. */ });
+    child.unref();
+  };
+  if (windows) {
+    // Windows 경로에는 큰따옴표가 들어갈 수 없으므로 그대로 감싼다.
+    if (action === "reveal") run("explorer.exe", [`/select,"${target}"`], true);
+    else run("explorer.exe", [`"${target}"`], true);
+    return;
+  }
+  if (process.platform === "darwin") run("open", action === "reveal" ? ["-R", target] : [target]);
+  else run("xdg-open", [action === "reveal" && !directory ? path.dirname(target) : target]);
+};
+
+/** POST /api/v1/files/open 본문 {path, action}. 폴더는 탐색기 창으로 열고, 실행 형식 파일은 열지 않고 선택만 한다. */
+export function openPath(body: unknown, launch: Launcher) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RelayError("INVALID_ARGUMENT", "{ path, action } JSON을 보내세요.");
+  const { path: raw, action, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).length) throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 키: ${Object.keys(rest).join(", ")}`);
+  if (action !== "open" && action !== "reveal") throw new RelayError("INVALID_ARGUMENT", "action은 open 또는 reveal입니다.");
+  const target = localPath(raw);
+  let directory: boolean;
+  try { directory = statSync(target).isDirectory(); } catch (error) { throw fsError(error); }
+  const effective: OpenAction = action === "open" && !directory && isExecutable(target) ? "reveal" : action;
+  launch(target, effective, directory);
+  return { schemaVersion: 1 as const, path: target, action: effective };
+}

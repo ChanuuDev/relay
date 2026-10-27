@@ -15,6 +15,7 @@ import { CommandWindow } from "./components/apps/command-window";
 import { SettingsWindow } from "./components/apps/settings-window";
 import { YouTubeWindow } from "./components/apps/youtube-window";
 import { NotesWindow } from "./components/apps/notes-window";
+import { FilesWindow } from "./components/apps/files-window";
 import { resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
@@ -209,6 +210,7 @@ function App() {
       <SettingsWindow health={health.data} healthError={health.error} connection={connection} />
       <YouTubeWindow />
       <NotesWindow />
+      <FilesWindow />
     </main>
     <Dock />
     {updateReady && <div id="update-status" className="update-toast material-toast" role="status">

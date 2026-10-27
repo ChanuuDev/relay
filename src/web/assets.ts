@@ -16,6 +16,7 @@ import iconCommand from "./public/icons/command.png" with { type: "file" };
 import iconSettings from "./public/icons/settings.png" with { type: "file" };
 import iconYouTube from "./public/icons/youtube.png" with { type: "file" };
 import iconNotes from "./public/icons/notes.png" with { type: "file" };
+import iconFiles from "./public/icons/files.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
 import iconApp512 from "./public/icons/app-512.png" with { type: "file" };
 import iconOpenAI from "./public/icons/providers/openai.png" with { type: "file" };
@@ -54,6 +55,7 @@ export const assets = new Map<string, Asset>([
   ["/icons/settings.png", image(iconSettings, "image/png")],
   ["/icons/youtube.png", image(iconYouTube, "image/png")],
   ["/icons/notes.png", image(iconNotes, "image/png")],
+  ["/icons/files.png", image(iconFiles, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],
   ["/icons/app-512.png", image(iconApp512, "image/png")],
   ["/icons/providers/openai.png", image(iconOpenAI, "image/png")],

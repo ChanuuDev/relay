@@ -1,0 +1,205 @@
+import { create } from "zustand";
+import {
+  File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileTerminal, FileText, FileVideo, Folder, Presentation, type LucideIcon,
+} from "lucide-react";
+import type { Drive, FileEntry, Listing, Place, Places } from "../../files/files.service";
+
+export type { Drive, FileEntry, Listing, Place, Places };
+
+/** 위치. null은 `이 PC`(즐겨찾기·드라이브 시작 화면)다. */
+export type Location = string | null;
+export type View = "list" | "grid";
+export type SortKey = "name" | "modified" | "kind" | "size";
+export type Sort = { key: SortKey; desc: boolean };
+type Prefs = { view: View; hidden: boolean; preview: boolean; sort: Sort; location: Location };
+
+const PREFS_KEY = "relay-files-v1";
+const MAX_HISTORY = 100;
+const DEFAULT_PREFS: Prefs = { view: "list", hidden: false, preview: true, sort: { key: "name", desc: false }, location: null };
+const SORT_KEYS: SortKey[] = ["name", "modified", "kind", "size"];
+
+function loadPrefs(): Prefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null") as Partial<Prefs> | null;
+    if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
+    const sort = raw.sort && SORT_KEYS.includes(raw.sort.key) ? { key: raw.sort.key, desc: Boolean(raw.sort.desc) } : DEFAULT_PREFS.sort;
+    return { view: raw.view === "grid" ? "grid" : "list", hidden: raw.hidden === true, preview: raw.preview !== false, sort,
+      location: typeof raw.location === "string" && raw.location ? raw.location : null };
+  } catch { return DEFAULT_PREFS; }
+}
+
+type State = Prefs & {
+  history: Location[]; index: number; selected: string | null;
+  go: (location: Location, select?: string | null) => void; back: () => void; forward: () => void; settle: (path: string) => void;
+  select: (path: string | null) => void; setView: (view: View) => void; toggleHidden: () => void; togglePreview: () => void; sortBy: (key: SortKey) => void;
+};
+
+const save = (state: Prefs) => {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify({ view: state.view, hidden: state.hidden, preview: state.preview, sort: state.sort, location: state.location })); }
+  catch { /* 저장 공간이 없어도 창은 동작한다. */ }
+};
+
+/** 창 안의 탐색 이력과 보기 설정. 보기 설정과 마지막 위치는 다음에 열 때 그대로 쓴다. */
+export const useFiles = create<State>((set, get) => {
+  const prefs = loadPrefs();
+  const update = (patch: Partial<State>) => { set(patch); save(get()); };
+  return {
+    ...prefs, history: [prefs.location], index: 0, selected: null,
+    go: (location, select = null) => {
+      const { history, index } = get();
+      if (history[index] === location) { set({ selected: select }); return; }
+      const next = [...history.slice(0, index + 1), location].slice(-MAX_HISTORY);
+      update({ history: next, index: next.length - 1, location, selected: select });
+    },
+    back: () => {
+      const { history, index } = get();
+      if (index > 0) update({ index: index - 1, location: history[index - 1], selected: history[index] });
+    },
+    forward: () => {
+      const { history, index } = get();
+      if (index < history.length - 1) update({ index: index + 1, location: history[index + 1], selected: null });
+    },
+    // 사용자가 친 경로(c:/users 같은 꼴)를 서버가 정리한 경로로 바꿔 끼운다. 이력은 늘지 않는다.
+    settle: (path) => {
+      const { history, index } = get();
+      if (history[index] === path) return;
+      update({ history: history.map((entry, at) => (at === index ? path : entry)), location: path });
+    },
+    select: (selected) => set({ selected }),
+    setView: (view) => update({ view }),
+    toggleHidden: () => update({ hidden: !get().hidden }),
+    togglePreview: () => update({ preview: !get().preview }),
+    sortBy: (key) => { const { sort } = get(); update({ sort: { key, desc: sort.key === key ? !sort.desc : key === "modified" || key === "size" } }); },
+  };
+});
+
+export const listUrl = (target: string) => `/api/v1/files?path=${encodeURIComponent(target)}`;
+export const contentUrl = (target: string, download = false) => `/api/v1/files/content?path=${encodeURIComponent(target)}${download ? "&download=1" : ""}`;
+
+/** 파일 API를 부른다. 실패하면 서버가 준 한국어 문구를 그대로 오류로 올린다. */
+export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  let response: Response;
+  try { response = await fetch(url, { signal, cache: "no-store" }); }
+  catch (error) {
+    if (error instanceof TypeError) throw new Error("Relay 서버에 연결할 수 없습니다.", { cause: error });
+    throw error;
+  }
+  const data = await response.json() as { schemaVersion?: number; error?: { message?: string } };
+  if (!response.ok) throw new Error(data.error?.message ?? `HTTP ${response.status}`);
+  return data as T;
+}
+
+/** 운영체제의 탐색기로 보이거나 기본 앱으로 연다. 실행 파일은 서버가 열지 않고 선택만 한다. */
+export async function openOnSystem(target: string, action: "open" | "reveal"): Promise<"open" | "reveal"> {
+  const response = await fetch("/api/v1/files/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: target, action }) });
+  const data = await response.json() as { action?: "open" | "reveal"; error?: { message?: string } };
+  if (!response.ok) throw new Error(data.error?.message ?? `HTTP ${response.status}`);
+  return data.action ?? action;
+}
+
+export type Preview = "image" | "video" | "audio" | "text" | null;
+export type FileType = { label: string; icon: LucideIcon; tone: string; preview: Preview };
+
+const TEXT = "txt md markdown log csv tsv json jsonc json5 yml yaml toml ini cfg conf env gitignore gitattributes editorconfig xml svg html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php sh bash zsh ps1 psm1 bat cmd sql lua r pl dart gradle properties lock tex srt vtt";
+const CODE = "json jsonc json5 yml yaml toml xml html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php lua r pl dart gradle sql";
+const TERMINAL = "sh bash zsh ps1 psm1 bat cmd exe msi com";
+const TEXT_EXT = new Set(TEXT.split(" "));
+const CODE_EXT = new Set(CODE.split(" "));
+const TERMINAL_EXT = new Set(TERMINAL.split(" "));
+const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "svg"]);
+const VIDEO_EXT = new Set(["mp4", "m4v", "webm", "ogv", "mov"]);
+const AUDIO_EXT = new Set(["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus"]);
+const ARCHIVE_EXT = new Set(["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "cab"]);
+const SHEET_EXT = new Set(["xls", "xlsx", "xlsm", "ods", "numbers", "cell"]);
+const SLIDE_EXT = new Set(["ppt", "pptx", "odp", "key", "show"]);
+const DOC_EXT = new Set(["doc", "docx", "odt", "rtf", "pdf", "hwp", "hwpx", "pages"]);
+const NAMES: Record<string, string> = {
+  txt: "텍스트 문서", md: "Markdown 문서", log: "로그 파일", csv: "CSV 파일", json: "JSON 파일", pdf: "PDF 문서", hwp: "한글 문서", hwpx: "한글 문서",
+  doc: "Word 문서", docx: "Word 문서", xls: "Excel 워크시트", xlsx: "Excel 워크시트", ppt: "PowerPoint 프레젠테이션", pptx: "PowerPoint 프레젠테이션",
+  exe: "응용 프로그램", msi: "Windows Installer 패키지", lnk: "바로 가기", url: "인터넷 바로 가기", zip: "압축(ZIP) 파일", "7z": "7-Zip 압축 파일",
+  png: "PNG 이미지", jpg: "JPEG 이미지", jpeg: "JPEG 이미지", gif: "GIF 이미지", webp: "WebP 이미지", svg: "SVG 이미지", mp4: "MP4 동영상", mov: "QuickTime 동영상",
+  mp3: "MP3 오디오", wav: "WAV 오디오", html: "HTML 문서", htm: "HTML 문서", ts: "TypeScript 파일", tsx: "TypeScript 파일", js: "JavaScript 파일", py: "Python 파일",
+  ps1: "PowerShell 스크립트", bat: "배치 파일", cmd: "Windows 명령 스크립트", dll: "응용 프로그램 확장", ini: "구성 설정",
+};
+
+export const extensionOf = (name: string) => { const dot = name.lastIndexOf("."); return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""; };
+
+/** 종류 이름·아이콘·미리 보기 방식. Windows 탐색기의 `종류` 열과 비슷한 이름을 쓴다. */
+export function fileType(entry: Pick<FileEntry, "name" | "kind">): FileType {
+  if (entry.kind === "directory") return { label: "파일 폴더", icon: Folder, tone: "folder", preview: null };
+  const ext = extensionOf(entry.name);
+  const label = NAMES[ext] ?? (ext ? `${ext.toUpperCase()} 파일` : "파일");
+  if (IMAGE_EXT.has(ext)) return { label: NAMES[ext] ?? `${ext.toUpperCase()} 이미지`, icon: FileImage, tone: "image", preview: "image" };
+  if (VIDEO_EXT.has(ext)) return { label: NAMES[ext] ?? `${ext.toUpperCase()} 동영상`, icon: FileVideo, tone: "video", preview: ext === "mov" ? null : "video" };
+  if (AUDIO_EXT.has(ext)) return { label: NAMES[ext] ?? `${ext.toUpperCase()} 오디오`, icon: FileAudio, tone: "audio", preview: "audio" };
+  if (ARCHIVE_EXT.has(ext)) return { label, icon: FileArchive, tone: "archive", preview: null };
+  if (SHEET_EXT.has(ext)) return { label, icon: FileSpreadsheet, tone: "sheet", preview: null };
+  if (SLIDE_EXT.has(ext)) return { label, icon: Presentation, tone: "slide", preview: null };
+  if (DOC_EXT.has(ext)) return { label, icon: FileText, tone: "doc", preview: null };
+  if (TERMINAL_EXT.has(ext)) return { label, icon: FileTerminal, tone: "code", preview: TEXT_EXT.has(ext) ? "text" : null };
+  if (CODE_EXT.has(ext)) return { label, icon: FileCode, tone: "code", preview: "text" };
+  if (TEXT_EXT.has(ext)) return { label, icon: FileText, tone: "text", preview: "text" };
+  return { label, icon: File, tone: "plain", preview: null };
+}
+
+const UNITS = ["KB", "MB", "GB", "TB"];
+/** Windows 탐색기처럼 1024 단위. 10 미만은 소수 한 자리. */
+export function formatSize(bytes: number | null): string {
+  if (bytes === null) return "";
+  if (bytes < 1024) return `${bytes} 바이트`;
+  let value = bytes / 1024; let unit = 0;
+  while (value >= 1024 && unit < UNITS.length - 1) { value /= 1024; unit += 1; }
+  return `${value < 10 ? value.toFixed(1).replace(/\.0$/, "") : Math.round(value).toLocaleString("ko-KR")} ${UNITS[unit]}`;
+}
+
+const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
+export const formatDate = (iso: string | null) => (iso ? dateFormat.format(new Date(iso)) : "");
+
+const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
+/** 폴더가 늘 먼저이고, 같은 종류끼리 고른 열로 정렬한다. 같으면 이름 순. */
+export function sortEntries(entries: FileEntry[], sort: Sort): FileEntry[] {
+  const sign = sort.desc ? -1 : 1;
+  const compare = (a: FileEntry, b: FileEntry) => {
+    if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+    let order = 0;
+    if (sort.key === "modified") order = (a.modified ?? "").localeCompare(b.modified ?? "");
+    else if (sort.key === "size") order = (a.size ?? -1) - (b.size ?? -1);
+    else if (sort.key === "kind") order = collator.compare(fileType(a).label, fileType(b).label);
+    return order * sign || collator.compare(a.name, b.name) * (sort.key === "name" ? sign : 1);
+  };
+  return [...entries].sort(compare);
+}
+
+/** 미리 보기 글은 앞 256KB만 읽는다. NUL이 있으면 이진 파일로 보고, UTF-8이 아니면 한국어 Windows의 기본 인코딩(CP949)으로 읽는다. */
+export const TEXT_PREVIEW_BYTES = 256 * 1024;
+export function decodeText(bytes: Uint8Array): string | null {
+  const sample = bytes.subarray(0, 8192);
+  const utf16 = sample[0] === 0xff && sample[1] === 0xfe;
+  if (!utf16 && sample.includes(0)) return null;
+  if (utf16) return new TextDecoder("utf-16le").decode(bytes);
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch {
+    // 잘린 끝의 반쪽 글자 때문일 수 있으니 끝 3바이트를 빼고 다시 본다.
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, Math.max(0, bytes.length - 3))); }
+    catch { return new TextDecoder("euc-kr").decode(bytes); }
+  }
+}
+
+export async function readTextPreview(target: string, signal: AbortSignal): Promise<string | null> {
+  const response = await fetch(contentUrl(target), { signal, headers: { Range: `bytes=0-${TEXT_PREVIEW_BYTES - 1}` }, cache: "no-store" });
+  if (!response.ok) throw new Error(response.status === 403 ? "이 파일을 읽을 권한이 없습니다." : "파일을 읽지 못했습니다.");
+  return decodeText(new Uint8Array(await response.arrayBuffer()));
+}
+
+/** 경로 글자만으로 찾은 상위 폴더. 드라이브 루트(C:\)나 /의 상위는 null(`이 PC`)이다. */
+export function parentOf(target: string): string | null {
+  const trimmed = target.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  if (cut < 0 || !trimmed) return null;
+  const parent = trimmed.slice(0, cut);
+  if (/^[a-z]:$/i.test(parent)) return `${parent}\\`;
+  return parent || "/";
+}
+
+/** 사이드바·`이 PC`에 쓰는 드라이브 이름. `로컬 디스크 (C:)`처럼 Windows 탐색기와 같은 꼴. */
+export const driveName = (drive: Drive) => (drive.path === "/" ? "시스템 디스크" : `${drive.label} (${drive.path.replace(/\\$/, "")})`);
