@@ -5,6 +5,7 @@ import { ready, useRelayServer } from "./web-helpers";
 useRelayServer();
 
 const KEY = "relay-notes-v1";
+const VIEW_KEY = "relay-notes-view-v1";
 const dock = (name: string) => `.dock-item[aria-label="${name}"]`;
 const win = (id: string) => `.window[data-window="${id}"]`;
 const item = (page: Page, name: string) => page.getByRole("treeitem", { name, exact: true });
@@ -17,7 +18,11 @@ async function seed(page: Page, items: Seed[], extra: Record<string, unknown> = 
   await ready(page);
   const now = Date.parse("2026-10-22T09:30:00+09:00");
   const full = items.map((entry, index) => ({ createdAt: now + index, updatedAt: now + index * 60000, title: "", body: "", name: "", ...entry }));
-  await page.evaluate(([key, value]) => localStorage.setItem(key, value), [KEY, JSON.stringify({ version: 1, items: full, ...extra })] as const);
+  // 첫 화면은 뜬 뒤 조금 있다가 보기 상태(선택 없음)를 따로 저장하고, 새로 고친 화면은 그 값을 넣어 둔 선택보다 앞세운다.
+  // 그 저장이 끝난 뒤에 지워야 PC가 느릴 때도 넣어 둔 선택·펼침이 쓰인다.
+  await expect.poll(() => page.evaluate((key) => localStorage.getItem(key) !== null, VIEW_KEY)).toBe(true);
+  await page.evaluate(([key, value, view]) => { localStorage.setItem(key, value); localStorage.removeItem(view); },
+    [KEY, JSON.stringify({ version: 1, items: full, ...extra }), VIEW_KEY] as const);
   await page.reload();
   await expect(page.locator("#connection-state")).toContainText("연결됨");
   await page.locator(dock("메모")).click();

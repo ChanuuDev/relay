@@ -825,9 +825,9 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .format-menu { min-width: 180px; padding: 4px; }
 .format-menu .menu-item[data-danger]:hover, .format-menu .menu-item[data-danger]:focus-visible { background: var(--destructive); }
 
-/* 아래쪽 입력 창: 가운데 단에 제목과 본문 */
+/* 아래쪽 입력 창: 창 너비를 그대로 쓰고, 좌우 여백은 경로 줄·서식 도구와 비슷하게만 둔다 */
 .note-scroll { flex: 1; min-height: 0; overflow-y: auto; cursor: text; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
-.note-sheet { display: flex; flex-direction: column; min-height: 100%; width: 100%; max-width: 780px; margin: 0 auto; padding: 22px 44px 0; }
+.note-sheet { display: flex; flex-direction: column; min-height: 100%; width: 100%; padding: 22px 24px 0; }
 .note-title { width: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--foreground); caret-color: var(--notes-accent);
   font: inherit; font-size: var(--fs-24); font-weight: 700; letter-spacing: -.025em; line-height: 1.35; }
 .note-title::placeholder, .note-source::placeholder { color: color-mix(in srgb, var(--foreground) 30%, transparent); }

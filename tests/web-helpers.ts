@@ -41,10 +41,11 @@ export function hook(alias: string, payload: Record<string, unknown>, end = fals
 export async function launch() {
   server = spawn(binary, ["web", "--data-dir", env.dir, "--port", String(env.port)], { cwd: env.dir, windowsHide: true, stdio: "pipe", env: spawnEnv });
   let logs = ""; server.stderr?.on("data", chunk => { logs += chunk; });
+  // 갓 빌드한 exe는 백신 검사나 PC 부하로 처음 뜨는 데 몇 초 더 걸릴 수 있어, 기본 7초보다 넉넉히 기다린다.
   await expect.poll(async () => {
     if (server?.exitCode !== null) throw new Error(`Server exited: ${logs}`);
     try { return (await fetch(`${env.url}/api/v1/health`)).status; } catch { return 0; }
-  }).toBe(200);
+  }, { timeout: 20000 }).toBe(200);
 }
 
 export async function stop() {
