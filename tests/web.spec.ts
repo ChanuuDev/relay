@@ -17,7 +17,15 @@ test("standalone binary outside source: CLI → table → detail/history → rec
   await expect(page).toHaveURL(new RegExp(`/sessions/${created.session.id}`));
   cli(["update", "--session-id", "external-session", "--summary", "브라우저 연결 확인\n진행 기록 두 번째 줄"]);
   await expect(page.locator(".summary")).toHaveText("브라우저 연결 확인\n진행 기록 두 번째 줄", { timeout: 5000 });
+  // 상세를 다 불러온 뒤 그려지는 탭에서도 고른 탭 바탕(thumb)이 그 탭 위에 놓인다.
+  const thumbOver = async (name: string) => page.evaluate((label) => {
+    const thumb = document.querySelector<HTMLElement>(".tabs-thumb")!;
+    const tab = Array.from(document.querySelectorAll<HTMLElement>('[role="tab"]')).find((item) => (item.textContent ?? "").startsWith(label))!;
+    return thumb.hasAttribute("data-ready") && Math.abs(thumb.offsetLeft - tab.offsetLeft) <= 1 && Math.abs(thumb.offsetWidth - tab.offsetWidth) <= 1;
+  }, name);
+  await expect.poll(() => thumbOver("개요")).toBe(true);
   await page.getByRole("tab", { name: /기록 이력/ }).click();
+  await expect.poll(() => thumbOver("기록 이력")).toBe(true);
   await expect(page.locator("#updates-content [data-testid=history-entry]")).toHaveCount(2);
   await page.reload(); await expect(page.locator(".summary")).toContainText("브라우저 연결 확인");
   await stop();

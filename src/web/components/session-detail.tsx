@@ -76,14 +76,16 @@ export function SessionDetail({ detail, updates, children, chain, storeDirectory
     if (moved) enter(root.querySelector(ACTIVE_CONTENT), { y: 6, duration: "fast" });
   }, { dependencies: [tab] });
 
-  // 창 폭이 바뀌면 thumb 위치를 애니메이션 없이 다시 맞춘다.
+  // 창 폭이 바뀌면 thumb 위치를 애니메이션 없이 다시 맞춘다. 탭은 상세를 다 불러온 뒤에 그려지므로 그때 다시 붙인다
+  // (관찰을 시작하면 한 번 불리므로 첫 위치도 이때 놓인다).
+  const tabsShown = !detail.isPending && Boolean(s);
   useEffect(() => {
     const list = tabsRef.current?.querySelector<HTMLElement>('[data-slot="tabs-list"]');
     if (!list || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => place());
     observer.observe(list);
     return () => observer.disconnect();
-  }, [place]);
+  }, [place, tabsShown]);
 
   // C3 요약이 폴링으로 바뀌면 한 번 밝아진다. C5 스켈레톤이 걷히면 머리글이 차례로 들어온다.
   useGSAP(() => {

@@ -23,7 +23,7 @@ const optionId = (index: number) => `files-item-${index}`;
 const COLUMNS: { key: SortKey; label: string }[] = [{ key: "name", label: "이름" }, { key: "modified", label: "수정한 날짜" }, { key: "kind", label: "종류" }, { key: "size", label: "크기" }];
 
 /** 본문 항목(entry)·빈 곳(둘 다 없음)·왼쪽 트리 항목(tree)의 오른쪽 클릭 메뉴. */
-type Menu = { entry: FileEntry | null; tree?: TreeTarget; left: number; top: number };
+type Menu = { entry: FileEntry | null; tree?: TreeTarget; left: number; top: number; id: number };
 type Notice = { text: string; tone: "info" | "error"; id: number };
 
 /** Windows 디스크를 둘러보는 파일 탐색기. 서버는 읽기만 하고, 열기·탐색기에서 보기는 운영체제에 넘긴다. */
@@ -124,7 +124,8 @@ export function FilesWindow() {
     if (entry) select(entry.path);
     leavingRef.current = false;
     setMenuLeaving(false);
-    setMenu({ entry, tree, left, top });
+    // 열 때마다 새로 마운트해(key) 닫히는 중인 이전 메뉴를 이어 쓰지 않는다. 그래야 첫 항목이 초점을 받고 Esc가 먹는다.
+    setMenu({ entry, tree, left, top, id: Date.now() + Math.random() });
   }
   function closeMenu(returnFocus: boolean) {
     if (!menu || leavingRef.current) return;
@@ -304,7 +305,7 @@ export function FilesWindow() {
     </div>} />
     {notice && <div className="files-toast material-toast" role={notice.tone === "error" ? "alert" : "status"} data-tone={notice.tone}><span>{notice.text}</span>
       <Button type="button" variant="ghost" size="icon-xs" aria-label="알림 닫기" onClick={() => setNotice(null)}><X aria-hidden="true" /></Button></div>}
-    {menu && <DesktopMenu items={menuEntries(menu)} position={{ left: menu.left, top: Math.min(menu.top, window.innerHeight - 200) }} leaving={menuLeaving}
+    {menu && <DesktopMenu key={menu.id} items={menuEntries(menu)} position={{ left: menu.left, top: Math.min(menu.top, window.innerHeight - 200) }} leaving={menuLeaving}
       onClose={closeMenu} onExited={() => { if (!leavingRef.current) return; leavingRef.current = false; setMenu(null); setMenuLeaving(false); }} />}
   </Window>;
 }

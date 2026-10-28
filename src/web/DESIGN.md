@@ -33,6 +33,8 @@ div.desktop (fixed inset-0)
 | `.material-toast` | 24px | 복사 토스트 |
 | `.material-control` | 없음 | 검색·Provider 입력, 세그먼트 컨트롤, 아이콘 버튼 |
 
+**유리 컨트롤 공통 모양**: 파일 탐색기 경로 칸을 기준으로 모든 유리 컨트롤이 같은 모양을 씁니다. 알약형 모서리(`--radius-control`), `--glass-control-fill` 채움, 1px `--glass-control-border` 머리카락 테두리(shadcn 기본 `--input` 테두리 대신), 올리면 `--glass-control-hover`, 입력 칸에 초점이 오면 불투명 `--background`입니다. 높이는 글자 + 15px(13px에서 28px)로 단추 `sm`과 같습니다. 상단바의 주 단추(`검색`)는 12% 전경색 채움에 같은 테두리, 켜 둔 단추(`상세 필터`를 연 상태)는 시스템 블루 16% 틴트와 32% 테두리입니다. 세그먼트(`목록 | 아이콘`, `서식 | Markdown`, 상세 탭)는 바깥 알약 안에 알약 thumb이 움직입니다.
+
 `prefers-reduced-transparency`에서는 모두 불투명 `--background`로 바뀌고, 모바일은 블러 반경을 줄입니다.
 
 ## 3. 토큰
@@ -49,7 +51,7 @@ div.desktop (fixed inset-0)
 | `--terminal-bg` / `--terminal-prompt` | `#1c1c1e` / `#30d158` | 동일 |
 | `--glass-*` | §2 재질 채움·테두리·그림자 | 동일 키, 값만 다름 |
 
-모서리: 창 12px(최대화 10px), 카드·세그먼트 8px, 버튼·입력 6px, Dock 18px. 창 조작은 중립색 아이콘 버튼을 사용하고, 닫기 버튼의 hover에는 빨간색을 씁니다. 상태점은 연결 상태에 따라 색을 표시합니다.
+모서리: 창 12px(최대화 10px), 카드 8–12px, Dock 18px. 유리 컨트롤(입력·검색·선택·단추·세그먼트·탭·창 조작 단추)은 `--radius-control: 999px` 하나로 알약형이고, 정사각 아이콘 단추는 원입니다. 여러 줄 입력(textarea)·메뉴·카드·목록 행은 따르지 않습니다. 창 조작은 중립색 아이콘 버튼을 사용하고, 닫기 버튼의 hover에는 빨간색을 씁니다. 상태점은 연결 상태에 따라 색을 표시합니다.
 
 ## 4. 서체와 정렬
 

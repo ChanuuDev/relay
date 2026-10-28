@@ -161,11 +161,22 @@
 [data-slot="input"], [data-slot="input-group"] { height: calc(1em + 15px); min-height: calc(1em + 15px); font-size: var(--fs-13); }
 [data-slot="input"] { padding-inline: 10px; }
 [data-slot="input-group-control"] { height: calc(1em + 13px); min-height: calc(1em + 13px); font-size: var(--fs-13); }
-[data-slot="native-select"] { font-size: var(--fs-13); border-color: var(--glass-control-border); padding-inline: 10px 30px; }
+[data-slot="native-select"] { font-size: var(--fs-13); border-color: var(--glass-control-border); padding-inline: 12px 30px; }
 [data-slot="native-select"][data-size="sm"] { height: calc(1em + 15px); min-height: calc(1em + 15px); }
-[data-slot="select-trigger"] { font-size: var(--fs-13); border-color: var(--glass-control-border); padding-inline: 10px 13px; }
+[data-slot="select-trigger"] { font-size: var(--fs-13); border-color: var(--glass-control-border); padding-inline: 12px 13px; }
 [data-slot="select-trigger"]:hover, [data-slot="select-trigger"][data-state="open"] { background: var(--glass-control-hover); }
 [data-slot="select-trigger"][data-size="sm"] { height: calc(1em + 15px); }
+/* 유리 컨트롤 공통 모양(§5.2-4): 입력·검색·선택·버튼·세그먼트·탭은 파일 탐색기 경로 칸처럼 알약형(정사각 아이콘 단추는 원)이고,
+   같은 유리 채움·머리카락 테두리·올림·초점 바탕을 쓴다. 모서리는 --radius-control 하나로 바꾼다. 여러 줄 입력(textarea)과 메뉴·카드·행은 제외한다. */
+:root { --radius-control: 999px; }
+[data-slot="input"], [data-slot="input-group"], [data-slot="native-select"], [data-slot="select-trigger"], [data-slot="button"], [data-slot="input-group-button"],
+[data-slot="tabs-list"], [data-slot="tabs-trigger"] { border-radius: var(--radius-control); }
+[data-slot="input"], [data-slot="input-group"], [data-slot="native-select"], [data-slot="select-trigger"] { border-color: var(--glass-control-border); }
+[data-slot="input"]:hover, [data-slot="input-group"]:hover, [data-slot="native-select"]:hover { background: var(--glass-control-hover); }
+[data-slot="input"]:focus-visible, [data-slot="native-select"]:focus-visible,
+[data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); }
+[data-slot="input"] { padding-inline: 12px; }
+[data-slot="input-group-addon"]:first-child { padding-left: 11px; }
 /* Select 목록: 드롭다운 메뉴와 같은 유리 재질·항목 치수·시스템 블루 강조. 체크는 macOS 팝업 버튼처럼 왼쪽 열에 두고,
    열면 고른 항목이 버튼 글자 위에 겹친다(item-aligned). 목록 글자는 버튼과 같이 글자 크기 설정을 따른다. */
 [data-slot="select-content"] { z-index: 90; border-radius: 10px; color: var(--foreground); }
@@ -278,12 +289,16 @@ body[data-window-dragging] .window-frame { transition: none; }
 .titlebar { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); user-select: none; }
 .window-title { display: flex; align-items: center; gap: 6px; font-size: var(--fs-13); font-weight: 600; line-height: var(--lh-20); white-space: nowrap; }
 .window-toolbar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
-.window-toolbar [data-slot="button"][data-variant="default"] { background: color-mix(in srgb, var(--foreground) 12%, transparent); color: var(--foreground); font-weight: 600; }
+.window-toolbar [data-slot="button"][data-variant="default"] { background: color-mix(in srgb, var(--foreground) 12%, transparent); color: var(--foreground); font-weight: 600; border: 1px solid var(--glass-control-border); }
+/* 상단바에서 켜 둔 단추(상세 필터를 연 상태)는 불투명 회색 대신 시스템 블루 틴트의 유리 알약으로 보인다. */
+.window-toolbar [data-slot="button"][data-variant="secondary"] { background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 32%, transparent); }
+.window-toolbar [data-slot="button"][data-variant="secondary"]:hover { background: color-mix(in srgb, var(--primary) 24%, transparent); }
 .window-toolbar [data-slot="button"][data-variant="default"]:hover { background: color-mix(in srgb, var(--foreground) 18%, transparent); }
 .titlebar-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .titlebar-right { display: flex; align-items: center; gap: 8px; }
 .window-controls { display: flex; align-items: center; gap: 2px; padding-left: 12px; border-left: 1px solid var(--glass-control-border); }
-.window-control { display: grid; place-items: center; width: 30px; height: 28px; border: 1px solid transparent; border-radius: 6px; color: inherit; cursor: pointer; transition: background-color .12s ease-out, color .12s ease-out; }
+.window-control { display: grid; place-items: center; width: 30px; height: 28px; border: 1px solid transparent; border-radius: var(--radius-control); color: inherit; cursor: pointer; transition: background-color .12s ease-out, color .12s ease-out; }
 .window-control svg { width: 14px; height: 14px; }
 .window-control:hover:not(:disabled) { background: var(--glass-control-hover); }
 .window-control:active:not(:disabled) { background: var(--glass-control-fill); }
@@ -397,9 +412,9 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 .detail-actions { display: flex; gap: 8px; padding: 0 24px; flex-wrap: wrap; }
 .context-copy-hint { padding: 0 24px; margin-top: 12px; font-size: var(--fs-11); color: var(--muted-foreground); line-height: 1.6; text-wrap: pretty; }
 .shell-select { display: flex; justify-content: end; align-items: center; gap: 8px; padding: 12px 24px 16px; font-size: var(--fs-11); color: var(--muted-foreground); }
-.detail-tabs { position: relative; margin: 0 24px; border-radius: 8px; padding: 3px; }
+.detail-tabs { position: relative; margin: 0 24px; border-radius: var(--radius-control); padding: 3px; }
 .detail-tabs [data-slot="tabs-trigger"] { z-index: 1; }
-.tabs-thumb { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; z-index: 0; border-radius: 6px; background: var(--background);
+.tabs-thumb { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; z-index: 0; border-radius: var(--radius-control); background: var(--background);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .12); pointer-events: none; opacity: 0; }
 .tabs-thumb[data-ready] { opacity: 1; }
 .detail-tabs [data-slot="tabs-trigger"] { font-size: var(--fs-12); font-weight: 500; line-height: 1; }
@@ -669,12 +684,12 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 .window[data-window="youtube"] .titlebar { gap: 10px; }
 .browser-chrome { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .browser-nav { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-.browser-nav [data-slot="button"], .browser-external { width: 28px; height: 28px; border-radius: 6px; color: inherit; }
+.browser-nav [data-slot="button"], .browser-external { width: 28px; height: 28px; border-radius: var(--radius-control); color: inherit; }
 .browser-nav [data-slot="button"] svg, .browser-external svg { width: 15px; height: 15px; }
 .browser-nav [data-slot="button"]:disabled, .browser-external:disabled { opacity: .3; }
 .window:not([data-focused]) .browser-nav [data-slot="button"], .window:not([data-focused]) .browser-external { color: var(--glass-text-muted); }
 /* 주소창은 크롬의 옴니박스처럼 알약 모양이고, 초점을 받으면 유리에서 불투명한 바탕으로 바뀐다. */
-.address-field { flex: 1; min-width: 140px; border-radius: 999px; background: var(--glass-control-fill); border-color: var(--glass-control-border); }
+.address-field { flex: 1; min-width: 140px; border-radius: var(--radius-control); background: var(--glass-control-fill); border-color: var(--glass-control-border); }
 .address-field:hover { background: var(--glass-control-hover); }
 .address-field:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); border-color: var(--ring); }
 .address-field [data-slot="input-group-addon"] { color: var(--glass-text-muted); padding-left: 12px; }
@@ -740,7 +755,7 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 /* 창 바탕은 비워 두어 사이드바·상단바 유리 너머로 바탕화면이 비친다. 내용 쪽만 불투명하다. */
 .window[data-window="notes"] .window-frame { container: notes / inline-size; }
 .notes-tools { display: flex; align-items: center; gap: 2px; }
-.notes-tools [data-slot="button"] { width: 28px; height: 28px; border-radius: 6px; color: inherit; }
+.notes-tools [data-slot="button"] { width: 28px; height: 28px; border-radius: var(--radius-control); color: inherit; }
 .notes-tools [data-slot="button"] svg { width: 15px; height: 15px; }
 .notes-tools [data-slot="button"]:disabled { opacity: .3; }
 .window:not([data-focused]) .notes-tools [data-slot="button"] { color: var(--glass-text-muted); }
@@ -820,7 +835,7 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .note-toolbar::-webkit-scrollbar { display: none; }
 .format-group { display: flex; align-items: center; gap: 1px; flex-shrink: 0; }
 .format-sep { width: 1px; height: 18px; margin: 0 6px; flex-shrink: 0; background: var(--border); }
-.format-tool[data-slot="button"] { width: 30px; height: 30px; border-radius: 7px; color: color-mix(in srgb, var(--foreground) 72%, transparent); }
+.format-tool[data-slot="button"] { width: 30px; height: 30px; border-radius: var(--radius-control); color: color-mix(in srgb, var(--foreground) 72%, transparent); }
 .format-tool[data-slot="button"] svg { width: 16px; height: 16px; }
 .format-tool[data-slot="button"]:hover:not(:disabled) { background: var(--glass-control-hover); color: var(--foreground); }
 .format-tool[data-slot="button"][data-active] { background: color-mix(in srgb, var(--notes-accent) 16%, transparent); color: var(--notes-accent); }
@@ -828,8 +843,8 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .format-tool[data-slot="button"]:disabled { opacity: .3; }
 .format-keys { margin-left: 8px; font-family: var(--font-sans); font-size: 11px; color: var(--glass-text-muted); }
 .format-end { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-left: 12px; flex-shrink: 0; }
-.format-mode { display: flex; padding: 2px; border-radius: 8px; background: var(--glass-control-fill); border: 1px solid var(--glass-control-border); }
-.format-mode button { height: calc(1em + 11px); padding: 0 10px; border-radius: 6px; font-size: var(--fs-12); font-weight: 500; color: var(--muted-foreground);
+.format-mode { display: flex; padding: 2px; border-radius: var(--radius-control); background: var(--glass-control-fill); border: 1px solid var(--glass-control-border); }
+.format-mode button { height: calc(1em + 11px); padding: 0 12px; border-radius: var(--radius-control); font-size: var(--fs-12); font-weight: 500; color: var(--muted-foreground);
   transition: background-color .15s ease-out, color .15s ease-out, box-shadow .15s ease-out; }
 .format-mode button:hover { color: var(--foreground); }
 .format-mode button[aria-pressed="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 0 0 .5px rgba(0, 0, 0, .06); }
@@ -973,11 +988,11 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .files-chrome { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .files-chrome .browser-nav svg[data-spinning] { animation: browser-spin 1s linear infinite; }
 .files-tools { display: flex; align-items: center; gap: 4px; }
-.files-tools > [data-slot="button"] { width: 28px; height: 28px; border-radius: 6px; color: inherit; }
+.files-tools > [data-slot="button"] { width: 28px; height: 28px; border-radius: var(--radius-control); color: inherit; }
 .files-tools > [data-slot="button"] svg { width: 15px; height: 15px; }
 .files-tools > [data-slot="button"][aria-pressed="true"] { background: var(--glass-control-fill); }
 .window:not([data-focused]) .files-tools > [data-slot="button"] { color: var(--glass-text-muted); }
-.files-filter { width: 164px; height: 28px; border-radius: 7px; background: var(--glass-control-fill); border-color: var(--glass-control-border); }
+.files-filter { width: 164px; height: calc(1em + 15px); border-radius: var(--radius-control); background: var(--glass-control-fill); border-color: var(--glass-control-border); }
 .files-filter:hover { background: var(--glass-control-hover); }
 .files-filter:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); }
 .files-filter [data-slot="input-group-addon"] { color: var(--glass-text-muted); }
@@ -985,21 +1000,20 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .files-filter [data-slot="input-group-control"] { font-size: var(--fs-12); }
 .files-filter [data-slot="input-group-control"]::placeholder { color: var(--glass-text-muted); }
 .files-filter:has(:disabled) { opacity: .5; }
-.files-segment { display: flex; padding: 2px; border-radius: 7px; background: var(--glass-control-fill); border: 1px solid var(--glass-control-border); }
-.files-segment button { display: grid; place-items: center; width: 26px; height: 22px; border-radius: 5px; color: var(--glass-text-muted); transition: background-color .15s ease-out, color .15s ease-out; }
+.files-segment { display: flex; padding: 2px; border-radius: var(--radius-control); background: var(--glass-control-fill); border: 1px solid var(--glass-control-border); }
+.files-segment button { display: grid; place-items: center; width: 28px; height: 22px; border-radius: var(--radius-control); color: var(--glass-text-muted); transition: background-color .15s ease-out, color .15s ease-out; }
 .files-segment button:hover { color: var(--foreground); }
 .files-segment button[aria-checked="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 0 0 .5px rgba(0, 0, 0, .06); }
 .files-segment svg { width: 14px; height: 14px; }
 
 /* 위치 경로: 알약 안에 단추가 이어지고, 빈 곳을 누르면 경로 입력으로 바뀐다. */
-nav.files-path { flex: 1; min-width: 140px; display: flex; align-items: center; height: 30px; padding: 0 4px; overflow: hidden; border: 1px solid var(--glass-control-border); cursor: text; }
+nav.files-path { flex: 1; min-width: 140px; display: flex; align-items: center; height: calc(1em + 15px); padding: 0 4px; overflow: hidden; border: 1px solid var(--glass-control-border); cursor: text; }
 form.files-path { flex: 1; min-width: 140px; }
-form.files-path .address-field { height: 30px; }
 /* 경로는 줄지 않고 넘치면 앞쪽부터 …로 접힌다(PathBar가 잰다). 다 접어도 넘치면 마지막 폴더가 말줄임으로 줄어든다. */
 .files-crumb-wrap { display: inline-flex; align-items: center; min-width: 0; flex-shrink: 0; }
 .files-path[data-tight] .files-crumb-wrap:last-of-type { flex-shrink: 1; }
 .files-crumb-wrap > svg { width: 11px; height: 11px; color: var(--glass-text-muted); flex-shrink: 0; }
-.files-crumb { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; height: 22px; padding: 0 7px; border-radius: 999px; font-size: var(--fs-12);
+.files-crumb { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; height: calc(1em + 7px); padding: 0 7px; border-radius: var(--radius-control); font-size: var(--fs-12);
   color: var(--glass-text-muted); white-space: nowrap; transition: background-color .12s ease-out, color .12s ease-out; }
 .files-crumb > span { overflow: hidden; text-overflow: ellipsis; }
 .files-crumb > svg { width: 13px; height: 13px; }
