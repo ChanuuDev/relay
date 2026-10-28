@@ -254,6 +254,17 @@ test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창�
   const bar = await toolbar.boundingBox();
   const input = await body.boundingBox();
   expect(bar!.y + bar!.height).toBeLessThanOrEqual(input!.y);
+  // 툴팁은 화살표 없는 유리 말풍선이라 글자를 덮는 것이 없고, 단추와 겹치지 않게 떨어져 뜬다.
+  const tableTool = toolbar.getByRole("button", { name: "표 넣기" });
+  await tableTool.hover();
+  const tip = page.locator('[data-slot="tooltip-content"]');
+  await expect(tip).toHaveText("표 넣기");
+  await expect(tip.locator("svg")).toHaveCount(0);
+  const [tipBox, toolBox] = [await tip.boundingBox(), await tableTool.boundingBox()];
+  expect(tipBox!.y + tipBox!.height <= toolBox!.y || tipBox!.y >= toolBox!.y + toolBox!.height).toBe(true);
+  // Radix는 트리거를 떠난 뒤의 포인터 이동으로 닫으므로 실제 마우스처럼 여러 번에 나눠 옮긴다.
+  await page.mouse.move(toolBox!.x, toolBox!.y + 200, { steps: 8 });
+  await expect(tip).toHaveCount(0);
 
   await body.click();
   const heading = toolbar.getByRole("button", { name: "제목 1" });

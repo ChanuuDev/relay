@@ -185,7 +185,6 @@
 [data-slot="select-item-indicator"] { left: 10px; right: auto; width: 12px; height: 12px; }
 [data-slot="select-item-indicator"] svg { width: 12px; height: 12px; color: currentColor; }
 [data-slot="tooltip-content"] { max-width: 320px; z-index: 95; color: var(--foreground); height: 24px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; }
-[data-slot="tooltip-content"] > svg { fill: var(--glass-menu-fill); background: transparent; }
 [data-slot="alert"] { margin: 12px; width: auto; background: var(--background); }
 [data-slot="badge"] { height: calc(1em + 9px); padding: 0 8px; line-height: 1; font-size: var(--fs-11); font-weight: 500; }
 

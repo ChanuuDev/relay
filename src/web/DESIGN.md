@@ -29,7 +29,7 @@ div.desktop (fixed inset-0)
 | `.material-bar` | 20px | 메뉴바 |
 | `.material-dock` | 30px | Dock 캡슐, 모바일 탭바 |
 | `.material-chrome` | 40px | 창 상단바, 세션 목록 패널·상태바·필터 행, 설정 창 바깥 |
-| `.material-menu` | 30px | 드롭다운 메뉴, 선택 목록(shadcn Select), Radix 툴팁, 복사 폴백, 삭제 확인 창 |
+| `.material-menu` | 30px | 드롭다운 메뉴, 선택 목록(shadcn Select), Radix 툴팁(화살표 없이 트리거에서 6px 띄움), 복사 폴백, 삭제 확인 창 |
 | `.material-toast` | 24px | 복사 토스트 |
 | `.material-control` | 없음 | 검색·Provider 입력, 세그먼트 컨트롤, 아이콘 버튼 |
 
