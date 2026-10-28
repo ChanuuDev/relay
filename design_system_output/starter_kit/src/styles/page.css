@@ -1,0 +1,59 @@
+/* ── 페이지형 레이아웃: 창·Dock 없이 같은 재질을 쓰는 일반 웹앱 ──
+   핵심은 "바탕화면 위에 떠 있는 큰 창 하나"다. 바탕(.wallpaper) 위에 12px 띄운 유리 사이드바와 불투명 본문 패널을 올리고,
+   본문 패널 위쪽에 유리 상단바를 둔다. 유리 뒤에 비칠 것이 있어야 하므로 바탕을 지우지 않는다. */
+.page-shell { position: fixed; inset: 0; overflow: hidden; }
+.page-layout { position: absolute; inset: 0; z-index: 1; display: grid; grid-template-columns: var(--page-sidebar, 248px) minmax(0, 1fr); gap: 12px; padding: 12px; }
+
+/* 떠 있는 판 공통: 창과 같은 테두리·그림자·모서리 */
+.page-panel { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-radius: 12px;
+  border: 1px solid var(--window-edge); box-shadow: var(--window-shadow); }
+
+/* 왼쪽: 유리 사이드바(브랜드 · 탐색 · 아래 사용자/상태) */
+.page-sidebar { background: var(--glass-chrome-fill); backdrop-filter: blur(40px) saturate(170%); }
+.page-brand { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; flex-shrink: 0; border-bottom: 1px solid var(--border); font-size: var(--fs-13); font-weight: 600; }
+.page-brand .app-tile { width: 24px; height: 24px; border-radius: 7px; }
+.page-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.page-nav-label { padding: 12px 10px 6px; font-size: var(--fs-11); font-weight: 600; letter-spacing: .06em; color: var(--glass-text-muted); }
+.page-nav-item { display: flex; align-items: center; gap: 8px; height: calc(1em + 15px); padding: 0 10px; border-radius: 6px; font-size: var(--fs-13); color: var(--foreground);
+  transition: background-color .12s ease-out; }
+.page-nav-item svg { width: 15px; height: 15px; color: var(--glass-text-muted); }
+.page-nav-item:hover { background: var(--glass-control-fill); }
+.page-nav-item[aria-current="page"] { background: var(--selected); }
+.page-nav-item[aria-current="page"] svg { color: var(--primary); }
+.page-nav-item .tree-count { margin-left: auto; }
+
+/* 오른쪽: 유리 상단바 + 불투명 본문 */
+.page-main { background: transparent; }
+.page-header { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 12px 0 20px; flex-shrink: 0; border-bottom: 1px solid var(--border);
+  background: var(--glass-chrome-fill); backdrop-filter: blur(40px) saturate(170%); }
+.page-header h1 { font-size: var(--fs-13); font-weight: 600; white-space: nowrap; }
+.page-content { flex: 1; min-height: 0; overflow-y: auto; background: var(--background); }
+.page-section { max-width: 960px; margin: 0 auto; padding: 28px 32px 40px; }
+.page-section + .page-section { padding-top: 0; }
+.page-section > h2 { font-size: var(--fs-22); font-weight: 600; letter-spacing: -.02em; line-height: 1.4; text-wrap: balance; }
+.page-section > h2 + p { margin-top: 6px; font-size: var(--fs-12); line-height: 1.7; color: var(--muted-foreground); }
+.page-section > h3 { margin-bottom: 12px; font-size: var(--fs-13); font-weight: 600; }
+/* 위에서 퍼지는 강조색 광원(이 PC 홈·시작 화면과 같은 장치) */
+.page-glow { background: radial-gradient(60% 42% at 50% 0%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 70%), var(--background); }
+
+/* 숫자 요약 타일 */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 20px; }
+.stat-card { padding: 14px 16px; border-radius: 12px; background: var(--muted); border: 1px solid var(--border); box-shadow: 0 1px 2px rgba(0, 0, 0, .05); }
+.stat-card span { display: block; font-size: var(--fs-11); color: var(--muted-foreground); }
+.stat-card strong { display: block; margin-top: 6px; font-size: var(--fs-22); font-weight: 600; letter-spacing: -.02em; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat-card small { display: block; margin-top: 4px; font-size: var(--fs-11); color: var(--glass-text-muted); }
+
+/* 본문 패널이 좁으면(13px에서 519px) 상단바 툴바가 아랫줄로 내려가고 숫자 타일은 두 칸 */
+@container win (max-width: 39.95em) {
+  .page-header { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
+  .page-header > .toolbar { order: 3; flex-basis: 100%; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* 좁은 화면: 사이드바를 감추고 아래 탭바(Dock 재질)로 */
+.page-shell[data-mobile] .page-layout { grid-template-columns: minmax(0, 1fr); padding: 0 0 64px; gap: 0; }
+.page-shell[data-mobile] .page-sidebar { display: none; }
+.page-shell[data-mobile] .page-panel { border-radius: 0; border: 0; box-shadow: none; }
+.page-shell[data-mobile] .page-section { padding: 20px 16px 28px; }
+.page-tabbar { display: none; }
+.page-shell[data-mobile] .page-tabbar { display: block; }

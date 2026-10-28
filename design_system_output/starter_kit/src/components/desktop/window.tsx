@@ -1,0 +1,123 @@
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useGSAP } from "@gsap/react";
+import { APPS, type AppId } from "@/apps";
+import { useDesktop } from "@/lib/desktop-store";
+import { reservedBottom } from "@/lib/layout";
+import {
+  bootDelay, enter, enterWindow, exit, exitWindow, flipFrame, minimizeToDock,
+  reduced, registerFrame, resetMotion, restoreFromDock, settleFrame, takeFrame,
+} from "@/lib/motion";
+import { cn } from "@/lib/utils";
+import { WindowTitleBar } from "./window-title-bar";
+import { RESIZE_DIRS, useResizeHandle } from "./use-window-behavior";
+
+const RADIUS = { normal: 12, maximized: 10 };
+
+/** 떠 있는 창. 열기·닫기·최소화·복원·최대화 전환과 드래그·리사이즈를 맡는다.
+ *  - header를 주지 않으면 기본 상단바(아이콘·제목·창 조작)를 쓴다. 툴바가 필요하면 <WindowTitleBar>를 직접 넘긴다.
+ *  - detail: 목록-상세 창에서 상세를 보고 있음(좁은 창이면 상세가 목록을 대신한다, patterns.css).
+ *  - terminal: 유리 없는 어두운 창. */
+export function Window({ id, header, children, bodyClassName, detail, terminal }: {
+  id: AppId; header?: ReactNode; children: ReactNode; bodyClassName?: string; detail?: boolean; terminal?: boolean;
+}) {
+  const win = useDesktop((state) => state.windows[id]);
+  const closing = useDesktop((state) => Boolean(state.closing[id]));
+  const minimizing = useDesktop((state) => Boolean(state.minimizing[id]));
+  const focused = useDesktop((state) => state.focused === id);
+  const mobile = useDesktop((state) => state.mobile);
+  const focus = useDesktop((state) => state.focus);
+  const onResize = useResizeHandle(id);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [leaving, setLeaving] = useState(false);
+  const busy = useRef({ closing: false, shrinking: false });
+  const maximized = mobile || win.maximized;
+  const was = useRef({ minimized: win.minimized, maximized, focused });
+
+  // 열기: Dock 쪽(아래)에서 떠오른다. 첫 로드는 60ms 간격으로 순차.
+  useGSAP(() => {
+    if (!win.open) return;
+    setLeaving(false);
+    enterWindow(frameRef.current, bootDelay());
+  }, { dependencies: [win.open] });
+
+  // 닫기: 종료 트윈이 끝나야 스토어에서 실제로 닫는다. 닫는 중 다시 열리면 원위치.
+  useGSAP(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    if (closing) {
+      busy.current.closing = true;
+      void exitWindow(frame).then(() => { busy.current.closing = false; useDesktop.getState().finalizeClose(id); });
+    } else if (busy.current.closing) {
+      busy.current.closing = false;
+      settleFrame(frame);
+    }
+  }, { dependencies: [closing] });
+
+  // 최소화: Dock 아이콘 중심으로 빨려 들어간다.
+  useGSAP(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    if (minimizing) {
+      busy.current.shrinking = true;
+      void minimizeToDock(frame, id).then(() => {
+        busy.current.shrinking = false;
+        useDesktop.getState().finalizeMinimize(id);
+        resetMotion(frame);
+      });
+    } else if (busy.current.shrinking) {
+      busy.current.shrinking = false;
+      settleFrame(frame);
+    }
+  }, { dependencies: [minimizing] });
+
+  // 복원: 최소화의 역재생.
+  useGSAP(() => {
+    const previous = was.current.minimized;
+    was.current.minimized = win.minimized;
+    if (win.minimized || !previous) return;
+    restoreFromDock(frameRef.current, id);
+  }, { dependencies: [win.minimized] });
+
+  // 최대화·복원: 스토어가 상태를 바꾸기 전에 떠 둔 Flip 상태로 프레임을 옮기고 모서리도 12↔10px로 트윈한다.
+  useGSAP(() => {
+    const state = takeFrame(id);
+    const previous = was.current.maximized;
+    was.current.maximized = maximized;
+    if (previous === maximized) return;
+    flipFrame(state, frameRef.current, {
+      from: previous ? RADIUS.maximized : RADIUS.normal,
+      to: maximized ? RADIUS.maximized : RADIUS.normal,
+    });
+  }, { dependencies: [maximized] });
+
+  // 모바일 창 전환: 들어오는 창은 오른쪽에서 밀려 들어오고, 나가는 창은 잠시 남아 사라진다.
+  useGSAP(() => {
+    const frame = frameRef.current;
+    const previous = was.current.focused;
+    was.current.focused = focused;
+    if (!frame || !mobile || reduced() || previous === focused) return;
+    if (focused) { setLeaving(false); enter(frame, { x: 12, y: 0 }); return; }
+    if (!win.open || closing || minimizing) return;
+    setLeaving(true);
+    void exit(frame).then(() => setLeaving(false));
+  }, { dependencies: [focused, mobile] });
+
+  if (!win.open) return null;
+  // 최대화한 창은 메뉴바 바로 아래에서 시작하고 Dock 자리를 비운다.
+  const style: CSSProperties = maximized
+    ? { top: "var(--menubar-height)", left: 0, right: 0, bottom: reservedBottom(mobile), width: "auto", height: "auto", transform: "none", zIndex: win.z }
+    : { top: 0, left: 0, transform: `translate(${win.x}px, ${win.y}px)`, width: win.w, height: win.h, zIndex: win.z };
+  return <section className="window" role="region" aria-label={`${APPS[id].title} 창`} tabIndex={-1} style={style}
+    data-window={id} data-focused={focused ? "" : undefined} data-maximized={maximized ? "" : undefined}
+    data-minimized={win.minimized ? "" : undefined} data-detail={detail ? "" : undefined} data-terminal={terminal ? "" : undefined}
+    data-closing={closing ? "" : undefined} data-minimizing={minimizing ? "" : undefined}
+    data-leaving={leaving && !focused ? "" : undefined}
+    onPointerDownCapture={() => focus(id)}>
+    <div className="window-frame" ref={(element) => { frameRef.current = element; registerFrame(id, element); }}>
+      {header ?? <WindowTitleBar id={id} />}
+      <div className={cn("window-body", bodyClassName)}>{children}</div>
+    </div>
+    {maximized ? null : RESIZE_DIRS.map((dir) => <div key={dir} className="resize-handle" data-window-resize-handle={dir}
+      onPointerDown={(event) => onResize(event, dir)} />)}
+  </section>;
+}

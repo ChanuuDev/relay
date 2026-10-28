@@ -1,0 +1,138 @@
+/* ── 디자인 토큰 ─────────────────────────────────────────────
+   라이트가 :root, 다크가 .dark. 값은 Relay src/web/styles.css에서 그대로 옮겼다.
+   색을 바꿀 때는 이 파일만 고친다. 컴포넌트 CSS에는 색 값을 직접 쓰지 않는다(하드코딩 장식 그라디언트 제외). */
+
+/* 본문 서체: Pretendard Variable (SIL OFL, public/fonts/OFL.txt). 같은 출처에서만 제공한다. */
+@font-face {
+  font-family: "Pretendard Variable";
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+  src: local("Pretendard Variable"), url("/fonts/PretendardVariable.woff2") format("woff2-variations");
+}
+
+:root {
+  /* 의미 색(shadcn 호환) */
+  --background: #ffffff; --foreground: #1d1d1f;
+  --card: #ffffff; --card-foreground: #1d1d1f;
+  --popover: rgba(255, 255, 255, .95); --popover-foreground: #1d1d1f;
+  --primary: #0a7cff; --primary-foreground: #ffffff;          /* 시스템 블루. 강조색은 이것 하나 */
+  --secondary: #f2f2f7; --secondary-foreground: #1d1d1f;
+  --muted: #f5f5f7; --muted-foreground: #6e6e73;
+  --accent: #e8e8ed; --accent-foreground: #1d1d1f;
+  --destructive: #d70015;
+  --border: rgba(0, 0, 0, .10); --input: rgba(0, 0, 0, .14); --ring: #0a7cff;
+  --link: #0a7cff; --radius: .5rem;
+
+  /* 선택·강조 */
+  --selected: rgba(10, 124, 255, .16); --selected-inactive: rgba(0, 0, 0, .07);
+  --pulse-tint: rgba(10, 124, 255, .4);
+
+  /* 시스템 색·작업 상태 색 */
+  --system-green: #28c840; --system-yellow: #febc2e; --system-red: #ff5f57;
+  --status-working: #0a7cff; --status-blocked: #d70015; --status-handoff: #b25e00; --status-done: #1a8a3c; --stale: #b25e00;
+
+  /* 표면·터미널(터미널은 테마와 무관하게 늘 어둡다) */
+  --titlebar: #f5f5f7; --sidebar: #f7f7f9;
+  --terminal-bg: #1c1c1e; --terminal-fg: #e5e5ea; --terminal-prompt: #30d158;
+
+  /* 바탕화면 기본 그라디언트 */
+  --wp-sky-1: #a8d3ff; --wp-sky-2: #e6f0ff; --wp-glow: #ffd2a8;
+
+  /* 보조 강조(기능 영역별 지역 강조색. 화면마다 하나만 고른다) */
+  --tint-teal: #0f9478; --tint-folder: #2f95ee; --tint-star: #f5a524;
+  --tone-image: #d9468f; --tone-video: #8b5cf6; --tone-audio: #ef5a3a; --tone-archive: #b07d2b;
+  --tone-sheet: #16a34a; --tone-slide: #ea580c; --tone-doc: #2563eb; --tone-code: #64748b;
+
+  /* 유리 재질: 반투명 채움 + 블러 + 밝은 테두리 + 상단 하이라이트 */
+  --glass-bar-fill: rgba(255, 255, 255, .55);
+  --glass-dock-fill: linear-gradient(to bottom, rgba(255, 255, 255, .34), rgba(255, 255, 255, .18));
+  --glass-chrome-fill: rgba(255, 255, 255, .64);
+  --glass-chrome-dim: rgba(255, 255, 255, .76);
+  --glass-menu-fill: rgba(255, 255, 255, .74);
+  --dock-tip-fill: rgba(246, 246, 248, .97); --dock-tip-border: rgba(0, 0, 0, .08);
+  --glass-toast-fill: rgba(255, 255, 255, .72);
+  --glass-control-fill: rgba(0, 0, 0, .05);
+  --glass-control-hover: rgba(0, 0, 0, .09);
+  --glass-control-border: rgba(0, 0, 0, .08);
+  --glass-border: rgba(255, 255, 255, .45);
+  --glass-bar-border: rgba(255, 255, 255, .35);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, .55);
+  --glass-shadow: 0 12px 40px rgba(0, 0, 0, .28);
+  --glass-menu-shadow: 0 20px 50px rgba(0, 0, 0, .30);
+  --window-edge: rgba(255, 255, 255, .28);
+  --window-shadow: 0 28px 60px -12px rgba(0, 0, 0, .38), 0 0 0 .5px rgba(0, 0, 0, .35);
+  --window-shadow-dim: 0 14px 30px -12px rgba(0, 0, 0, .28), 0 0 0 .5px rgba(0, 0, 0, .3);
+  --glass-text-muted: color-mix(in srgb, var(--foreground) 62%, transparent);   /* 유리 위 보조 글자 */
+
+  /* 모양 */
+  --radius-control: 999px;      /* 유리 컨트롤(입력·선택·버튼·세그먼트·탭) 공통 모서리. 알약형 */
+  --menubar-height: 28px;
+
+  /* 글자 크기 설정: src/lib/font-size.ts가 (고른 크기 ÷ 13)을 --font-scale에 넣는다.
+     창 안의 글자·줄 높이는 아래 토큰으로 함께 커지고, 한 줄 글자 상자의 높이는 calc(1em + 위아래 여백)으로 여백을 지킨다.
+     메뉴바·메뉴·Dock·툴팁·토스트는 운영체제 화면처럼 px로 고정한다. */
+  --font-scale: 1;
+  --fs-10: calc(10px * var(--font-scale)); --fs-11: calc(11px * var(--font-scale)); --fs-12: calc(12px * var(--font-scale)); --fs-13: calc(13px * var(--font-scale));
+  --fs-14: calc(14px * var(--font-scale)); --fs-22: calc(22px * var(--font-scale)); --fs-24: calc(24px * var(--font-scale));
+  --lh-14: calc(14px * var(--font-scale)); --lh-16: calc(16px * var(--font-scale)); --lh-20: calc(20px * var(--font-scale));
+}
+
+.dark {
+  --background: #1e1e20; --foreground: #f5f5f7;
+  --card: #242426; --card-foreground: #f5f5f7;
+  --popover: rgba(40, 40, 42, .95); --popover-foreground: #f5f5f7;
+  --primary: #0a84ff; --primary-foreground: #ffffff;
+  --secondary: #2c2c2e; --secondary-foreground: #f5f5f7;
+  --muted: #2a2a2d; --muted-foreground: #9a9aa0;
+  --accent: #353538; --accent-foreground: #f5f5f7;
+  --destructive: #ff453a;
+  --status-working: #0a84ff; --status-blocked: #ff453a; --status-handoff: #ffb340; --status-done: #30d158; --stale: #ffb340;
+  --border: rgba(255, 255, 255, .10); --input: rgba(255, 255, 255, .14); --ring: #0a84ff;
+  --link: #409cff;
+  --selected: rgba(10, 132, 255, .28); --selected-inactive: rgba(255, 255, 255, .08);
+  --pulse-tint: rgba(10, 132, 255, .4);
+  --titlebar: #2a2a2d; --sidebar: #232325;
+  --wp-sky-1: #0b1024; --wp-sky-2: #2a1b45; --wp-glow: #ff7a45;
+  --tint-teal: #3dd0aa; --tint-folder: #5aaeff;
+  --tone-image: #f472b6; --tone-video: #a78bfa; --tone-audio: #fb7c5c; --tone-archive: #d6a24a;
+  --tone-sheet: #4ade80; --tone-slide: #fb923c; --tone-doc: #60a5fa; --tone-code: #94a3b8;
+  --glass-bar-fill: rgba(22, 22, 24, .55);
+  --glass-dock-fill: linear-gradient(to bottom, rgba(255, 255, 255, .14), rgba(255, 255, 255, .06));
+  --glass-chrome-fill: rgba(36, 36, 40, .62);
+  --glass-chrome-dim: rgba(36, 36, 40, .74);
+  --glass-menu-fill: rgba(36, 36, 40, .68);
+  --dock-tip-fill: rgba(46, 46, 52, .97); --dock-tip-border: rgba(255, 255, 255, .12);
+  --glass-toast-fill: rgba(44, 44, 48, .66);
+  --glass-control-fill: rgba(255, 255, 255, .08);
+  --glass-control-hover: rgba(255, 255, 255, .13);
+  --glass-control-border: rgba(255, 255, 255, .10);
+  --glass-border: rgba(255, 255, 255, .22);
+  --glass-bar-border: rgba(255, 255, 255, .12);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, .14);
+  --glass-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+  --glass-menu-shadow: 0 20px 50px rgba(0, 0, 0, .55);
+  --window-edge: rgba(255, 255, 255, .16);
+  --window-shadow: 0 30px 70px -12px rgba(0, 0, 0, .7), 0 0 0 .5px rgba(0, 0, 0, .55);
+  --window-shadow-dim: 0 15px 35px -12px rgba(0, 0, 0, .55), 0 0 0 .5px rgba(0, 0, 0, .45);
+  --glass-text-muted: color-mix(in srgb, var(--foreground) 68%, transparent);
+}
+
+/* Tailwind 유틸리티(bg-primary, text-muted-foreground, rounded-lg, font-sans, text-sm …)로 노출 */
+@theme inline {
+  --color-background: var(--background); --color-foreground: var(--foreground);
+  --color-card: var(--card); --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover); --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive); --color-border: var(--border); --color-input: var(--input);
+  --color-ring: var(--ring); --color-link: var(--link);
+  --color-selected: var(--selected); --color-glass-muted: var(--glass-text-muted);
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, "SF Pro Text", "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  /* shadcn 프리미티브의 text-* 유틸리티도 글자 크기 설정을 따른다. 13px에서는 Tailwind 기본값과 같다. */
+  --text-xs: calc(12px * var(--font-scale)); --text-sm: calc(14px * var(--font-scale)); --text-base: calc(16px * var(--font-scale)); --text-lg: calc(18px * var(--font-scale));
+}

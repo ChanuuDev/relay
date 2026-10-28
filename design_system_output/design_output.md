@@ -4,6 +4,7 @@
 >
 > - 추출일: 2026-10-28 · 기준 커밋: `7b5fc84`
 > - 정본 우선순위: `src/web/styles.css` → `src/web/lib/motion.ts` → `src/web/components/**` → `src/web/DESIGN.md`·`DESIGN-IMPLEMENTATION.md` → `.tasks/desktop-design.md`·`.tasks/motion-design.md`(초기 설계 문서라 일부 값이 지금과 다릅니다. 이 문서는 현재 코드 값을 따릅니다.)
+> - **바로 실행되는 시작 프로젝트**는 [`starter_kit/`](starter_kit/README.md)에 있습니다(토큰·재질·셸·패턴·모션·자산·데모·도구·Agent 지침).
 > - 모든 치수는 **글자 크기 13px(기본)** 기준입니다. `--fs-*`·`--lh-*`·`calc(1em + Npx)`로 잡은 값은 글자 크기 설정을 따라 함께 커집니다.
 
 ---
@@ -1478,6 +1479,8 @@ export function applyFontSize(size: number) {
 | 18 | 창을 끄는 동안 iframe이 포인터를 삼킴 | iframe이 이벤트를 가져감 | 드래그 중 `body[data-window-dragging] iframe { pointer-events: none }` |
 | 19 | 같은 내용의 폴링에도 목록이 움직임 | 매번 새 배열 참조 | 구조적 공유(React Query) + 참조가 바뀔 때만 Flip |
 | 20 | 닫는 중 다시 열면 창이 반쯤 투명하게 멈춤 | 진행 중 트윈과 새 상태 충돌 | `overwrite: "auto"` + `settleFrame`으로 원위치 |
+| 21 | 툴팁을 단 버튼만 `[data-slot="button"]` 규칙(크기·알약·변형)이 빠짐 | shadcn `TooltipTrigger`(`asChild`)가 자기 `data-slot="tooltip-trigger"`를 자식에 합쳐 Button의 `data-slot="button"`을 덮어씀 | 툴팁 래퍼는 `data-slot`이 없는 Radix `Tooltip.Trigger`를 직접 쓴다(스타터 키트 `patterns/tip.tsx`). Relay에도 잠재해 있는 문제 |
+| 22 | `mt-4` 같은 Tailwind 유틸리티가 패턴 클래스 위에서 안 먹음 | 컴포넌트 CSS가 cascade layer 밖이라 `@layer utilities`보다 강함 | 패턴 클래스가 정한 속성은 감싸는 요소로 조정하거나, 그 속성을 패턴에서 빼 둔다(예: 격자의 `margin: 0`) |
 
 ---
 

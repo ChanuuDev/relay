@@ -1,0 +1,29 @@
+/* ── 유리 재질 ───────────────────────────────────────────────
+   네 겹: ① 반투명 채움 → ② backdrop-filter blur()+saturate() → ③ 1px 밝은 테두리 → ④ 상단 안쪽 하이라이트와 바깥 그림자.
+   크롬(메뉴바·상단바·사이드바·상태바)만 유리이고, 읽는 내용(상세·본문·표·터미널)은 불투명 --background다.
+   유리는 뒤에 비칠 것(바탕화면)이 있어야 보인다. 흰 바탕 위에 올리면 회색 판처럼 보인다. */
+
+.material-bar { background: var(--glass-bar-fill); backdrop-filter: blur(20px) saturate(180%); }                 /* 메뉴바 */
+.material-dock { background: var(--glass-dock-fill); backdrop-filter: blur(30px) saturate(180%);                  /* Dock, 모바일 탭바 */
+  border: 1px solid var(--glass-border); box-shadow: var(--glass-highlight), var(--glass-shadow); }
+.material-chrome { background: var(--glass-chrome-fill); backdrop-filter: blur(40px) saturate(170%); }          /* 창 상단바·사이드바·상태바 */
+.material-menu, [data-slot="tooltip-content"], [data-slot="select-content"] {                                    /* 메뉴·Select 목록·툴팁·팝오버 */
+  background: var(--glass-menu-fill); backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid var(--glass-border); box-shadow: var(--glass-highlight), var(--glass-menu-shadow); }
+.material-toast { background: var(--glass-toast-fill); backdrop-filter: blur(24px) saturate(180%);              /* 토스트·안내 */
+  border: 1px solid var(--glass-border); box-shadow: var(--glass-highlight), var(--glass-menu-shadow); }
+.material-control { background: var(--glass-control-fill); border: 1px solid var(--glass-control-border); box-shadow: none; }  /* 유리 위 컨트롤 바탕 */
+.material-control:hover { background: var(--glass-control-hover); }
+
+/* 뒤로 물러난(비포커스) 창은 크롬 채움을 조금 더 불투명하게 */
+.window:not([data-focused]) .material-chrome { background: var(--glass-chrome-dim); }
+
+/* 모바일은 블러 반경을 줄인다(성능) */
+.desktop[data-mobile] .material-chrome, .desktop[data-mobile] .material-bar, .page-shell[data-mobile] .material-chrome { backdrop-filter: blur(20px) saturate(170%); }
+.desktop[data-mobile] .material-dock, .page-shell[data-mobile] .material-dock { backdrop-filter: blur(15px) saturate(180%); }
+
+@media (prefers-reduced-transparency: reduce) {
+  .material-bar, .material-chrome, .material-dock, .material-menu, .material-toast, [data-slot="tooltip-content"], [data-slot="select-content"] {
+    background: var(--background); backdrop-filter: none; }
+  .window-frame { background: var(--background); }
+}

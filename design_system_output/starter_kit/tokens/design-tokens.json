@@ -1,0 +1,366 @@
+{
+  "$description": "Relay 데스크톱 셸 디자인 토큰. light는 :root, dark는 .dark의 값(dark에 없으면 light와 같다).",
+  "generatedFrom": "src/styles/tokens.css",
+  "color": {
+    "background": {
+      "light": "#ffffff",
+      "dark": "#1e1e20"
+    },
+    "foreground": {
+      "light": "#1d1d1f",
+      "dark": "#f5f5f7"
+    },
+    "card": {
+      "light": "#ffffff",
+      "dark": "#242426"
+    },
+    "card-foreground": {
+      "light": "#1d1d1f",
+      "dark": "#f5f5f7"
+    },
+    "popover": {
+      "light": "rgba(255, 255, 255, .95)",
+      "dark": "rgba(40, 40, 42, .95)"
+    },
+    "popover-foreground": {
+      "light": "#1d1d1f",
+      "dark": "#f5f5f7"
+    },
+    "primary": {
+      "light": "#0a7cff",
+      "dark": "#0a84ff"
+    },
+    "primary-foreground": {
+      "value": "#ffffff"
+    },
+    "secondary": {
+      "light": "#f2f2f7",
+      "dark": "#2c2c2e"
+    },
+    "secondary-foreground": {
+      "light": "#1d1d1f",
+      "dark": "#f5f5f7"
+    },
+    "muted": {
+      "light": "#f5f5f7",
+      "dark": "#2a2a2d"
+    },
+    "muted-foreground": {
+      "light": "#6e6e73",
+      "dark": "#9a9aa0"
+    },
+    "accent": {
+      "light": "#e8e8ed",
+      "dark": "#353538"
+    },
+    "accent-foreground": {
+      "light": "#1d1d1f",
+      "dark": "#f5f5f7"
+    },
+    "destructive": {
+      "light": "#d70015",
+      "dark": "#ff453a"
+    },
+    "border": {
+      "light": "rgba(0, 0, 0, .10)",
+      "dark": "rgba(255, 255, 255, .10)"
+    },
+    "input": {
+      "light": "rgba(0, 0, 0, .14)",
+      "dark": "rgba(255, 255, 255, .14)"
+    },
+    "ring": {
+      "light": "#0a7cff",
+      "dark": "#0a84ff"
+    },
+    "link": {
+      "light": "#0a7cff",
+      "dark": "#409cff"
+    },
+    "selected": {
+      "light": "rgba(10, 124, 255, .16)",
+      "dark": "rgba(10, 132, 255, .28)"
+    },
+    "selected-inactive": {
+      "light": "rgba(0, 0, 0, .07)",
+      "dark": "rgba(255, 255, 255, .08)"
+    },
+    "pulse-tint": {
+      "light": "rgba(10, 124, 255, .4)",
+      "dark": "rgba(10, 132, 255, .4)"
+    },
+    "system-green": {
+      "value": "#28c840"
+    },
+    "system-yellow": {
+      "value": "#febc2e"
+    },
+    "system-red": {
+      "value": "#ff5f57"
+    },
+    "status-working": {
+      "light": "#0a7cff",
+      "dark": "#0a84ff"
+    },
+    "status-blocked": {
+      "light": "#d70015",
+      "dark": "#ff453a"
+    },
+    "status-handoff": {
+      "light": "#b25e00",
+      "dark": "#ffb340"
+    },
+    "status-done": {
+      "light": "#1a8a3c",
+      "dark": "#30d158"
+    },
+    "stale": {
+      "light": "#b25e00",
+      "dark": "#ffb340"
+    },
+    "titlebar": {
+      "light": "#f5f5f7",
+      "dark": "#2a2a2d"
+    },
+    "sidebar": {
+      "light": "#f7f7f9",
+      "dark": "#232325"
+    },
+    "terminal-bg": {
+      "value": "#1c1c1e"
+    },
+    "terminal-fg": {
+      "value": "#e5e5ea"
+    },
+    "terminal-prompt": {
+      "value": "#30d158"
+    },
+    "wp-sky-1": {
+      "light": "#a8d3ff",
+      "dark": "#0b1024"
+    },
+    "wp-sky-2": {
+      "light": "#e6f0ff",
+      "dark": "#2a1b45"
+    },
+    "wp-glow": {
+      "light": "#ffd2a8",
+      "dark": "#ff7a45"
+    },
+    "tint-teal": {
+      "light": "#0f9478",
+      "dark": "#3dd0aa"
+    },
+    "tint-folder": {
+      "light": "#2f95ee",
+      "dark": "#5aaeff"
+    },
+    "tint-star": {
+      "value": "#f5a524"
+    },
+    "tone-image": {
+      "light": "#d9468f",
+      "dark": "#f472b6"
+    },
+    "tone-video": {
+      "light": "#8b5cf6",
+      "dark": "#a78bfa"
+    },
+    "tone-audio": {
+      "light": "#ef5a3a",
+      "dark": "#fb7c5c"
+    },
+    "tone-archive": {
+      "light": "#b07d2b",
+      "dark": "#d6a24a"
+    },
+    "tone-sheet": {
+      "light": "#16a34a",
+      "dark": "#4ade80"
+    },
+    "tone-slide": {
+      "light": "#ea580c",
+      "dark": "#fb923c"
+    },
+    "tone-doc": {
+      "light": "#2563eb",
+      "dark": "#60a5fa"
+    },
+    "tone-code": {
+      "light": "#64748b",
+      "dark": "#94a3b8"
+    }
+  },
+  "material": {
+    "glass-bar-fill": {
+      "light": "rgba(255, 255, 255, .55)",
+      "dark": "rgba(22, 22, 24, .55)"
+    },
+    "glass-dock-fill": {
+      "light": "linear-gradient(to bottom, rgba(255, 255, 255, .34), rgba(255, 255, 255, .18))",
+      "dark": "linear-gradient(to bottom, rgba(255, 255, 255, .14), rgba(255, 255, 255, .06))"
+    },
+    "glass-chrome-fill": {
+      "light": "rgba(255, 255, 255, .64)",
+      "dark": "rgba(36, 36, 40, .62)"
+    },
+    "glass-chrome-dim": {
+      "light": "rgba(255, 255, 255, .76)",
+      "dark": "rgba(36, 36, 40, .74)"
+    },
+    "glass-menu-fill": {
+      "light": "rgba(255, 255, 255, .74)",
+      "dark": "rgba(36, 36, 40, .68)"
+    },
+    "dock-tip-fill": {
+      "light": "rgba(246, 246, 248, .97)",
+      "dark": "rgba(46, 46, 52, .97)"
+    },
+    "dock-tip-border": {
+      "light": "rgba(0, 0, 0, .08)",
+      "dark": "rgba(255, 255, 255, .12)"
+    },
+    "glass-toast-fill": {
+      "light": "rgba(255, 255, 255, .72)",
+      "dark": "rgba(44, 44, 48, .66)"
+    },
+    "glass-control-fill": {
+      "light": "rgba(0, 0, 0, .05)",
+      "dark": "rgba(255, 255, 255, .08)"
+    },
+    "glass-control-hover": {
+      "light": "rgba(0, 0, 0, .09)",
+      "dark": "rgba(255, 255, 255, .13)"
+    },
+    "glass-control-border": {
+      "light": "rgba(0, 0, 0, .08)",
+      "dark": "rgba(255, 255, 255, .10)"
+    },
+    "glass-border": {
+      "light": "rgba(255, 255, 255, .45)",
+      "dark": "rgba(255, 255, 255, .22)"
+    },
+    "glass-bar-border": {
+      "light": "rgba(255, 255, 255, .35)",
+      "dark": "rgba(255, 255, 255, .12)"
+    },
+    "glass-highlight": {
+      "light": "inset 0 1px 0 rgba(255, 255, 255, .55)",
+      "dark": "inset 0 1px 0 rgba(255, 255, 255, .14)"
+    },
+    "glass-shadow": {
+      "light": "0 12px 40px rgba(0, 0, 0, .28)",
+      "dark": "0 12px 40px rgba(0, 0, 0, .45)"
+    },
+    "glass-menu-shadow": {
+      "light": "0 20px 50px rgba(0, 0, 0, .30)",
+      "dark": "0 20px 50px rgba(0, 0, 0, .55)"
+    },
+    "window-edge": {
+      "light": "rgba(255, 255, 255, .28)",
+      "dark": "rgba(255, 255, 255, .16)"
+    },
+    "window-shadow": {
+      "light": "0 28px 60px -12px rgba(0, 0, 0, .38), 0 0 0 .5px rgba(0, 0, 0, .35)",
+      "dark": "0 30px 70px -12px rgba(0, 0, 0, .7), 0 0 0 .5px rgba(0, 0, 0, .55)"
+    },
+    "window-shadow-dim": {
+      "light": "0 14px 30px -12px rgba(0, 0, 0, .28), 0 0 0 .5px rgba(0, 0, 0, .3)",
+      "dark": "0 15px 35px -12px rgba(0, 0, 0, .55), 0 0 0 .5px rgba(0, 0, 0, .45)"
+    },
+    "glass-text-muted": {
+      "light": "color-mix(in srgb, var(--foreground) 62%, transparent)",
+      "dark": "color-mix(in srgb, var(--foreground) 68%, transparent)"
+    }
+  },
+  "type": {
+    "font-scale": {
+      "value": "1"
+    },
+    "fs-10": {
+      "value": "calc(10px * var(--font-scale))"
+    },
+    "fs-11": {
+      "value": "calc(11px * var(--font-scale))"
+    },
+    "fs-12": {
+      "value": "calc(12px * var(--font-scale))"
+    },
+    "fs-13": {
+      "value": "calc(13px * var(--font-scale))"
+    },
+    "fs-14": {
+      "value": "calc(14px * var(--font-scale))"
+    },
+    "fs-22": {
+      "value": "calc(22px * var(--font-scale))"
+    },
+    "fs-24": {
+      "value": "calc(24px * var(--font-scale))"
+    },
+    "lh-14": {
+      "value": "calc(14px * var(--font-scale))"
+    },
+    "lh-16": {
+      "value": "calc(16px * var(--font-scale))"
+    },
+    "lh-20": {
+      "value": "calc(20px * var(--font-scale))"
+    }
+  },
+  "shape": {
+    "radius": {
+      "value": ".5rem"
+    },
+    "radius-control": {
+      "value": "999px"
+    },
+    "menubar-height": {
+      "value": "28px"
+    }
+  },
+  "theme": {
+    "radius": {
+      "radius-sm": "4px",
+      "radius-md": "6px",
+      "radius-lg": "8px",
+      "radius-xl": "12px"
+    },
+    "font": {
+      "font-sans": "\"Pretendard Variable\", Pretendard, -apple-system, \"SF Pro Text\", \"Segoe UI\", \"Apple SD Gothic Neo\", \"Malgun Gothic\", system-ui, sans-serif",
+      "font-mono": "\"SF Mono\", \"Cascadia Code\", \"Cascadia Mono\", Consolas, ui-monospace, monospace"
+    },
+    "text": {
+      "text-xs": "calc(12px * var(--font-scale))",
+      "text-sm": "calc(14px * var(--font-scale))",
+      "text-base": "calc(16px * var(--font-scale))",
+      "text-lg": "calc(18px * var(--font-scale))"
+    }
+  },
+  "motion": {
+    "duration": {
+      "micro": "120ms",
+      "fast": "160ms",
+      "base": "220ms",
+      "window": "260ms",
+      "stagger": "30ms (총 300ms 상한)",
+      "tight": "20ms",
+      "bounce": "130ms × 4",
+      "pulse": "600ms"
+    },
+    "ease": {
+      "enter": "power3.out",
+      "exit": "power2.in",
+      "move": "power3.inOut",
+      "pop": "back.out(1.4)",
+      "bounce": "power1.inOut",
+      "decay": "power2.out"
+    },
+    "cssEquivalent": {
+      "enter": "cubic-bezier(.215,.61,.355,1)",
+      "exit": "cubic-bezier(.55,.085,.68,.53)",
+      "move": "cubic-bezier(.645,.045,.355,1)",
+      "toast": "cubic-bezier(.2,.8,.2,1)"
+    }
+  }
+}

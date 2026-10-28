@@ -1,0 +1,61 @@
+/* ── shadcn 프리미티브 덮어쓰기 ─────────────────────────────────
+   src/components/ui/*.tsx는 shadcn 원본 그대로 두고, data-slot 속성으로 치수·모양만 바꾼다.
+   한 줄 글자 상자의 높이는 "글자 + 위아래 여백"(calc(1em + Npx))이라 13px에서 32·28·24px이고 글자 크기 설정을 따라 자란다.
+   좌우 패딩은 대칭, 왼쪽에 아이콘이 붙으면 그쪽만 2px 줄여 광학 균형을 맞춘다. */
+
+[data-slot="button"] { font-weight: 500; line-height: 1; box-shadow: none; transition: background-color .15s ease-out, color .15s ease-out, border-color .15s ease-out; }
+[data-slot="button"][data-size="default"] { height: calc(1em + 18px); padding-inline: 14px; }
+[data-slot="button"][data-size="default"]:has(> svg:first-child) { padding-left: 12px; }
+[data-slot="button"][data-size="sm"] { height: calc(1em + 15px); font-size: var(--fs-13); padding-inline: 12px; }
+[data-slot="button"][data-size="sm"]:has(> svg:first-child) { padding-left: 10px; }
+[data-slot="button"][data-size="xs"] { height: calc(1em + 12px); font-size: var(--fs-12); padding-inline: 10px; }
+[data-slot="button"][data-variant="outline"] { background: var(--glass-control-fill); border-color: var(--glass-control-border); }
+[data-slot="button"][data-variant="outline"]:hover { background: var(--glass-control-hover); }
+[data-slot="button"][data-variant="link"] { color: var(--link); }
+[data-slot="button"]:disabled { opacity: .45; }
+
+[data-slot="input"], [data-slot="input-group"], [data-slot="native-select"], [data-slot="select-trigger"], [data-slot="textarea"] { box-shadow: none; border-radius: 6px; background: var(--glass-control-fill); }
+[data-slot="input"], [data-slot="input-group"] { height: calc(1em + 15px); min-height: calc(1em + 15px); font-size: var(--fs-13); }
+[data-slot="input-group-control"] { height: calc(1em + 13px); min-height: calc(1em + 13px); font-size: var(--fs-13); }
+[data-slot="input-group-control"]::placeholder, [data-slot="input"]::placeholder { color: var(--glass-text-muted); }
+[data-slot="input-group-addon"] { color: var(--glass-text-muted); }
+[data-slot="input-group-addon"] svg { width: 13px; height: 13px; }
+[data-slot="native-select"] { font-size: var(--fs-13); border-color: var(--glass-control-border); padding-inline: 12px 30px; }
+[data-slot="native-select"][data-size="sm"] { height: calc(1em + 15px); min-height: calc(1em + 15px); }
+[data-slot="select-trigger"] { font-size: var(--fs-13); border-color: var(--glass-control-border); padding-inline: 12px 13px; }
+[data-slot="select-trigger"]:hover, [data-slot="select-trigger"][data-state="open"] { background: var(--glass-control-hover); }
+[data-slot="select-trigger"][data-size="sm"] { height: calc(1em + 15px); }
+
+/* 유리 컨트롤 공통 모양: 입력·검색·선택·버튼·세그먼트·탭은 알약형(정사각 아이콘 단추는 원)이고,
+   같은 유리 채움·머리카락 테두리·올림·초점 바탕을 쓴다. 모서리는 --radius-control 하나로 바꾼다. 여러 줄 입력(textarea)과 메뉴·카드·행은 제외. */
+[data-slot="input"], [data-slot="input-group"], [data-slot="native-select"], [data-slot="select-trigger"], [data-slot="button"], [data-slot="input-group-button"],
+[data-slot="tabs-list"], [data-slot="tabs-trigger"] { border-radius: var(--radius-control); }
+[data-slot="input"], [data-slot="input-group"], [data-slot="native-select"], [data-slot="select-trigger"] { border-color: var(--glass-control-border); }
+[data-slot="input"]:hover, [data-slot="input-group"]:hover, [data-slot="native-select"]:hover { background: var(--glass-control-hover); }
+[data-slot="input"]:focus-visible, [data-slot="native-select"]:focus-visible,
+[data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); }
+[data-slot="input"] { padding-inline: 12px; }
+[data-slot="input-group-addon"]:first-child { padding-left: 11px; }
+
+/* Select 목록: 드롭다운 메뉴와 같은 유리 재질·항목 치수·시스템 블루 강조. 체크는 macOS 팝업 버튼처럼 왼쪽 열,
+   열면 고른 항목이 버튼 글자 위에 겹친다(item-aligned). */
+[data-slot="select-content"] { z-index: 90; border-radius: 10px; color: var(--foreground); }
+[data-slot="select-item"] { height: calc(1em + 13px); padding: 0 10px 0 30px; border-radius: 6px; font-size: var(--fs-13); }
+[data-slot="select-item"][data-highlighted] { background: var(--primary); color: #fff; }
+[data-slot="select-item-indicator"] { left: 10px; right: auto; width: 12px; height: 12px; }
+[data-slot="select-item-indicator"] svg { width: 12px; height: 12px; color: currentColor; }
+
+/* Radix 툴팁: 유리 알약, 24px, 12px 글자(px 고정) */
+[data-slot="tooltip-content"] { max-width: 320px; z-index: 95; color: var(--foreground); height: 24px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; }
+[data-slot="tooltip-content"] > svg { fill: var(--glass-menu-fill); background: transparent; }
+
+[data-slot="alert"] { margin: 12px; width: auto; background: var(--background); }
+[data-slot="badge"] { height: calc(1em + 9px); padding: 0 8px; line-height: 1; font-size: var(--fs-11); font-weight: 500; }
+
+/* 상단바·툴바 안의 버튼 변형. default = 중립 주 단추, secondary = 켜 둔 단추(시스템 블루 틴트 유리 알약) */
+.window-toolbar [data-slot="button"][data-variant="default"], .toolbar [data-slot="button"][data-variant="default"] {
+  background: color-mix(in srgb, var(--foreground) 12%, transparent); color: var(--foreground); font-weight: 600; border: 1px solid var(--glass-control-border); }
+.window-toolbar [data-slot="button"][data-variant="default"]:hover, .toolbar [data-slot="button"][data-variant="default"]:hover { background: color-mix(in srgb, var(--foreground) 18%, transparent); }
+.window-toolbar [data-slot="button"][data-variant="secondary"], .toolbar [data-slot="button"][data-variant="secondary"] {
+  background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 32%, transparent); }
+.window-toolbar [data-slot="button"][data-variant="secondary"]:hover, .toolbar [data-slot="button"][data-variant="secondary"]:hover { background: color-mix(in srgb, var(--primary) 24%, transparent); }

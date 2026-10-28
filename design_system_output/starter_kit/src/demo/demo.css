@@ -1,0 +1,7 @@
+/* 데모 전용 배치. 새 프로젝트에서는 src/demo 폴더와 함께 지운다. */
+.gallery { overflow-y: auto; background: var(--background); }
+.gallery-section { padding: 20px 24px 24px; border-bottom: 1px solid var(--border); }
+.gallery-section > h3 { font-size: var(--fs-11); font-weight: 600; letter-spacing: .06em; color: var(--muted-foreground); }
+.gallery-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.gallery-row-label { width: calc(80px * var(--font-scale)); font-size: var(--fs-11); color: var(--muted-foreground); }
+@container win (max-width: 39.95em) { .gallery-section { padding-inline: 16px; } }

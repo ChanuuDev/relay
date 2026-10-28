@@ -1,0 +1,15 @@
+/* 진입점. 순서가 곧 계층이다: 토큰 → 기본 → 재질 → 프리미티브 덮어쓰기 → 셸 → 패턴 → 본문 서식 → 페이지형 레이아웃.
+   필요 없는 층은 import를 지워도 된다(예: 데스크톱 셸을 쓰지 않으면 shell.css 대신 page.css만). */
+@import "tailwindcss" source("../");   /* 유틸리티 클래스는 src/ 안에서만 찾는다(reference/ 문서는 훑지 않는다) */
+@import "tw-animate-css";
+@import "./tokens.css";
+@import "./base.css";
+@import "./materials.css";
+@import "./primitives.css";
+@import "./shell.css";
+@import "./patterns.css";
+@import "./prose.css";
+@import "./page.css";
+
+/* 다크 모드는 <html class="dark">로 켠다(public/theme.js, src/lib/theme.ts). */
+@custom-variant dark (&:where(.dark, .dark *));

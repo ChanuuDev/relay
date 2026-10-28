@@ -1,0 +1,188 @@
+/* ── 데스크톱 셸: 바탕화면 · 메뉴바 · 드롭다운 · 창 · 상단바 · 창 조작 · Dock · 분할 경계 · 토스트 · 모바일 ──
+   Z 순서: 바탕화면 0 · 창 레이어 1(창 1–50) · Dock 60 · 메뉴바 70 · 메뉴 오버레이 89 · 메뉴 90 · 툴팁/Dock 라벨 95 · 토스트 100 · 건너뛰기 110 */
+
+.desktop { position: fixed; inset: 0; overflow: hidden; }
+#desktop { position: absolute; inset: 0; z-index: 1; }
+
+/* 바탕화면: 토큰 그라디언트(또는 색상 프리셋) → 낮·밤 사진 → 고른 사진. 유리 재질이 보이려면 반드시 필요하다. */
+.wallpaper { position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, var(--wp-sky-1) 0%, var(--wp-sky-2) 55%, var(--wp-glow) 100%); }
+.wallpaper-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s ease-out; }
+.wallpaper-image[data-active] { opacity: 1; }
+/* 색상 프리셋: 방향 그라디언트 위에 radial 하이라이트 한 겹을 얹어 평면적으로 보이지 않게 한다. 견본(.wallpaper-swatch)도 같은 값을 쓴다. */
+.wallpaper[data-color="graphite"], .wallpaper-swatch[data-color="graphite"] { background: radial-gradient(90% 70% at 80% 0%, rgba(255, 255, 255, .16), transparent 60%), linear-gradient(160deg, #55555e 0%, #2c2c32 55%, #141417 100%); }
+.wallpaper[data-color="midnight"], .wallpaper-swatch[data-color="midnight"] { background: radial-gradient(70% 55% at 80% 100%, rgba(120, 90, 220, .35), transparent 70%), radial-gradient(120% 90% at 18% 0%, #3d5ab8 0%, #1c2d74 36%, #0d153f 68%, #070a1e 100%); }
+.wallpaper[data-color="lavender"], .wallpaper-swatch[data-color="lavender"] { background: radial-gradient(80% 60% at 20% 10%, rgba(255, 255, 255, .55), transparent 60%), linear-gradient(135deg, #efe2ff 0%, #c9b1f6 50%, #8a72e4 100%); }
+.wallpaper[data-color="sunset"], .wallpaper-swatch[data-color="sunset"] { background: radial-gradient(70% 60% at 75% 20%, rgba(255, 236, 200, .6), transparent 60%), linear-gradient(165deg, #ffd7a3 0%, #ff8d79 48%, #6a3ea6 100%); }
+.wallpaper[data-color="mint"], .wallpaper-swatch[data-color="mint"] { background: radial-gradient(80% 60% at 20% 0%, rgba(255, 255, 255, .5), transparent 60%), linear-gradient(135deg, #e2fbf0 0%, #9ce2c5 50%, #2b9b78 100%); }
+
+/* ── 메뉴바(28px, 유리 bar) ── */
+.menubar { position: fixed; top: 0; left: 0; right: 0; height: var(--menubar-height); padding: 0 16px; z-index: 70; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border-bottom: 1px solid var(--glass-bar-border); color: var(--foreground); user-select: none; font-size: 13px; }
+.menubar-left { display: flex; align-items: center; gap: 12px; }
+.menubar-mark { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 20px; border-radius: 5px; }
+.menubar-app { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 5px; font-size: 13px; font-weight: 600; }
+.menubar-item { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 5px; font-size: 13px; }
+.menubar-mark:hover, .menubar-app:hover, .menubar-item:hover, .menubar-icon:hover, .menubar-clock:hover { background: var(--glass-control-hover); }
+.menubar-mark[data-open], .menubar-app[data-open], .menubar-item[data-open] { background: var(--primary); color: #fff; }
+.menubar-right { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.menubar-status { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 6px; font-size: 11px; color: var(--glass-text-muted); white-space: nowrap; }
+.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--system-green); flex-shrink: 0; }
+.status-dot[data-state="pending"] { background: var(--muted-foreground); }
+.status-dot[data-state="warning"] { background: var(--system-yellow); }
+.status-dot[data-state="offline"], .status-dot[data-state="error"] { background: var(--destructive); }
+.menubar-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 20px; border-radius: 5px; }
+.menubar-icon svg { width: 14px; height: 14px; }
+.menubar-clock { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 5px; font-size: 13px; white-space: nowrap; }
+
+/* ── 드롭다운 메뉴(body로 포털한다) ── */
+.menu-overlay { position: fixed; inset: 0; z-index: 89; }
+.desktop-menu { position: fixed; min-width: 200px; z-index: 90; padding: 4px; border-radius: 10px; color: var(--foreground); }
+.desktop-menu[data-leaving] { pointer-events: none; }
+.menu-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 26px; padding: 0 10px; border-radius: 6px; font-size: 13px; text-align: left; }
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--primary); color: #fff; outline: none; }
+.menu-item[data-danger]:hover:not(:disabled), .menu-item[data-danger]:focus-visible { background: var(--destructive); }
+.menu-item:disabled { opacity: .45; }
+.menu-check { display: inline-flex; align-items: center; width: 12px; }
+.menu-check svg { width: 12px; height: 12px; }
+.menu-separator { margin: 4px 6px; border-top: 1px solid var(--border); }
+
+/* ── 왼쪽 패널 경계(SplitView): 자리는 1px, 양옆 1px씩 겹치는 3px 요소.
+   왼쪽 1px은 사이드바 유리 위 --border 선, 오른쪽 2px은 내용과 같은 불투명 바탕(투명 창 틈으로 뒤가 비치지 않게). 양옆 4px까지 잡힌다. */
+.split-view { flex: 1; min-width: 0; min-height: 0; }
+.split-handle { position: relative; z-index: 6; width: 3px; flex: 0 0 3px; margin: 0 -1px; outline: none;
+  background: linear-gradient(to right, var(--border) 0 1px, var(--background) 1px); }
+.split-handle::after { content: ""; position: absolute; inset: 0 -4px; width: auto; transform: none; }
+.split-handle::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; border-radius: 2px; transform: translateX(-50%);
+  background: var(--primary); opacity: 0; transition: opacity .15s ease-out .08s; pointer-events: none; }
+.split-handle:is([data-separator="hover"], [data-separator="active"], [data-separator="focus"])::before { opacity: .85; }
+.split-handle[data-separator="active"]::before { transition-delay: 0s; }
+
+/* ── 창 ── */
+.window { position: fixed; }
+.window[data-minimized] { display: none; }
+.window-frame { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px;
+  background: transparent; border: 1px solid var(--window-edge); box-shadow: var(--window-shadow); }
+.window:not([data-focused]) .window-frame { box-shadow: var(--window-shadow-dim); }
+.window[data-maximized] .window-frame { border-radius: 10px; }
+.window-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.window:focus { outline: none; }
+/* 종료·최소화 트윈이 도는 동안에는 포인터를 받지 않는다 */
+.window[data-closing], .window[data-minimizing] { pointer-events: none; }
+.resize-handle { position: absolute; }
+.resize-handle[data-window-resize-handle="n"] { top: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.resize-handle[data-window-resize-handle="s"] { bottom: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+/* 오른쪽은 스크롤바를 덜 가리도록 창 바깥으로 넓힌다 */
+.resize-handle[data-window-resize-handle="e"] { right: -10px; top: 12px; bottom: 12px; width: 12px; z-index: 7; cursor: ew-resize; }
+.resize-handle[data-window-resize-handle="w"] { left: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.resize-handle[data-window-resize-handle="nw"] { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.resize-handle[data-window-resize-handle="ne"] { top: 0; right: -10px; width: 22px; height: 12px; z-index: 7; cursor: nesw-resize; }
+.resize-handle[data-window-resize-handle="sw"] { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.resize-handle[data-window-resize-handle="se"] { bottom: 0; right: -10px; width: 22px; height: 12px; z-index: 7; cursor: nwse-resize; }
+body[data-window-dragging] { user-select: none; }
+body[data-window-dragging] .window-frame { transition: none; }
+body[data-window-dragging] iframe { pointer-events: none; }
+
+/* ── 창 상단바와 툴바 ── */
+.titlebar { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); user-select: none; }
+.window-title { display: flex; align-items: center; gap: 6px; font-size: var(--fs-13); font-weight: 600; line-height: var(--lh-20); white-space: nowrap; }
+.title-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 2px; border-radius: 999px;
+  background: var(--glass-control-fill); font-size: var(--fs-11); font-weight: 600; font-variant-numeric: tabular-nums; }
+.window-toolbar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.titlebar-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.titlebar-right { display: flex; align-items: center; gap: 8px; }
+/* 상단바 아이콘 단추 묶음(뒤로·앞으로·새 항목·삭제 …): 28px 원, 아이콘 15px */
+.toolbar-icons { display: flex; align-items: center; gap: 2px; }
+.toolbar-icons [data-slot="button"] { width: 28px; height: 28px; padding: 0; border-radius: var(--radius-control); color: inherit; }
+.toolbar-icons [data-slot="button"] svg { width: 15px; height: 15px; }
+.toolbar-icons [data-slot="button"]:disabled { opacity: .3; }
+.toolbar-icons [data-slot="button"][aria-pressed="true"] { background: var(--glass-control-fill); }
+.window:not([data-focused]) .toolbar-icons [data-slot="button"] { color: var(--glass-text-muted); }
+
+/* ── 창 조작 버튼: 중립색 알약 세 개(최소화·최대화·닫기). 닫기 hover만 빨강 ── */
+.window-controls { display: flex; align-items: center; gap: 2px; padding-left: 12px; border-left: 1px solid var(--glass-control-border); }
+.window-control { display: grid; place-items: center; width: 30px; height: 28px; border: 1px solid transparent; border-radius: var(--radius-control); color: inherit; cursor: pointer;
+  transition: background-color .12s ease-out, color .12s ease-out; }
+.window-control svg { width: 14px; height: 14px; }
+.window-control:hover:not(:disabled) { background: var(--glass-control-hover); }
+.window-control:active:not(:disabled) { background: var(--glass-control-fill); }
+.window-control[data-window-action="close"]:is(:hover, :active) { background: var(--destructive); color: #fff; }
+.window-control:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.window:not([data-focused]) .window-control { color: var(--glass-text-muted); }
+.window:not([data-focused]) .window-control[data-window-action="close"]:is(:hover, :active) { color: #fff; }
+.window-control:disabled { opacity: .4; cursor: default; }
+
+/* ── Dock: 화면 아래 가운데 떠 있는 유리 캡슐. 아이콘 48px → 포인터 근처 최대 80px ── */
+.dock { position: fixed; bottom: 12px; left: 50%; max-width: calc(100% - 16px); transform: translateX(-50%); z-index: 60; pointer-events: none; }
+.dock-row { overflow: visible; }
+.dock-bar { display: flex; align-items: flex-end; gap: 12px; margin: 0 auto; padding: 7px 12px; border-radius: 18px; pointer-events: auto; }
+.dock-item { position: relative; width: 48px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; border-radius: 12px; }
+.dock-icon { aspect-ratio: 1; flex-shrink: 0; }
+.dock-item .app-icon { width: 100%; height: auto; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); }
+.dock-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.dock-item:active .app-icon { transform: scale(.95); }
+.dock-dot { position: absolute; top: calc(100% + 2px); width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0; }
+.dock-item[data-open] .dock-dot { opacity: .6; }
+/* Dock 라벨: Dock 전체에 하나뿐이며 가까운 아이콘을 따라 미끄러진다. 거의 불투명한 알약이라 아래 창 글자가 비치지 않고 블러를 쓰지 않는다. */
+.dock-tip { position: fixed; z-index: 95; pointer-events: none; display: flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 8px;
+  white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--foreground); background: var(--dock-tip-fill);
+  border: 1px solid var(--dock-tip-border); box-shadow: var(--glass-highlight), 0 6px 18px rgba(0, 0, 0, .28); }
+.dock-tip::after { content: ""; position: absolute; top: 100%; left: 50%; width: 10px; height: 6px; transform: translateX(-50%); background: var(--dock-tip-fill); clip-path: polygon(0 0, 100% 0, 50% 100%); }
+
+/* ── 앱 아이콘: PNG(squircle) 또는 코드로 그린 타일 ── */
+.app-icon { display: block; }
+/* PNG가 없을 때 쓰는 코드 타일. squircle에 가까운 22.5% 모서리, 위→아래 그라디언트, 상단 하이라이트.
+   .app-tile-box가 크기(--tile-size)를 갖고 안의 타일은 91%만 채운다(PNG 아이콘의 투명 여백과 같은 비율). 타일만 단독으로 쓸 때는 width를 직접 준다. */
+.app-tile-box { display: inline-grid; place-items: center; flex-shrink: 0; width: var(--tile-size, 48px); aspect-ratio: 1; }
+.app-tile-box > .app-tile { width: 91.4%; }
+.app-tile { display: grid; place-items: center; border-radius: 22.5%; color: #fff; aspect-ratio: 1;
+  background: linear-gradient(180deg, var(--tile-from, #5ab0ff), var(--tile-to, #0a6fe0));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -1px 0 rgba(0, 0, 0, .12); }
+.app-tile svg { width: 56%; height: 56%; stroke-width: 1.75px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .18)); }
+.dock-item .app-tile-box { width: 100%; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); }
+.dock-item:active .app-tile-box { transform: scale(.95); }
+
+/* ── 토스트 ── */
+/* 화면 아래 가운데(Dock 위): 복사 완료 같은 짧은 알림 */
+.toast { z-index: 100; position: fixed; bottom: 104px; left: 50%; translate: -50%; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border-radius: 999px;
+  color: var(--foreground); font-size: 13px; white-space: nowrap; }
+.toast > svg { width: 16px; height: 16px; color: var(--system-green); }
+.toast[data-tone="error"] > svg { color: var(--destructive); }
+.toast[data-tone="info"] > svg { color: var(--primary); }
+/* 메뉴바 아래 가운데: 업데이트처럼 행동을 권하는 알림(오른쪽에 버튼) */
+.toast-top { z-index: 100; position: fixed; top: calc(var(--menubar-height) + 10px); left: 50%; translate: -50%; display: flex; align-items: center; gap: 10px;
+  height: 40px; padding: 0 6px 0 16px; border-radius: 999px; color: var(--foreground); font-size: 13px; white-space: nowrap; animation: toast-drop .22s cubic-bezier(.2, .8, .2, 1); }
+@keyframes toast-drop { from { opacity: 0; transform: translateY(-6px); } }
+.toast-top > svg { width: 15px; height: 15px; color: var(--primary); }
+.toast-top [data-slot="button"] svg { width: 13px; height: 13px; }
+/* 창 안 아래 가운데: 실행 취소 제안·결과 안내 */
+.toast-inline { position: absolute; left: 50%; bottom: 16px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px);
+  padding: 6px 6px 6px 14px; border-radius: 12px; font-size: var(--fs-12); white-space: nowrap; animation: toast-rise .22s cubic-bezier(.2, .8, .2, 1); }
+.toast-inline > span { overflow: hidden; text-overflow: ellipsis; }
+.toast-inline > svg { width: 14px; height: 14px; color: var(--system-yellow); flex-shrink: 0; }
+.toast-inline [data-slot="button"] svg { width: 13px; height: 13px; }
+@keyframes toast-rise { from { opacity: 0; transform: translate(-50%, 8px); } }
+/* 복사 권한이 없을 때 원문을 보여 주는 유리 패널 */
+.copy-fallback { z-index: 100; position: fixed; bottom: 104px; right: 20px; max-width: calc(100vw - 40px); width: 460px; padding: 16px; border-radius: 12px; color: var(--foreground); }
+.copy-fallback > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--fs-12); margin-bottom: 8px; }
+.copy-fallback [data-slot="textarea"] { background: var(--background); }
+
+/* ── 모바일(뷰포트 ≤ 760px): 창은 늘 최대화·하나만, Dock은 64px 탭바 ── */
+.desktop[data-mobile] .window:not([data-focused]) { display: none; }
+.desktop[data-mobile] .window[data-leaving] { display: block; pointer-events: none; }
+.desktop[data-mobile] .window-frame { border-radius: 0; border: 0; box-shadow: none; }
+.desktop[data-mobile] .titlebar { min-height: 44px; box-shadow: none; }
+.desktop[data-mobile] .window-control:not([data-window-action="close"]) { display: none; }
+.desktop[data-mobile] .menubar-status .status-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.desktop[data-mobile] .menubar-clock { padding-inline: 4px; }
+.desktop[data-mobile] .menubar-hide-mobile { display: none; }
+.desktop[data-mobile] .dock, .page-shell[data-mobile] .dock { bottom: 0; left: 0; right: 0; max-width: none; transform: none; }
+.desktop[data-mobile] .dock-row, .page-shell[data-mobile] .dock-row { width: 100%; }
+.desktop[data-mobile] .dock-bar, .page-shell[data-mobile] .dock-bar { width: 100%; height: 64px; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); border-radius: 0; border: 0;
+  border-top: 1px solid var(--glass-border); box-shadow: none; gap: 0; align-items: center; }
+.desktop[data-mobile] .dock-item, .page-shell[data-mobile] .dock-item { flex: 1; width: 100%; gap: 4px; }
+.desktop[data-mobile] .dock-item .app-icon, .desktop[data-mobile] .dock-item .app-tile-box { filter: none; transform: none; }
+.dock-label { font-size: 10px; line-height: 1; color: var(--glass-text-muted); }
+.dock-item[data-active] .dock-label { color: var(--primary); }
+.desktop[data-mobile] .dock-item .dock-dot { display: none; }
+.desktop[data-mobile] .toast, .desktop[data-mobile] .copy-fallback { bottom: 76px; }

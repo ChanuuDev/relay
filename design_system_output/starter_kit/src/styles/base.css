@@ -1,0 +1,34 @@
+/* ── 기본 규칙 ─────────────────────────────────────────────── */
+@layer base {
+  * { border-color: var(--border); }
+  html, body { height: 100%; }
+  body { margin: 0; color: var(--foreground); background: var(--background); font-family: var(--font-sans); font-size: var(--fs-13); font-weight: 400;
+    line-height: 1.5; letter-spacing: -.01em; word-break: keep-all; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  button:not(:disabled), [role="button"]:not(:disabled), summary { cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  button, a, summary { -webkit-tap-highlight-color: transparent; letter-spacing: inherit; }
+  /* 초점 링: 2px 시스템 블루, 2px 띄움 */
+  button:focus-visible, a:focus-visible, summary:focus-visible, li:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  svg { flex-shrink: 0; }
+  svg[class*="lucide"] { stroke-width: 1.5px; }                 /* lucide 아이콘은 1.5px 스트로크 */
+  code, kbd { font-family: var(--font-mono); letter-spacing: 0; }
+  /* 시각·건수·페이지·크기는 열이 흔들리지 않게 고정폭 숫자 */
+  time, .tabular, .pager, .statusbar, .version, .row-meta, .time-column, .timeline-meta { font-variant-numeric: tabular-nums; }
+  /* 테마 전환 순간 한 프레임 동안 모든 전환을 끈다(src/lib/theme.ts) */
+  html[data-theme-switching] * { transition: none !important; }
+  /* 얇은 오버레이 스크롤바 */
+  * { scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+}
+
+/* 본문 건너뛰기 링크: 평소 화면 밖, 초점을 받으면 메뉴바 아래에 나타난다. */
+.skip-link { z-index: 110; position: fixed; left: 12px; top: -80px; height: 32px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 8px;
+  background: var(--primary); color: var(--primary-foreground); }
+.skip-link:focus { top: calc(var(--menubar-height) + 8px); }
+
+/* 화면에서 숨기고 읽기 프로그램에는 남긴다 */
+.sr-only-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .term-cursor { visibility: visible; }
+}

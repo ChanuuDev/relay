@@ -1,0 +1,38 @@
+{
+  "name": "glass-desktop-starter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Relay 웹 디자인 시스템(macOS 데스크톱 메타포 + 유리 재질)으로 새 화면을 시작하는 스타터 키트",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gsap/react": "2.1.2",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "framer-motion": "14.1.0",
+    "gsap": "3.15.0",
+    "lucide-react": "1.46.0",
+    "radix-ui": "1.6.7",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-resizable-panels": "4.15.0",
+    "tailwind-merge": "3.7.0",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "4.3.3",
+    "tw-animate-css": "1.4.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}
