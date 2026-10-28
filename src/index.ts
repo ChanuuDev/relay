@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Command, CommanderError } from "commander";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig } from "./config";
 import { openDatabase } from "./db/database";
@@ -8,6 +8,7 @@ import { errorBody, invalid, RelayError, storageError } from "./errors";
 import { gitClue } from "./git";
 import { SESSION_COMPACT_PROMPT, SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
+import { NoteStore, parseExport } from "./notes/notes.store";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
@@ -147,6 +148,42 @@ program.command("delete <session-id>").description("세션 기록과 이력 삭�
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
   .option("--force", "이어받은 세션의 연결을 끊고 삭제")
   .action((id: string, o, c: Command) => run(c, true, s => s.delete(id, o.provider, Boolean(o.force))));
+
+const notes = program.command("notes").description("메모 내보내기·가져오기 (다른 PC나 저장소로 옮길 때)");
+notes.command("export <file>").description("모든 메모와 폴더를 JSON 파일로 내보냄 (같은 이름의 파일은 덮어씀)")
+  .action((file: string, _o, c: Command) => withNotes(c, false, store => {
+    const data = store.exportAll();
+    const target = path.resolve(file);
+    try { writeFileSync(target, `${JSON.stringify(data, null, 2)}\n`); }
+    catch { throw new RelayError("FILE_WRITE_FAILED", `파일을 쓸 수 없습니다: ${target}`, 5, 500); }
+    const count = (kind: string) => data.items.filter(item => item.kind === kind).length;
+    const result = { schemaVersion: 1, path: target, notes: count("note"), folders: count("folder") };
+    return [result, `메모 ${result.notes}개 · 폴더 ${result.folders}개를 내보냈습니다: ${target}`];
+  }));
+notes.command("import <file>").description("내보낸 JSON 파일의 메모를 합침. 없는 항목은 넣고, 같은 항목은 더 최근에 고친 쪽을 남기며 아무것도 지우지 않음")
+  .action((file: string, _o, c: Command) => {
+    const items = parseExport(readExport(path.resolve(file)));
+    return withNotes(c, true, store => {
+      const result = store.merge(items);
+      return [result, `메모를 가져왔습니다: 추가 ${result.added} · 갱신 ${result.updated} · 그대로 ${result.kept}`];
+    });
+  });
+
+/** 메모 저장소를 열어 한 가지 일을 하고 닫는다. --json이면 결과 객체를, 아니면 한 줄 안내를 stdout에 쓴다. */
+function withNotes(command: Command, write: boolean, action: (store: NoteStore) => [unknown, string]) {
+  const db = openDatabase(loadConfig(command.optsWithGlobals().dataDir), !write);
+  let output: [unknown, string];
+  try { output = action(new NoteStore(db)); } finally { db.close(); }
+  process.stdout.write(`${command.optsWithGlobals().json ? JSON.stringify(output[0]) : output[1]}\n`);
+}
+
+/** 내보낸 파일을 읽는다. Windows PowerShell이 만든 UTF-16 파일과 BOM이 붙은 UTF-8도 받는다. */
+function readExport(file: string): unknown {
+  let bytes: Buffer;
+  try { bytes = readFileSync(file); } catch { throw new RelayError("FILE_NOT_FOUND", `파일을 읽을 수 없습니다: ${file}`, 3, 404); }
+  const text = bytes[0] === 0xff && bytes[1] === 0xfe ? new TextDecoder("utf-16le").decode(bytes) : new TextDecoder("utf-8").decode(bytes);
+  try { return JSON.parse(text); } catch { invalid(`JSON 파일이 아닙니다: ${file}`); }
+}
 
 program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록·종료·압축 처리 (${ALIASES.join("/")})`)
   .option("--end", "SessionEnd: 종료 시각·사유를 기록하고, 훅 자동 기록만 남은 세션은 삭제")

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquarePen, Trash, TriangleAlert, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { ChevronLeft, ChevronRight, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -9,7 +9,7 @@ import { DesktopMenu, type MenuEntry } from "../desktop/menu";
 import { NoteDocument } from "./note-editor";
 import { SplitView } from "../desktop/split-view";
 import {
-  childMap, isWithin, labelOf, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
+  childMap, exportNotes, importNotes, isWithin, labelOf, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type Row,
 } from "../../lib/notes";
 
@@ -28,14 +28,16 @@ const focusRow = (id: string | null) => {
 };
 const focusField = (field: "title" | "body") => requestAnimationFrame(() => document.getElementById(`note-${field}`)?.focus());
 
-type Menu = { kind: "item" | "move" | "root"; id: string | null; left: number; top: number };
+type Menu = { kind: "item" | "move" | "root" | "tools"; id: string | null; left: number; top: number };
+/** 내보내기·가져오기 안내. progress는 끝날 때까지, done은 잠시 뒤 스스로, error는 닫을 때까지 보인다. */
+type Notice = { tone: "progress" | "done" | "error"; text: string };
 /** 메뉴가 화면 아래로 넘치지 않게 위로 올린다(항목 26px, 구분선 9px). */
 const menuTop = (top: number, entries: MenuEntry[]) => {
   const height = Math.min(entries.reduce((sum, entry) => sum + (entry.kind === "separator" ? 9 : 26), 8), window.innerHeight * .6);
   return Math.max(8, Math.min(top, window.innerHeight - height - 8));
 };
 
-/** 폴더 트리로 정리하는 여러 메모. 내용은 이 브라우저(localStorage)에만 남는다. */
+/** 폴더 트리로 정리하는 여러 메모. 내용은 Relay 저장소에 남고, 내보낸 JSON 파일로 다른 환경에 옮긴다. */
 export function NotesWindow() {
   const items = useNotes((state) => state.items);
   const selected = useNotes((state) => state.selected);
@@ -48,6 +50,8 @@ export function NotesWindow() {
   const [pane, setPane] = useState<"tree" | "content">("tree");
   const [menu, setMenu] = useState<Menu | null>(null);
   const [menuLeaving, setMenuLeaving] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   // 닫히는 메뉴의 종료 트윈이 끝나기 전에 새 메뉴를 열면, 늦게 오는 종료 알림은 무시한다.
   const leavingRef = useRef(false);
   const menuNext = useRef<{ focus: string | null | false; then?: Menu }>({ focus: null });
@@ -66,6 +70,11 @@ export function NotesWindow() {
     const timer = setTimeout(dismissTrash, UNDO_MS);
     return () => clearTimeout(timer);
   }, [trash, dismissTrash]);
+  useEffect(() => {
+    if (notice?.tone !== "done") return;
+    const timer = setTimeout(() => setNotice(null), UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   function newNote(parentId = targetFolder(items, selected)) {
     createNote(parentId);
@@ -90,6 +99,32 @@ export function NotesWindow() {
     if (!now || next[now]?.kind !== "note") setPane("tree");
   }
 
+  /** 내보내기·가져오기는 한 번에 하나만 하고, 진행과 결과를 아래 안내로 보인다. 지우기 안내가 떠 있으면 걷는다. */
+  async function transfer(progress: string, failed: string, run: () => Promise<string>) {
+    if (notice?.tone === "progress") return;
+    dismissTrash();
+    setNotice({ tone: "progress", text: progress });
+    try { setNotice({ tone: "done", text: await run() }); }
+    catch (error) {
+      const reason = error instanceof TypeError ? "Relay 서버에 연결할 수 없습니다." : error instanceof Error ? error.message : "알 수 없는 오류입니다.";
+      setNotice({ tone: "error", text: `${failed}: ${reason}` });
+    }
+  }
+  const exportAll = () => void transfer("내보내는 중…", "내보내지 못했습니다", async () => {
+    const result = await exportNotes();
+    return `‘${result.name}’ 내보내기 완료 · 메모 ${result.notes}개 · 폴더 ${result.folders}개`;
+  });
+  function importFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    void transfer("가져오는 중…", "가져오지 못했습니다", async () => {
+      const result = await importNotes(file);
+      return result.added + result.updated ? `‘${file.name}’ 가져오기 완료 · 추가 ${result.added} · 갱신 ${result.updated} · 그대로 ${result.kept}`
+        : `‘${file.name}’의 항목이 이미 모두 있습니다 · 그대로 ${result.kept}`;
+    });
+  }
+
   function openMenu(kind: Menu["kind"], id: string | null, left: number, top: number) {
     menuNext.current = { focus: id ?? selected };
     leavingRef.current = false;
@@ -101,7 +136,7 @@ export function NotesWindow() {
     leavingRef.current = true;
     setMenuLeaving(true);
     const { focus } = menuNext.current;
-    if (returnFocus && focus !== false) focusRow(focus ?? null);
+    if (returnFocus && focus !== false) { if (menu.kind === "tools") document.getElementById("notes-more")?.focus(); else focusRow(focus ?? null); }
   }
   function menuExited() {
     if (!leavingRef.current) return;
@@ -116,9 +151,17 @@ export function NotesWindow() {
   const keepFocus = (action: () => void) => () => { menuNext.current.focus = false; action(); };
 
   function menuItems(target: Menu): MenuEntry[] {
+    const idle = status === "ready" && notice?.tone !== "progress";
+    const transfers: MenuEntry[] = [
+      { kind: "item", id: "export", label: "모든 메모 내보내기", disabled: !idle || counts.notes + counts.folders === 0, onSelect: exportAll },
+      { kind: "item", id: "import", label: "메모 가져오기…", disabled: !idle, onSelect: () => fileRef.current?.click() },
+    ];
+    if (target.kind === "tools") return transfers;
     if (target.kind === "root") return [
       { kind: "item", id: "note", label: "새 메모", onSelect: keepFocus(() => newNote(null)) },
       { kind: "item", id: "folder", label: "새 폴더", onSelect: keepFocus(() => newFolder(null)) },
+      { kind: "separator", id: "sep-transfer" },
+      ...transfers,
     ];
     const item = target.id ? items[target.id] : undefined;
     if (!item) return [];
@@ -159,6 +202,13 @@ export function NotesWindow() {
       <Button type="button" variant="ghost" size="icon-sm" aria-label="새 폴더" title="새 폴더" onClick={() => newFolder()}><FolderPlus aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="새 메모" title="새 메모" onClick={() => newNote()}><SquarePen aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="삭제" title="삭제" disabled={!current} onClick={() => removeItem(selected)}><Trash aria-hidden="true" /></Button>
+      <Button type="button" variant="ghost" size="icon-sm" id="notes-more" aria-label="내보내기·가져오기" title="내보내기·가져오기" aria-haspopup="menu"
+        aria-expanded={menu?.kind === "tools" && !menuLeaving} onClick={(event) => {
+          // 창 오른쪽 끝의 단추라 메뉴(최소 폭 200px)의 오른쪽 끝을 단추에 맞춰 창 안쪽으로 연다.
+          const rect = event.currentTarget.getBoundingClientRect();
+          openMenu("tools", null, rect.right - 200, rect.bottom + 4);
+        }}><Ellipsis aria-hidden="true" /></Button>
+      <input ref={fileRef} id="notes-import-file" type="file" accept=".json,application/json" hidden onChange={importFile} />
     </div>} />}>
     <SplitView name="notes" label="메모 목록" className="notes-layout" data-pane={pane} defaultWidth={256} minWidth={200} maxWidth={480} minMain={320} side={
       <aside className="notes-sidebar material-chrome" aria-label="메모 목록"
@@ -187,12 +237,17 @@ export function NotesWindow() {
         {current?.kind === "note"
           ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open} />
           : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")}
-              onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
+              onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} onImport={() => fileRef.current?.click()}
+              empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
       </section>} />
-    {trash && <div className="notes-undo material-toast" role="status">
+    {trash ? <div className="notes-undo material-toast" role="status">
       <span>{trash.kind === "folder" ? `‘${trash.label}’ 폴더${trash.notes ? `와 메모 ${trash.notes}개` : ""}를 삭제했습니다.` : `‘${trash.label}’ 메모를 삭제했습니다.`}</span>
       <Button type="button" size="xs" variant="secondary" onClick={() => { undoRemove(); requestAnimationFrame(() => focusRow(useNotes.getState().selected)); }}>실행 취소</Button>
       <Button type="button" variant="ghost" size="icon-xs" aria-label="안내 닫기" onClick={dismissTrash}><X aria-hidden="true" /></Button>
+    </div> : notice && <div className="notes-undo material-toast" role={notice.tone === "error" ? "alert" : "status"} data-tone={notice.tone}>
+      {notice.tone === "error" && <TriangleAlert aria-hidden="true" />}
+      <span>{notice.text}</span>
+      {notice.tone !== "progress" && <Button type="button" variant="ghost" size="icon-xs" aria-label="안내 닫기" onClick={() => setNotice(null)}><X aria-hidden="true" /></Button>}
     </div>}
     {menu && entries.length > 0 && <DesktopMenu items={entries} position={{ left: menu.left, top: menuTop(menu.top, entries) }} leaving={menuLeaving}
       onClose={closeMenu} onExited={menuExited} className={menu.kind === "move" ? "notes-move-menu" : undefined} />}
@@ -415,9 +470,9 @@ function NoteEditor({ note, items, onBack, onOpen }: { note: Note; items: Items;
   </div>;
 }
 
-function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onNewNote, onNewFolder }: {
+function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onNewNote, onNewFolder, onImport }: {
   folder: Folder | null; items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; empty: boolean; loading: boolean; onOpen: (id: string) => void; onBack: () => void;
-  onNewNote: (parentId: string | null) => void; onNewFolder: (parentId: string | null) => void;
+  onNewNote: (parentId: string | null) => void; onNewFolder: (parentId: string | null) => void; onImport: () => void;
 }) {
   const id = folder?.id ?? null;
   const children = map.get(id) ?? [];
@@ -428,10 +483,11 @@ function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack
     <div className="start-hero">
       <AppIcon app="notes" size={72} />
       <h3>메모</h3>
-      <p>메모를 여러 개 쓰고 폴더와 하위 폴더로 정리할 수 있습니다. 메모는 끌어서 다른 폴더로 옮기고, 내용은 Relay 저장소(relay.db)에 저장되어 어느 브라우저에서 열어도 같습니다.</p>
+      <p>메모를 여러 개 쓰고 폴더와 하위 폴더로 정리할 수 있습니다. 메모는 끌어서 다른 폴더로 옮기고, 내용은 Relay 저장소(relay.db)에 저장되어 어느 브라우저에서 열어도 같습니다. 다른 PC에서 내보낸 메모 파일은 가져오기로 옮겨 옵니다.</p>
       <div className="notes-empty-actions">
         <Button type="button" size="sm" onClick={() => onNewNote(null)}><SquarePen aria-hidden="true" />새 메모</Button>
         <Button type="button" size="sm" variant="outline" onClick={() => onNewFolder(null)}><FolderPlus aria-hidden="true" />새 폴더</Button>
+        <Button type="button" size="sm" variant="outline" onClick={onImport}><Upload aria-hidden="true" />가져오기</Button>
       </div>
     </div>
   </div>;

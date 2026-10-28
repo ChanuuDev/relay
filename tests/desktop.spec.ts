@@ -56,6 +56,11 @@ test("배경화면·Dock 아이콘·서체가 실행 파일에서 제공된다",
     expect(response.headers()["content-type"], path).toBe(type);
   }
   expect(await page.evaluate(() => document.fonts.check('13px "Pretendard Variable"'))).toBe(true);
+  // 기본 바탕화면은 그래파이트 색상이라 사진을 켜지 않는다. 낮과 밤을 고르면 테마에 따라 사진이 바뀐다.
+  await expect(page.locator(".wallpaper")).toHaveAttribute("data-color", "graphite");
+  await expect(page.locator(".wallpaper-image[data-active]")).toHaveCount(0);
+  await page.evaluate(() => localStorage.setItem("relay-wallpaper", JSON.stringify({ kind: "dynamic" })));
+  await page.reload();
   const active = page.locator(".wallpaper-image[data-active]");
   await expect(active).toHaveAttribute("src", "/wallpaper-dark.jpg");
   await expect.poll(() => active.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
@@ -420,7 +425,8 @@ test("설정의 바탕화면에서 사진·색상·내 사진을 고르면 즉�
   };
   const picker = page.getByRole("radiogroup", { name: "바탕화면" });
   await openPicker();
-  await expect(picker.getByRole("radio", { name: "기본" })).toHaveAttribute("aria-checked", "true");
+  await expect(picker.getByRole("radio", { name: "그래파이트" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".wallpaper")).toHaveAttribute("data-color", "graphite");
   await picker.getByRole("radio", { name: "오로라" }).click();
   await expect(page.locator(".wallpaper-photo[data-active]")).toHaveAttribute("src", "/wallpapers/aurora.jpg");
   await expect(page.locator(".wallpaper-image[data-layer][data-active]")).toHaveCount(0);
@@ -448,12 +454,12 @@ test("설정의 바탕화면에서 사진·색상·내 사진을 고르면 즉�
   await expect(picker.getByRole("radio", { name: "first" })).toHaveAttribute("aria-checked", "true");
   await page.locator("#wallpaper-file").setInputFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
   await expect(page.locator(".settings-error")).toContainText("이미지 파일만");
-  // 보고 있던 사진을 지우면 기본으로 돌아가고, 다른 사진은 남는다.
+  // 보고 있던 사진을 지우면 기본(그래파이트)으로 돌아가고, 다른 사진은 남는다.
   await page.getByRole("button", { name: "first 지우기" }).click();
   await expect(picker.getByRole("radio", { name: "first" })).toHaveCount(0);
   await expect(picker.getByRole("radio", { name: "second" })).toHaveCount(1);
-  await expect(page.locator(".wallpaper-image[data-layer=dark][data-active]")).toHaveCount(1);
-  await expect(picker.getByRole("radio", { name: "기본" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".wallpaper")).toHaveAttribute("data-color", "graphite");
+  await expect(picker.getByRole("radio", { name: "그래파이트" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "second 지우기" }).click();
   await expect(picker.getByRole("radio", { name: "second" })).toHaveCount(0);
   await page.reload();

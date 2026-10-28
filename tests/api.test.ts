@@ -262,8 +262,94 @@ describe("Notes API: the only write the web server accepts", () => {
 
   test("without a note store the screen gets no write route", async () => {
     const plain = handler(f.service, f.config);
-    const response = await plain(new Request("http://127.0.0.1:7474/api/v1/notes", { method: "POST", body: "{}",
-      headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json" } }));
-    expect(response.status).toBe(405); expect(response.headers.get("Allow")).toBe("GET");
+    for (const url of ["/api/v1/notes", "/api/v1/notes/import"]) {
+      const response = await plain(new Request(`http://127.0.0.1:7474${url}`, { method: "POST", body: "{}",
+        headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json" } }));
+      expect(response.status, url).toBe(405); expect(response.headers.get("Allow")).toBe("GET");
+    }
+    expect((await plain(new Request("http://127.0.0.1:7474/api/v1/notes/export", { headers: { host: "127.0.0.1:7474" } }))).status).toBe(404);
+  });
+
+  const importFile = (body: unknown, headers: Record<string, string> = {}, to = send) => to("/api/v1/notes/import", {
+    method: "POST", body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers },
+  });
+
+  test("exports every item as a dated file that another store imports as is", async () => {
+    await post({ upserts: [
+      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
+      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "# 제목\n\n- [ ] 할 일", createdAt: 2, updatedAt: 3 },
+    ], deletes: [] });
+    const exported = await send("/api/v1/notes/export");
+    expect(exported.status).toBe(200);
+    expect(exported.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(exported.headers.get("content-disposition")).toMatch(/^attachment; filename="relay-notes-\d{4}-\d{2}-\d{2}\.json"$/);
+    const text = await exported.text();
+    const file = JSON.parse(text);
+    expect(file).toEqual({ format: "relay-notes", schemaVersion: 1, exportedAt: expect.any(String), items: (await list()).items });
+    expect(Number.isNaN(Date.parse(file.exportedAt))).toBe(false);
+    expect((await send("/api/v1/notes/export?all=1")).status).toBe(400);
+
+    const other = fixture();
+    try {
+      const handle = handler(other.service, other.config, new NoteStore(other.db));
+      const to = async (url: string, init: RequestInit = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+      const imported = await importFile(text, {}, to);
+      expect(imported.status).toBe(200);
+      expect(await imported.json()).toEqual({ schemaVersion: 1, revision: 1, added: 2, updated: 0, kept: 0 });
+      expect((await (await to("/api/v1/notes")).json()).items).toEqual(file.items);
+      // 같은 파일을 다시 가져오면 바뀌는 것이 없고 저장 번호도 그대로다.
+      expect(await (await importFile(text, {}, to)).json()).toEqual({ schemaVersion: 1, revision: 1, added: 0, updated: 0, kept: 2 });
+    } finally { other.close(); }
+  });
+
+  test("import adds missing items, keeps the newer side, never deletes and keeps the tree valid", async () => {
+    await post({ upserts: [
+      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
+      { id: "old", kind: "note", parentId: "f1", title: "옛 메모", body: "옛 본문", createdAt: 2, updatedAt: 5 },
+      { id: "mine", kind: "note", parentId: null, title: "이쪽이 최신", body: "이쪽", createdAt: 3, updatedAt: 50 },
+      { id: "local", kind: "note", parentId: null, title: "이 환경에만", body: "", createdAt: 4, updatedAt: 4 },
+    ], deletes: [] });
+    const result = await importFile({ format: "relay-notes", schemaVersion: 1, exportedAt: "2026-10-28T00:00:00.000Z", items: [
+      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
+      { id: "old", kind: "note", parentId: null, title: "고친 메모", body: "새 본문", createdAt: 2, updatedAt: 9 },
+      { id: "mine", kind: "note", parentId: null, title: "저쪽", body: "저쪽", createdAt: 3, updatedAt: 40 },
+      { id: "local", kind: "folder", parentId: null, name: "종류가 다름", createdAt: 4, updatedAt: 99 },
+      { id: "new", kind: "note", parentId: "f1", title: "새 메모", body: "추가", createdAt: 6, updatedAt: 6 },
+      { id: "lost", kind: "note", parentId: "gone", title: "부모 없음", body: "", createdAt: 7, updatedAt: 7 },
+    ] });
+    expect(await result.json()).toEqual({ schemaVersion: 1, revision: 2, added: 2, updated: 1, kept: 3 });
+    const items = Object.fromEntries((await list()).items.map((item) => [item.id, item]));
+    expect(Object.keys(items).sort()).toEqual(["f1", "local", "lost", "mine", "new", "old"]);
+    expect(items.old).toEqual({ id: "old", kind: "note", parentId: null, title: "고친 메모", body: "새 본문", createdAt: 2, updatedAt: 9 });
+    expect(items.mine).toMatchObject({ title: "이쪽이 최신", body: "이쪽", updatedAt: 50 });
+    expect(items.local).toMatchObject({ kind: "note", title: "이 환경에만" });
+    expect(items.new).toMatchObject({ parentId: "f1", body: "추가" });
+    expect(items.lost!.parentId).toBeNull();
+  });
+
+  test("import takes only a Relay notes file from the same-origin screen and writes nothing when any item is wrong", async () => {
+    const good = { format: "relay-notes", schemaVersion: 1, items: [{ id: "n1", kind: "note", parentId: null, title: "t", body: "b" }] };
+    for (const [headers, status] of [[{ origin: "" }, 403], [{ origin: "http://evil.example" }, 403], [{ "sec-fetch-site": "cross-site" }, 403],
+      [{ "sec-fetch-site": "same-site" }, 403], [{ "content-type": "text/plain" }, 415]] as Array<[Record<string, string>, number]>) {
+      expect((await importFile(good, headers)).status, JSON.stringify(headers)).toBe(status);
+    }
+    for (const bad of ["{", "[]", { ...good, format: "other" }, { ...good, schemaVersion: 2 }, { ...good, items: "x" },
+      { upserts: good.items, deletes: [] }, { ...good, items: [...good.items, { id: "a b", kind: "note" }] },
+      { ...good, items: [...good.items, { id: "big", kind: "note", body: "x".repeat(200_001) }] }]) {
+      const response = await importFile(bad);
+      expect(response.status, JSON.stringify(bad).slice(0, 80)).toBe(400);
+      expect((await response.json()).error.code).toBe("INVALID_ARGUMENT");
+    }
+    // 내보낸 파일은 저장 묶음(8MB)보다 클 수 있다. 64MB까지 받는다.
+    expect((await importFile({}, { "content-length": String(9 * 1024 * 1024) })).status).toBe(400);
+    expect((await importFile({}, { "content-length": String(65 * 1024 * 1024) })).status).toBe(413);
+    expect((await list()).revision).toBe(0);
+    const get = await send("/api/v1/notes/import");
+    expect(get.status).toBe(405); expect(get.headers.get("Allow")).toBe("POST");
+    const postExport = await send("/api/v1/notes/export", { method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}" });
+    expect(postExport.status).toBe(405); expect(postExport.headers.get("Allow")).toBe("GET");
+    expect((await importFile(good, {}, async (url, init) => send(`${url}?x=1`, init))).status).toBe(400);
+    expect((await importFile(good)).status).toBe(200);
   });
 });

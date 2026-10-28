@@ -27,10 +27,12 @@ export function playerHeaders(port: number) {
 
 /** 메모 저장 한 번에 받는 최대 크기. 본문 하나는 20만 자까지라 여러 메모를 함께 보내도 넉넉하다. */
 export const MAX_WRITE_BYTES = 8 * 1024 * 1024;
+/** 메모 가져오기 한 번에 받는 최대 크기. 내보낸 파일 하나를 통째로 받으므로 저장 묶음보다 크다. 서버 전체의 본문 상한이기도 하다. */
+export const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
 
-/** 유일한 쓰기 요청(메모 저장) 검사. 같은 출처 화면이 JSON으로 보낸 요청만 받는다.
+/** 쓰기 요청(메모 저장·가져오기, 파일 열기) 검사. 같은 출처 화면이 JSON으로 보낸 요청만 받는다.
  *  Origin이 있어야 하고 Sec-Fetch-Site는 same-origin이어야 하며, JSON 본문이라 다른 사이트의 폼이나 단순 요청으로는 보낼 수 없다. */
-export function checkWrite(request: Request, port: number) {
+export function checkWrite(request: Request, port: number, limit = MAX_WRITE_BYTES) {
   checkRequest(request, port);
   const site = request.headers.get("sec-fetch-site");
   if (!request.headers.get("origin") || (site !== null && site !== "same-origin")) {
@@ -40,7 +42,7 @@ export function checkWrite(request: Request, port: number) {
     throw new RelayError("UNSUPPORTED_MEDIA_TYPE", "저장은 application/json으로 보내야 합니다.", 2, 415);
   }
   const length = Number(request.headers.get("content-length") ?? "0");
-  if (!Number.isFinite(length) || length > MAX_WRITE_BYTES) throw new RelayError("PAYLOAD_TOO_LARGE", "저장 묶음이 너무 큽니다.", 2, 413);
+  if (!Number.isFinite(length) || length > limit) throw new RelayError("PAYLOAD_TOO_LARGE", `보낸 내용이 너무 큽니다(최대 ${limit / 1024 / 1024}MB).`, 2, 413);
 }
 
 export function checkRequest(request: Request, port: number, options: { allowCrossSite?: boolean } = {}) {

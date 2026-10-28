@@ -959,6 +959,9 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
   padding: 6px 6px 6px 14px; border-radius: 12px; font-size: var(--fs-12); white-space: nowrap; animation: notes-rise .22s cubic-bezier(.2, .8, .2, 1); }
 .notes-undo > span { overflow: hidden; text-overflow: ellipsis; }
 .notes-undo [data-slot="button"] svg { width: 13px; height: 13px; }
+/* 내보내기·가져오기 안내. 진행 중에는 닫기 단추가 없으므로 양옆 여백과 높이를 단추가 있을 때와 맞춘다. */
+.notes-undo > svg { width: 14px; height: 14px; color: var(--system-yellow); flex-shrink: 0; }
+.notes-undo[data-tone="progress"] { min-height: 36px; padding-right: 14px; }
 @keyframes notes-rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 
 @media (hover: none) {

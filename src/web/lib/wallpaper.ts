@@ -1,6 +1,6 @@
 export type PresetId = "aurora" | "dunes" | "waves" | "forest";
 export type ColorId = "graphite" | "midnight" | "lavender" | "sunset" | "mint";
-/** 기본은 테마에 따라 낮·밤 사진이 바뀐다. 사진·색상은 테마와 무관하고, 내 사진은 브라우저(IndexedDB)에만 여러 장 둔다. */
+/** 기본은 그래파이트 색상이다. 낮·밤(dynamic)은 테마에 따라 사진이 바뀌고, 사진·색상은 테마와 무관하며, 내 사진은 브라우저(IndexedDB)에만 여러 장 둔다. */
 export type WallpaperChoice = { kind: "dynamic" } | { kind: "preset"; id: PresetId } | { kind: "color"; id: ColorId } | { kind: "custom"; id: string };
 
 export const PRESETS: readonly { id: PresetId; label: string }[] = [
@@ -10,7 +10,7 @@ export const COLORS: readonly { id: ColorId; label: string }[] = [
   { id: "graphite", label: "그래파이트" }, { id: "midnight", label: "미드나이트" }, { id: "lavender", label: "라벤더" }, { id: "sunset", label: "선셋" }, { id: "mint", label: "민트" },
 ];
 export const WALLPAPER_KEY = "relay-wallpaper";
-export const DEFAULT_WALLPAPER: WallpaperChoice = { kind: "dynamic" };
+export const DEFAULT_WALLPAPER: WallpaperChoice = { kind: "color", id: "graphite" };
 export const MAX_CUSTOM_IMAGES = 20;
 export const presetUrl = (id: PresetId) => `/wallpapers/${id}.jpg`;
 
@@ -21,7 +21,7 @@ export function sameChoice(a: WallpaperChoice, b: WallpaperChoice) {
 export function wallpaperLabel(choice: WallpaperChoice) {
   if (choice.kind === "preset") return PRESETS.find((preset) => preset.id === choice.id)?.label ?? "사진";
   if (choice.kind === "color") return COLORS.find((color) => color.id === choice.id)?.label ?? "색상";
-  return choice.kind === "custom" ? "내 사진" : "기본";
+  return choice.kind === "custom" ? "내 사진" : "낮과 밤";
 }
 
 /** 첫 버전은 내 사진 한 장을 이 키에 Blob으로 두었다. 지금은 그 키를 사진 하나의 id로 그대로 읽는다. */

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { syncTitlebarColor } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
-import { presetUrl } from "../../lib/wallpaper";
+import { DEFAULT_WALLPAPER, presetUrl } from "../../lib/wallpaper";
 
 const LAYERS = ["dark", "light"] as const;
 /** CSS의 `.wallpaper-image` 전환(300ms)보다 조금 길게 두고, 그 뒤에 가려지거나 걷힌 사진을 치운다. */
@@ -22,12 +22,13 @@ export function Wallpaper({ dark }: { dark: boolean }) {
   const choice = useUI((state) => state.wallpaper);
   const images = useUI((state) => state.customImages);
   const custom = choice.kind === "custom" ? images.find((image) => image.id === choice.id)?.url ?? null : null;
-  const photo = choice.kind === "preset" ? presetUrl(choice.id) : custom;
-  // 내 사진을 골랐지만 아직(또는 더는) 없으면 기본 사진으로 돌아간다.
-  const dynamic = choice.kind === "dynamic" || (choice.kind === "custom" && !custom);
+  // 내 사진을 골랐지만 아직(또는 더는) 없으면 기본 바탕화면을 보인다.
+  const shown = choice.kind === "custom" && !custom ? DEFAULT_WALLPAPER : choice;
+  const photo = shown.kind === "preset" ? presetUrl(shown.id) : custom;
+  const dynamic = shown.kind === "dynamic";
   // 보이는 바탕화면이나 테마가 바뀌면 설치한 앱의 제목 표시줄 색을 메뉴바에 다시 맞춘다.
   useEffect(syncTitlebarColor, [choice, dark, custom]);
-  return <div className="wallpaper" aria-hidden="true" data-color={choice.kind === "color" ? choice.id : undefined}>
+  return <div className="wallpaper" aria-hidden="true" data-color={shown.kind === "color" ? shown.id : undefined}>
     {LAYERS.map((layer) => <img key={layer} className="wallpaper-image" src={`/wallpaper-${layer}.jpg`} alt=""
       data-layer={layer} data-active={dynamic && (layer === "dark") === dark ? "" : undefined}
       draggable={false} decoding="async" fetchPriority={dynamic ? "high" : "low"} onLoad={syncTitlebarColor} />)}

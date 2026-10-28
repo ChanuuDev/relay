@@ -489,6 +489,56 @@ async function poll(force = false) {
   } catch { /* 다음 확인 때 다시 묻는다. */ } finally { polling = false; }
 }
 
+// ── 다른 환경으로 옮기기 ─────────────────────────────────────
+// 내보내기·가져오기 모두 보내지 못한 변경을 먼저 보낸 뒤 서버에서 한다. 가져오기는 서버가 합치고, 이 창은 바뀐 목록을 다시 받는다.
+
+/** 가져오기 한 번에 서버가 받는 크기(security.ts의 MAX_IMPORT_BYTES와 같다). */
+const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
+/** kept는 같거나 이 환경 쪽이 더 최근이라 그대로 둔 항목 수. */
+export type ImportResult = { added: number; updated: number; kept: number };
+
+/** 서버가 준 오류 문구. 없으면 상태 번호와 함께 fallback을 쓴다. */
+async function failure(response: Response, fallback: string) {
+  try {
+    const data = await response.json() as { error?: { message?: unknown } };
+    if (typeof data.error?.message === "string") return data.error.message;
+  } catch { /* 본문이 JSON이 아니면 기본 문구를 쓴다. */ }
+  return `${fallback}(${response.status})`;
+}
+
+/** 모든 메모와 폴더를 JSON 파일 하나로 내려받는다. 내려받은 파일 이름과 담은 수를 돌려준다. */
+export async function exportNotes(): Promise<{ name: string; notes: number; folders: number }> {
+  await flush();
+  const response = await fetch(`${API}/export`, { cache: "no-store" });
+  if (!response.ok) throw new Error(await failure(response, "서버가 내보내기를 거절했습니다."));
+  const text = await response.text();
+  const items = (JSON.parse(text) as { items: Array<{ kind: string }> }).items;
+  const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "relay-notes.json";
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = name;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { name, notes: items.filter((item) => item.kind === "note").length, folders: items.filter((item) => item.kind === "folder").length };
+}
+
+/** 내보낸 파일을 서버에 합친다. 없는 항목은 넣고, 같은 항목은 더 최근에 고친 쪽을 남기며, 아무것도 지우지 않는다. */
+export async function importNotes(file: File): Promise<ImportResult> {
+  if (file.size > MAX_IMPORT_BYTES) throw new Error("64MB 이하의 파일을 골라 주세요.");
+  const text = await file.text();
+  try { JSON.parse(text); } catch { throw new Error("JSON 파일이 아닙니다."); }
+  await flush();
+  const response = await fetch(`${API}/import`, { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: text });
+  if (!response.ok) throw new Error(await failure(response, "서버가 가져오기를 거절했습니다."));
+  const { added, updated, kept, revision: saved } = await response.json() as ImportResult & { revision: number };
+  // 다른 확인이나 저장이 진행 중이면 poll이 건너뛰므로, 합친 저장 번호를 받을 때까지 잠깐씩 다시 묻는다.
+  for (let tries = 0; revision < saved && tries < 20; tries++) {
+    await poll(true);
+    if (revision < saved) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return { added, updated, kept };
+}
+
 /** 예전에 이 브라우저에만 저장하던 메모를 DB로 옮긴다. 서버에 없는 항목만 보내고, 원본은 백업으로 남긴다. */
 function migrateLegacy(serverIds: Set<string>) {
   try {

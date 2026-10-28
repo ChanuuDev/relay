@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { age, cleanup, cli, cliAsync, root, temporary } from "./helpers";
+import { loadConfig } from "../src/config";
+import { openDatabase } from "../src/db/database";
+import { NoteStore } from "../src/notes/notes.store";
 import { quote } from "../src/web/lib/format";
 
 describe("CLI processes", () => {
@@ -434,6 +437,40 @@ describe("CLI processes", () => {
       expect(JSON.parse(result.stdout.toString()).page.total).toBe(1);
       const nested = path.join(other, "nested"); mkdirSync(nested); mkdirSync(path.join(nested, "relay.db"));
       expect(cli(nested, ["list"]).data.error.code).toBe("STORAGE_ERROR");
+    } finally { cleanup(other); }
+  });
+
+  test("notes export writes a file that notes import merges into another store, and bad files change nothing", () => {
+    const db = openDatabase(loadConfig(dir));
+    new NoteStore(db).apply({ upserts: [
+      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
+      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "본문", createdAt: 2, updatedAt: 3 },
+    ], deletes: [] });
+    db.close();
+    const other = temporary();
+    try {
+      const file = path.join(other, "옮길 메모.json");
+      expect(cli(dir, ["notes", "export", file]).data).toEqual({ schemaVersion: 1, path: file, notes: 1, folders: 1 });
+      const saved = readFileSync(file, "utf8");
+      expect(JSON.parse(saved)).toMatchObject({ format: "relay-notes", schemaVersion: 1, items: [{ id: "f1" }, { id: "n1", parentId: "f1" }] });
+      expect(cli(other, ["notes", "import", file]).data).toEqual({ schemaVersion: 1, revision: 1, added: 2, updated: 0, kept: 0 });
+      // Windows PowerShell의 Out-File이 만든 UTF-16 파일도 읽는다. 같은 내용이라 그대로 둔다.
+      const utf16 = path.join(other, "utf16.json");
+      writeFileSync(utf16, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(saved, "utf16le")]));
+      expect(cli(other, ["notes", "import", utf16]).data).toEqual({ schemaVersion: 1, revision: 1, added: 0, updated: 0, kept: 2 });
+      const human = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "notes", "import", file, "--data-dir", other], { stdout: "pipe", stderr: "pipe" });
+      expect(human.exitCode).toBe(0); expect(human.stdout.toString()).toBe("메모를 가져왔습니다: 추가 0 · 갱신 0 · 그대로 2\n");
+
+      const missing = cli(other, ["notes", "import", path.join(other, "없음.json")]);
+      expect(missing.code).toBe(3); expect(missing.stdout).toBe(""); expect(missing.data.error.code).toBe("FILE_NOT_FOUND");
+      const broken = path.join(other, "broken.json"); writeFileSync(broken, "{");
+      const sessions = path.join(other, "sessions.json"); writeFileSync(sessions, JSON.stringify({ schemaVersion: 1, items: [] }));
+      for (const bad of [broken, sessions]) {
+        const result = cli(other, ["notes", "import", bad]);
+        expect(result.code).toBe(2); expect(result.data.error.code).toBe("INVALID_ARGUMENT");
+      }
+      expect(cli(dir, ["notes", "export", path.join(other, "없는 폴더", "x.json")]).data.error.code).toBe("FILE_WRITE_FAILED");
+      expect(cli(other, ["notes", "export", file]).data).toMatchObject({ notes: 1, folders: 1 });
     } finally { cleanup(other); }
   });
 });

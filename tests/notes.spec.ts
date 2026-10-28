@@ -385,6 +385,74 @@ test("메모 창: 메모는 Relay DB에 저장되어 다른 브라우저에서�
   await expect(item(page, "다른 창에서 쓴 메모")).toBeVisible();
 });
 
+test("메모 창: 모든 메모를 JSON 파일로 내보내고, 다른 PC에서 고친 파일을 가져와 합친다", async ({ page }) => {
+  await seed(page, SAMPLE.slice(0, 4), { expanded: ["f-work", "f-meet"] });
+  await expect.poll(async () => (await saved(page)).items.length).toBe(4);
+  const notes = page.locator(win("notes"));
+  const toast = notes.locator(".notes-undo");
+  const menu = async () => {
+    await notes.getByRole("button", { name: "내보내기·가져오기" }).click();
+    await expect(page.getByRole("menuitem", { name: "모든 메모 내보내기" })).toBeVisible();
+  };
+  await menu();
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: test.info().outputPath("notes-transfer-menu.png") });
+  const download = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "모든 메모 내보내기" }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toMatch(/^relay-notes-\d{4}-\d{2}-\d{2}\.json$/);
+  const exported = JSON.parse(readFileSync((await file.path())!, "utf8")) as { format: string; items: Array<Record<string, unknown>> };
+  expect(exported).toMatchObject({ format: "relay-notes", schemaVersion: 1 });
+  expect(exported.items.map((entry) => entry.id).sort()).toEqual(["f-idea", "f-meet", "f-work", "n-weekly"]);
+  await expect(toast).toContainText(`‘${file.suggestedFilename()}’ 내보내기 완료 · 메모 1개 · 폴더 3개`);
+  await expect(notes.getByRole("button", { name: "내보내기·가져오기" })).toBeFocused();
+
+  // 다른 PC에서 주간 회의를 더 나중에 고치고 새 메모를 하나 더한 파일. 폴더 셋은 그대로다.
+  const changed = { ...exported, items: [
+    ...exported.items.map((entry) => (entry.id === "n-weekly" ? { ...entry, body: "다른 PC에서 고친 본문", updatedAt: Number(entry.updatedAt) + 3_600_000 } : entry)),
+    { id: "n-moved", kind: "note", parentId: "f-idea", title: "다른 PC 메모", body: "옮겨 온 메모", createdAt: Date.now(), updatedAt: Date.now() },
+  ] };
+  await menu();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("menuitem", { name: "메모 가져오기…" }).click();
+  await (await chooser).setFiles({ name: "relay-notes-other.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(changed)) });
+  await expect(toast).toContainText("‘relay-notes-other.json’ 가져오기 완료 · 추가 1 · 갱신 1 · 그대로 3");
+  await item(page, "아이디어").click();
+  await expect(item(page, "다른 PC 메모")).toBeVisible();
+  await item(page, "주간 회의").click();
+  await expect(page.getByLabel("본문", { exact: true })).toContainText("다른 PC에서 고친 본문");
+  await page.screenshot({ path: test.info().outputPath("notes-import.png") });
+
+  // 같은 파일을 다시 가져오면 바뀌는 것이 없다. 형식이 틀린 파일은 아무것도 바꾸지 않고 이유를 알린다.
+  await page.locator("#notes-import-file").setInputFiles({ name: "again.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(changed)) });
+  await expect(toast).toContainText("‘again.json’의 항목이 이미 모두 있습니다 · 그대로 5");
+  await page.locator("#notes-import-file").setInputFiles({ name: "sessions.json", mimeType: "application/json", buffer: Buffer.from('{"schemaVersion":1,"items":[]}') });
+  await expect(notes.locator(".notes-undo[data-tone=error]")).toContainText("가져오지 못했습니다: Relay에서 내보낸 메모 파일이 아닙니다.");
+  await page.locator("#notes-import-file").setInputFiles({ name: "memo.txt", mimeType: "text/plain", buffer: Buffer.from("그냥 글") });
+  await expect(notes.locator(".notes-undo[data-tone=error]")).toContainText("JSON 파일이 아닙니다");
+  await page.screenshot({ path: test.info().outputPath("notes-import-error.png") });
+  expect((await saved(page)).items).toHaveLength(5);
+});
+
+test("메모 창: 빈 메모장에서 다른 PC의 메모 파일을 가져온다", async ({ page }) => {
+  await ready(page);
+  await page.locator(dock("메모")).click();
+  const notes = page.locator(win("notes"));
+  await expect(notes.getByRole("button", { name: "가져오기", exact: true })).toBeVisible();
+  const now = Date.now();
+  const file = { format: "relay-notes", schemaVersion: 1, exportedAt: new Date(now).toISOString(), items: [
+    { id: "f-home", kind: "folder", parentId: null, name: "집", createdAt: now, updatedAt: now },
+    { id: "n-list", kind: "note", parentId: "f-home", title: "할 일", body: "- [ ] 화분 물 주기", createdAt: now, updatedAt: now },
+  ] };
+  const chooser = page.waitForEvent("filechooser");
+  await notes.getByRole("button", { name: "가져오기", exact: true }).click();
+  await (await chooser).setFiles({ name: "home.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(file)) });
+  await expect(notes.locator(".notes-undo")).toContainText("‘home.json’ 가져오기 완료 · 추가 2 · 갱신 0 · 그대로 0");
+  await item(page, "집").click();
+  await expect(item(page, "할 일")).toBeVisible();
+  expect((await saved(page)).items).toHaveLength(2);
+});
+
 test("메모 창: 좁은 화면에서는 목록과 내용을 번갈아 보인다", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seed(page, SAMPLE, { expanded: ["f-work"] });

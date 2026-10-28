@@ -11,7 +11,7 @@ import { DEFAULT_FONT_SIZE, FONT_SIZES, type FontSize } from "../../lib/font-siz
 import { useInstall } from "../../lib/pwa";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
-import { COLORS, MAX_CUSTOM_IMAGES, PRESETS, deleteCustomImage, imageLabel, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
+import { COLORS, DEFAULT_WALLPAPER, MAX_CUSTOM_IMAGES, PRESETS, deleteCustomImage, imageLabel, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
 import type { Connection } from "../desktop/menu-bar";
 import type { HealthData } from "../../lib/queries";
 
@@ -73,7 +73,7 @@ export function SettingsWindow({ health, healthError, connection }: {
       <div className="settings-row"><span>버전</span><span>RELAY {health?.appVersion ? `v${health.appVersion}` : "—"}</span></div>
       <div className="settings-row"><span>연결</span><span className="settings-connection"><span className="connection-dot" data-state={connection} />{CONNECTION_LABEL[connection]}</span></div>
       <div className="settings-row"><span>모드</span><Badge variant="outline">세션 읽기 전용</Badge></div>
-      <p className="settings-note">127.0.0.1에서만 열리는 로컬 서버입니다. 세션 기록은 읽기만 하고, 쓰기는 메모 저장(같은 화면에서 보낸 JSON)뿐입니다.</p>
+      <p className="settings-note">127.0.0.1에서만 열리는 로컬 서버입니다. 세션 기록은 읽기만 하고, 쓰기는 메모 저장·가져오기(같은 화면에서 보낸 JSON)뿐입니다.</p>
     </section>
   </Window>;
 }
@@ -100,7 +100,7 @@ function AppSettings() {
   </section>;
 }
 
-/** macOS 배경화면 패널처럼 16:9 견본을 격자로 늘어놓는다. 고른 것은 시스템 블루 링, 기본 견본은 낮·밤을 대각선으로 나눠 보여 주고,
+/** macOS 배경화면 패널처럼 16:9 견본을 격자로 늘어놓는다. 고른 것은 시스템 블루 링, 낮과 밤 견본은 낮·밤을 대각선으로 나눠 보여 주고,
  *  내 사진은 여러 장을 넣어 두고 견본 모서리의 ×로 한 장씩 지운다. */
 function WallpaperSettings() {
   const wallpaper = useUI((state) => state.wallpaper);
@@ -142,13 +142,13 @@ function WallpaperSettings() {
     await deleteCustomImage(id);
     removeCustomImage(id);
     const current = useUI.getState().wallpaper;
-    if (current.kind === "custom" && current.id === id) setWallpaper({ kind: "dynamic" });
+    if (current.kind === "custom" && current.id === id) setWallpaper(DEFAULT_WALLPAPER);
   }
 
   return <section className="settings-group" id="wallpaper-settings">
     <h3>바탕화면</h3>
     <div className="wallpaper-picker" role="radiogroup" aria-label="바탕화면">
-      {tile({ kind: "dynamic" }, "기본", <><img src="/wallpaper-light.jpg" alt="" data-layer="light" /><img src="/wallpaper-dark.jpg" alt="" data-layer="dark" /></>)}
+      {tile({ kind: "dynamic" }, "낮과 밤", <><img src="/wallpaper-light.jpg" alt="" data-layer="light" /><img src="/wallpaper-dark.jpg" alt="" data-layer="dark" /></>)}
       {PRESETS.map((preset) => tile({ kind: "preset", id: preset.id }, preset.label, <img src={presetUrl(preset.id)} alt="" loading="lazy" />))}
       {COLORS.map((color) => tile({ kind: "color", id: color.id }, color.label, <span className="wallpaper-swatch" data-color={color.id} />))}
       {images.map((image) => tile({ kind: "custom", id: image.id }, image.name, <img src={image.url} alt="" />, () => void remove(image.id)))}
@@ -158,6 +158,6 @@ function WallpaperSettings() {
       </label>
     </div>
     {error && <p className="settings-note settings-error" role="alert">{error}</p>}
-    <p className="settings-note">기본은 테마에 따라 낮·밤 사진이 바뀝니다. 내 사진은 {MAX_CUSTOM_IMAGES}장까지 이 브라우저에만 저장되며 서버로 보내지 않습니다. 견본 모서리의 ×로 지웁니다.</p>
+    <p className="settings-note">기본은 그래파이트입니다. 낮과 밤은 테마에 따라 낮·밤 사진이 바뀝니다. 내 사진은 {MAX_CUSTOM_IMAGES}장까지 이 브라우저에만 저장되며 서버로 보내지 않습니다. 견본 모서리의 ×로 지웁니다.</p>
   </section>;
 }

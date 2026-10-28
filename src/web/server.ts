@@ -3,20 +3,22 @@ import { openDatabase } from "../db/database";
 import { errorBody, RelayError } from "../errors";
 import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
-import { NoteStore, parseBatch } from "../notes/notes.store";
+import { exportFileName, NoteStore, parseBatch, parseExport } from "../notes/notes.store";
 import { fileResponse, listDirectory, openPath, places, systemLauncher, type Launcher } from "../files/files.service";
 import { api } from "./api";
 import { assets } from "./assets";
 import { PID_HEADER } from "./control";
-import { checkRequest, checkWrite, MAX_WRITE_BYTES, playerHeaders, securityHeaders } from "./security";
+import { checkRequest, checkWrite, MAX_IMPORT_BYTES, playerHeaders, securityHeaders } from "./security";
 import { playerHtml, playerTarget } from "./youtube-player";
 import { PLAYER_PATH } from "./youtube-shared";
 
 export const NOTES_PATH = "/api/v1/notes";
+export const NOTES_EXPORT_PATH = "/api/v1/notes/export";
+export const NOTES_IMPORT_PATH = "/api/v1/notes/import";
 export const FILES_PATH = "/api/v1/files";
 export const FILES_OPEN_PATH = "/api/v1/files/open";
 
-/** 세션은 읽기만 한다. 쓰기는 메모 저장(POST /api/v1/notes) 하나뿐이고, 메모 저장소(notes)가 있을 때만 열린다.
+/** 세션은 읽기만 한다. 쓰기는 메모 저장(POST /api/v1/notes)과 가져오기(POST /api/v1/notes/import)뿐이고, 메모 저장소(notes)가 있을 때만 열린다.
  *  파일 탐색기(files)를 주면 로컬 디스크를 읽는 GET /api/v1/files*와, 탐색기·기본 앱으로 넘기는 POST /api/v1/files/open이 열린다. */
 export function handler(service: SessionService, config: Config, notes?: NoteStore, files?: { launch: Launcher }) {
   // 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
@@ -50,6 +52,22 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
   const readBody = async (request: Request) => {
     try { return await request.json() as unknown; } catch { throw new RelayError("INVALID_ARGUMENT", "JSON 본문을 읽을 수 없습니다."); }
   };
+  /** 다른 환경으로 옮길 파일. 주소로 바로 열어도 날짜를 붙인 이름으로 내려받는다. */
+  const exportNotes = (url: URL) => {
+    if (url.search) throw new RelayError("INVALID_ARGUMENT", "메모 내보내기는 query를 받지 않습니다.");
+    const data = store().exportAll();
+    return new Response(`${JSON.stringify(data, null, 2)}\n`, { headers: { ...headers, "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${exportFileName()}"` } });
+  };
+  /** 내보낸 파일을 합친다. 저장과 같은 쓰기 검사를 거치되, 파일 하나를 통째로 받으므로 크기 상한만 크다. */
+  const importNotes = async (request: Request) => {
+    try {
+      checkWrite(request, config.webPort, MAX_IMPORT_BYTES);
+      if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "메모 가져오기는 query를 받지 않습니다.");
+      const target = store();
+      return Response.json(target.merge(parseExport(await readBody(request))), { headers });
+    } catch (error) { return failed(error, "POST"); }
+  };
   /** 탐색기에서 보기·기본 앱으로 열기. 메모 저장과 같은 쓰기 검사(같은 출처 JSON)를 거친다. */
   const openFile = async (request: Request) => {
     try {
@@ -77,14 +95,17 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
     try {
       const url = new URL(request.url);
       const notesPath = url.pathname === NOTES_PATH;
+      const exportPath = Boolean(notes) && url.pathname === NOTES_EXPORT_PATH;
+      const importPath = Boolean(notes) && url.pathname === NOTES_IMPORT_PATH;
       const filesPath = Boolean(files) && (url.pathname === FILES_PATH || url.pathname.startsWith(`${FILES_PATH}/`));
       if (notesPath && notes) allow = "GET, POST";
-      if (filesPath && url.pathname === FILES_OPEN_PATH) allow = "POST";
+      if (importPath || (filesPath && url.pathname === FILES_OPEN_PATH)) allow = "POST";
       const player = url.pathname === PLAYER_PATH;
       checkRequest(request, config.webPort, { allowCrossSite: player });
-      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", "열기는 POST만 허용합니다.", 2, 405);
+      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", importPath ? "가져오기는 POST만 허용합니다." : "열기는 POST만 허용합니다.", 2, 405);
       if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? "메모는 GET 조회와 POST 저장만 허용합니다." : "GET 조회만 허용합니다.", 2, 405);
       if (notesPath) return listNotes(request, url);
+      if (exportPath) return exportNotes(url);
       if (filesPath) return readFiles(request, url);
       if (player) return new Response(playerHtml(playerTarget(url)), { headers: { ...playerHeaders(config.webPort), ...pid, "Content-Type": "text/html; charset=utf-8" } });
       if (url.pathname.startsWith("/api/")) return Response.json(api(url, service, config), { headers });
@@ -98,6 +119,7 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
     if (request.method === "POST") {
       const pathname = new URL(request.url).pathname;
       if (notes && pathname === NOTES_PATH) return saveNotes(request);
+      if (notes && pathname === NOTES_IMPORT_PATH) return importNotes(request);
       if (files && pathname === FILES_OPEN_PATH) return openFile(request);
     }
     return read(request);
@@ -112,7 +134,7 @@ export function startServer(config: Config) {
   let server;
   try {
     server = Bun.serve({ hostname: config.webHost, port: config.webPort, fetch: handler(service, config, new NoteStore(notesDb), { launch: systemLauncher }),
-      maxRequestBodySize: MAX_WRITE_BYTES, development: false, reusePort: false });
+      maxRequestBodySize: MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
     db.close(); notesDb.close();
     if ((error as { code?: string }).code === "EADDRINUSE") throw new RelayError("PORT_IN_USE", "포트가 사용 중입니다. 기존 서버를 확인하거나 --port를 지정하세요.", 6, 500);
