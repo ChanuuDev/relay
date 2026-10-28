@@ -101,7 +101,7 @@ React Query의 structural sharing 덕에 내용이 같은 폴링에서는 아무
 세션·메모·파일 탐색기 창의 왼쪽 패널(세션 목록·메모 트리·탐색 창)과 오른쪽 내용 사이 경계는 공통 `components/desktop/split-view.tsx`가 맡습니다. shadcn `Resizable`(`components/ui/resizable.tsx`, `react-resizable-panels` 4)의 `ResizablePanelGroup`·`ResizablePanel`·`ResizableHandle`을 그대로 씁니다.
 
 - **크기**: 왼쪽 패널은 px로 정합니다. 세션 340px(260–640), 메모 256px(200–480), 파일 탐색기 240px(168–520)이고 오른쪽은 각각 360·320·320px 아래로 줄지 않습니다. 왼쪽 패널은 `groupResizeBehavior="preserve-pixel-size"`라 창 크기를 바꾸거나 최대화해도 폭이 그대로이고 오른쪽만 늘고 줄어듭니다.
-- **경계**(`.split-handle`): 1px `--border` 머리카락 선이 예전 테두리 자리를 대신하고, 양옆 4px까지 잡힙니다. 포인터를 올리면 80ms 뒤, 끌거나 키보드 초점을 받으면 곧바로 3px 시스템 블루 막대가 뜹니다. 커서는 라이브러리가 `col-resize`로 바꿉니다. 경계는 `role="separator"`라 Tab으로 초점을 주고 ←/→로 옮길 수 있습니다.
+- **경계**(`.split-handle`): 자리는 1px이지만 양옆 1px씩 겹치는 3px 요소입니다. 왼쪽 1px은 사이드바 유리 위 `--border` 선(예전 `border-right`와 같은 모양), 오른쪽 2px은 내용과 같은 불투명 `--background`입니다. 창 바탕이 투명하므로 반투명 선만 그리거나 소수점 px 경계를 그대로 두면 그 틈으로 뒤 창의 글자·바탕화면이 비칩니다. 양옆 4px까지 잡힙니다. 포인터를 올리면 80ms 뒤, 끌거나 키보드 초점을 받으면 곧바로 3px 시스템 블루 막대가 뜹니다. 커서는 라이브러리가 `col-resize`로 바꿉니다. 경계는 `role="separator"`라 Tab으로 초점을 주고 ←/→로 옮길 수 있습니다.
 - **기억**: 사용자가 끌거나 키로 옮긴 폭만(`onLayoutChanged`의 `isUserInteraction`) `localStorage["relay-split-v1"]`에 창마다(`sessions`·`notes`·`files`) px로 남기고 다음에 열 때 최소·최대 안으로 맞춰 씁니다. 경계를 두 번 누르면 기본 폭으로 돌아갑니다(라이브러리 두 번 누르기는 기억한 폭으로 돌아가므로 끄고 직접 되돌립니다).
 - **좁은 창**: 한쪽만 보이는 배치(세션 900px 미만, 메모 40em 이하, 파일 탐색기 46em 이하)에서는 경계와 패널(`#<창>-side`·`#<창>-main`)을 감춥니다. 패널은 인라인 `display: flex`라 `!important`로 감추며, 남은 패널이 폭을 다 씁니다. 세션 상세의 크로스페이드는 오른쪽 패널 안 `.detail-slot`을 기준으로 클론을 겹칩니다.
 

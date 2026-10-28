@@ -237,7 +237,10 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 
 /* 왼쪽 패널 경계(SplitView, shadcn Resizable): 1px 머리카락 선이고, 양옆 4px까지 잡히며, 올리거나 끌면 파란 막대가 뜬다. */
 .split-view { flex: 1; min-width: 0; min-height: 0; }
-.split-handle { position: relative; z-index: 6; width: 1px; flex: 0 0 1px; background: var(--border); outline: none; }
+/* 경계는 양옆 1px씩 겹치는 3px(자리는 1px)다. 왼쪽 1px은 사이드바 유리 위의 --border 선(예전 border-right와 같은 모양),
+   오른쪽 2px은 내용과 같은 불투명 바탕이다. 창 바탕이 투명하므로 이렇게 메우지 않으면 반투명 선이나 소수점 px 경계의 틈으로 뒤 창·바탕화면이 비친다. */
+.split-handle { position: relative; z-index: 6; width: 3px; flex: 0 0 3px; margin: 0 -1px; outline: none;
+  background: linear-gradient(to right, var(--border) 0 1px, var(--background) 1px); }
 .split-handle::after { content: ""; position: absolute; inset: 0 -4px; width: auto; transform: none; }
 .split-handle::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; border-radius: 2px; transform: translateX(-50%);
   background: var(--primary); opacity: 0; transition: opacity .15s ease-out .08s; pointer-events: none; }
