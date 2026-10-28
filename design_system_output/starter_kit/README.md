@@ -199,7 +199,7 @@ npm i -D tailwindcss@4.3.3 @tailwindcss/vite@4.3.3 tw-animate-css@1.4.0
 | `tokens.css` | `--background` … `--glass-*` · `--window-*` · `--fs-*` · `--lh-*` · `--radius-control` · `--tint-*` · `--tone-*` |
 | `base.css` | 본문 기본값, 초점 링, `.skip-link`, `.sr-only-text`, 동작 줄이기 |
 | `materials.css` | `.material-bar` `.material-dock` `.material-chrome` `.material-menu` `.material-toast` `.material-control` |
-| `primitives.css` | `[data-slot="button"][data-size]`, 입력·선택·탭 알약, Select 목록(왼쪽 체크), 툴팁, 배지, 상단바 안 버튼 변형(`.window-toolbar`/`.toolbar`) |
+| `primitives.css` | `[data-slot="button"][data-size]`, 입력·선택·탭 알약, Select 목록(왼쪽 체크), 툴팁(화살표 없음), 배지, 상단바 안 버튼 변형(`.window-toolbar`/`.toolbar`) |
 | `shell.css` | `.desktop` `.wallpaper[data-color]` `.menubar*` `.status-dot[data-state]` `.desktop-menu` `.menu-item` `.split-handle` `.window[data-focused/maximized/minimized]` `.window-frame` `.resize-handle` `.titlebar` `.window-title` `.title-count` `.window-toolbar` `.toolbar-icons` `.window-controls` `.window-control` `.dock*` `.dock-tip` `.app-icon` `.app-tile(-box)` `.toast` `.toast-top` `.toast-inline` `.copy-fallback` 모바일 규칙 |
 | `patterns.css` | 목록 `.list-panel` `.list-toolbar` `.list-rows` `.list-row[aria-selected]` `.row-accent` `.avatar` `.row-title` `.row-summary` `.row-meta` `.row-action` `.pager` `.statusbar` · 필터 `.search-field` `.kbd` `.filter-row` `.reveal` `.filter-chips` · 배지 `.status-badge[data-status]` `.stale-badge` `.quiet-badge` `.pin-mark` · 상세 `.detail-slot` `.detail-panel` `.detail-topline` `.back-link` `.detail-header` `.detail-meta` `.detail-actions` `.detail-hint` `.detail-tabs-wrap` `.detail-section` `.summary` `.hint` `.eyebrow` `.identity-grid` `.path-block` `.time-grid` `.technical-details` `.timeline` `.chain*` `.relation` `.current-card` · 탭 `.glass-tabs` `.tabs-thumb` · 세그먼트 `.segmented[data-variant=icon]` · 설정 `.settings-*` `.theme-field` `.wallpaper-picker` `.wallpaper-choice` · `.removable` `.corner-remove` · 카드 `.card-grid` `.tile-card[data-kind=folder]` `.media-grid` `.media-card` `.place-grid` `.place-card` `.place-icon[data-tone]` `.drive-card` `.drive-icon` `.meter[data-full]` · 트리 `.tree` `.tree-item` `.tree-row` `.tree-chevron` `.tree-icon` `.tree-label` `.tree-count` `.tree-more` `.tree-rename` `.sidebar-footer` · 데이터 `.data-view` `.data-columns` `.data-list` `.data-row` `.data-cell` `.item-icon[data-tone]` `.data-status` · `.icon-grid` `.icon-tile` · `.inspector*` · `.path-pill` `.crumb` · `.address-field` · 빈 상태 `.placeholder` `.hero-empty` `.empty-card` `.welcome*` `.illustration-*` · `.notice-bar` · 서식 `.format-toolbar` `.format-tool` · 터미널 `.window[data-terminal]` `.terminal-body` `.term-*` `.shell-picker` · `.spin` |
 | `prose.css` | `.prose`(제목·목록·체크리스트·인용·코드·표) `.doc-title` `.source-editor` `.doc-scroll` `.doc-sheet` `.doc-body` `.ProseMirror*` |
@@ -460,6 +460,7 @@ python tools/icon-postprocess.py generated.png public/icons/folder.png --shape #
 | 유리가 회색 판처럼 보인다 | 뒤에 비칠 바탕이 없다 | `.wallpaper`를 깔고 그 위에 판을 띄운다 |
 | 메뉴 유리가 뒤 창을 흐리지 못한다 | 부모(메뉴바)의 `backdrop-filter`가 backdrop 루트가 된다 | 메뉴·라벨을 `body`로 포털(`DesktopMenu`, Dock 라벨) |
 | 펼침 중 안쪽 유리가 안 비친다 | 부모가 반투명이면 자식 `backdrop-filter`가 깨진다 | 불투명도는 안쪽에만(`expandHeight`) |
+| 툴팁 화살표(마름모)가 글자를 덮는다 | shadcn 화살표는 회전한 정사각형(`bg-foreground`)이고 `span` 안에 있어 `[data-slot=tooltip-content] > svg` 덮어쓰기가 닿지 않는다. 반투명 유리 위에서는 겹친 자리도 두 겹으로 보인다 | 화살표를 없애고 `sideOffset` 6px(`components/ui/tooltip.tsx`, macOS 툴팁처럼) |
 | 툴팁 단 버튼만 크기·모양이 다르다 | shadcn `TooltipTrigger asChild`가 `data-slot="tooltip-trigger"`를 합쳐 `data-slot="button"`을 덮는다 | `patterns/tip.tsx`의 `Tip`(Radix Trigger 직접 사용)만 쓴다 |
 | `mt-4` 같은 유틸리티가 안 먹는다 | 키트 CSS는 레이어 밖이라 `@layer utilities`보다 강하다 | 패턴 클래스가 정한 속성은 감싸는 요소로 조정한다 |
 | 분할 경계 틈으로 뒤 창이 비친다 | 창 바탕이 투명 + 반투명 선 | 3px 핸들(1px 선 + 2px 불투명) 그대로 쓴다 |
@@ -497,7 +498,7 @@ python tools/icon-postprocess.py generated.png public/icons/folder.png --shape #
 
 - **Pretendard Variable**: SIL Open Font License 1.1(`public/fonts/OFL.txt`). 함께 배포해야 합니다.
 - **바탕화면 사진·견본 앱 아이콘**: Relay 저장소(MIT)를 위해 이미지 생성 도구로 만든 자산입니다. Apple 저작 자산(SF Pro, macOS 배경화면·앱 아이콘)은 쓰지 않았습니다. 견본 아이콘은 내 앱 아이콘으로 바꾸는 것을 전제로 합니다.
-- **shadcn/ui 프리미티브**: MIT. **Dock 컴포넌트**는 21st.dev Dock을 바탕으로 Relay에서 고친 것입니다.
+- **shadcn/ui 프리미티브**: MIT. 원본 그대로 두되, `tooltip.tsx`만 화살표를 빼고 `sideOffset`을 6px로 바꿨습니다(§13). **Dock 컴포넌트**는 21st.dev Dock을 바탕으로 Relay에서 고친 것입니다.
 - 외부 CDN·원격 폰트는 쓰지 않습니다(CSP `default-src 'self'`에서 동작).
 
 ---
@@ -507,4 +508,4 @@ python tools/icon-postprocess.py generated.png public/icons/folder.png --shape #
 - `npm install` → `npm run typecheck`(`tsc --noEmit`) → `npm run build`(Vite 8) 통과.
 - `vite preview`로 띄워 Playwright로 다크·라이트·상세·필터 펼침·컴포넌트 견본·문서·설정·터미널+메뉴·Dock 확대·페이지형 다크/라이트·모바일(390px)·좁은 창(860px)을 찍어 눈으로 확인했고, 콘솔 오류는 없었습니다(`reference/screenshots/starter/`).
 - `tools/screenshot.mjs`(7장, 오류 없음), `tools/icon-postprocess.py`(밝은·어두운 바탕에서 가장자리 확인), `tools/export-tokens.mjs`(색 49 · 재질 20 · 글자 11 토큰) 동작 확인.
-- 확인하면서 고친 것: 일러스트 연결선 선택자, 격자 여백, 서식 막대 폭, 페이지형 좁은 화면 상단바, 코드 타일 Dock 확대, 툴팁 단 버튼의 `data-slot` 덮어쓰기(§13).
+- 확인하면서 고친 것: 일러스트 연결선 선택자, 격자 여백, 서식 막대 폭, 페이지형 좁은 화면 상단바, 코드 타일 Dock 확대, 툴팁 단 버튼의 `data-slot` 덮어쓰기, 툴팁 화살표가 글자를 덮는 문제(§13).

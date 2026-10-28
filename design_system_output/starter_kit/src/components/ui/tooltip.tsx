@@ -29,9 +29,11 @@ function TooltipTrigger({
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
 }
 
+/** 화살표 없는 유리 말풍선(macOS 툴팁). 반투명 유리에 회전한 화살표를 겹치면 겹친 자리가 두 겹으로 보이고 글자를 덮으므로 두지 않고,
+ *  대신 트리거에서 6px 띄운다. (이 키트에서 shadcn 원본을 고친 유일한 파일) */
 function TooltipContent({
   className,
-  sideOffset = 0,
+  sideOffset = 6,
   children,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
@@ -47,7 +49,6 @@ function TooltipContent({
         {...props}
       >
         {children}
-        <TooltipPrimitive.Arrow className="z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] bg-foreground fill-foreground" />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   )

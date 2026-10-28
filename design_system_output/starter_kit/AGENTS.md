@@ -26,7 +26,7 @@
 - 서체는 Pretendard Variable. 굵기는 400·500·600(제목 입력·본문 제목만 700). 본문 자간 `-0.01em`, 22px 이상 제목 `-0.02em`, 한글 `word-break: keep-all`, 긴 경로·ID `overflow-wrap: anywhere`, 숫자 `tabular-nums`.
 - 아이콘은 lucide 1.5px 스트로크, 기본 16px(메타 12, 상단바 15, 메뉴바 14). 아이콘만 있는 단추는 `Tip` + `aria-label`.
 - 상태: hover는 `--glass-control-hover`(+4%), 선택은 `--selected`(뒤 창은 `--selected-inactive`), 초점은 2px `--ring`, 비활성은 `.45`.
-- **shadcn 프리미티브(`src/components/ui/*`)는 고치지 않는다.** 치수·모양은 `primitives.css`의 `[data-slot]` 규칙으로 덮는다.
+- **shadcn 프리미티브(`src/components/ui/*`)는 고치지 않는다.** 치수·모양은 `primitives.css`의 `[data-slot]` 규칙으로 덮는다. 예외는 `tooltip.tsx` 하나(화살표 없음, 트리거에서 6px).
 - 창 안 배치는 뷰포트가 아니라 **창 컨테이너 쿼리**(`@container win`)로 바꾼다. 글자 크기와 엮인 줄바꿈 기준은 `em`.
 
 ## 모션

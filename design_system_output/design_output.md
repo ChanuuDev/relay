@@ -731,8 +731,8 @@ thumb 배치 로직: 활성 트리거의 `offsetLeft/offsetWidth`를 thumb에 �
 
 ### 13.6 툴팁
 
-- Radix Tooltip, `delayDuration = 0`, `sideOffset = 0`.
-- 유리 메뉴 재질, z 95, 높이 24, `0 10px`, 12px, 최대 폭 320, 글자 `--foreground`. 화살표는 `fill: var(--glass-menu-fill)`.
+- Radix Tooltip, `delayDuration = 0`(앱은 `TooltipProvider`에서 250ms), **화살표 없음**, 트리거에서 `sideOffset = 6`(macOS 툴팁처럼).
+- 유리 메뉴 재질, z 95, 높이 24, `0 10px`, 12px, 최대 폭 320, 글자 `--foreground`. shadcn 기본 화살표(회전한 `bg-foreground` 정사각형)는 반투명 유리 위에서 두 겹으로 보이고 글자를 덮으므로 뺀다(함정 23).
 - 등장·퇴장은 `tw-animate-css`의 `fade-in-0 zoom-in-95` / `slide-in-from-*`.
 
 ### 13.7 드롭다운 메뉴(`.desktop-menu`)
@@ -1415,7 +1415,6 @@ Relay 전용 토큰(provider·wallpaper 일부)을 덜어 낸 휴대용 판입�
 [data-slot="select-item-indicator"] { left: 10px; right: auto; width: 12px; height: 12px; }
 [data-slot="select-item-indicator"] svg { width: 12px; height: 12px; color: currentColor; }
 [data-slot="tooltip-content"] { max-width: 320px; z-index: 95; color: var(--foreground); height: 24px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; }
-[data-slot="tooltip-content"] > svg { fill: var(--glass-menu-fill); background: transparent; }
 [data-slot="badge"] { height: calc(1em + 9px); padding: 0 8px; line-height: 1; font-size: var(--fs-11); font-weight: 500; }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -1481,6 +1480,7 @@ export function applyFontSize(size: number) {
 | 20 | 닫는 중 다시 열면 창이 반쯤 투명하게 멈춤 | 진행 중 트윈과 새 상태 충돌 | `overwrite: "auto"` + `settleFrame`으로 원위치 |
 | 21 | 툴팁을 단 버튼만 `[data-slot="button"]` 규칙(크기·알약·변형)이 빠짐 | shadcn `TooltipTrigger`(`asChild`)가 자기 `data-slot="tooltip-trigger"`를 자식에 합쳐 Button의 `data-slot="button"`을 덮어씀 | 툴팁 래퍼는 `data-slot`이 없는 Radix `Tooltip.Trigger`를 직접 쓴다(스타터 키트 `patterns/tip.tsx`). Relay에도 잠재해 있는 문제 |
 | 22 | `mt-4` 같은 Tailwind 유틸리티가 패턴 클래스 위에서 안 먹음 | 컴포넌트 CSS가 cascade layer 밖이라 `@layer utilities`보다 강함 | 패턴 클래스가 정한 속성은 감싸는 요소로 조정하거나, 그 속성을 패턴에서 빼 둔다(예: 격자의 `margin: 0`) |
+| 23 | 툴팁 화살표(마름모)가 툴팁 글자를 덮음 | shadcn 화살표는 회전한 정사각형(`bg-foreground`)이고 `span` 안에 있어 `> svg` 덮어쓰기가 닿지 않음. 반투명 유리와 겹친 자리는 두 겹으로 보임 | 화살표를 빼고 `sideOffset` 6px(macOS 툴팁처럼) |
 
 ---
 
