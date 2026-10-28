@@ -20,7 +20,7 @@ export function SessionFiltersForm({ children }: { children: ReactNode }) {
   const rowRef = useRef<HTMLDivElement>(null);
   const was = useRef({ advanced, mounted });
 
-  // F1 상세 필터 행: 펼침은 height 0→auto, 접힘은 트윈이 끝난 뒤 언마운트.
+  // F1 상세 필터 행: 감싼 상자의 height 0→auto로 펼치고(행은 제 높이 그대로 윗줄부터 드러남), 접힘은 트윈이 끝난 뒤 언마운트.
   useGSAP(() => {
     const previous = was.current.advanced;
     was.current.advanced = advanced;
@@ -40,7 +40,7 @@ export function SessionFiltersForm({ children }: { children: ReactNode }) {
     navigate(`/?${next}`);
   }}>
     {children}
-    {mounted && <FieldGroup id="advanced-filters" className="advanced-filters material-chrome" ref={rowRef}>
+    {mounted && <div className="advanced-reveal" ref={rowRef}><FieldGroup id="advanced-filters" className="advanced-filters material-chrome">
       <Field><FieldLabel htmlFor="agent">Agent</FieldLabel><Input id="agent" placeholder="전체 · codex, claude-code 등" value={draft.agent} maxLength={64} onChange={(event) => setDraft({ agent: event.target.value })} /></Field>
       <Field className="path-filter"><FieldLabel htmlFor="cwd">프로젝트 경로</FieldLabel><Input id="cwd" placeholder="프로젝트의 전체 절대경로" value={draft.cwd} onChange={(event) => setDraft({ cwd: event.target.value })} /></Field>
       <Field className="status-filter"><FieldLabel htmlFor="status">작업 상태</FieldLabel><NativeSelect id="status" size="sm" value={draft.status} onChange={(event) => setDraft({ status: event.target.value })}>
@@ -49,7 +49,7 @@ export function SessionFiltersForm({ children }: { children: ReactNode }) {
         <NativeSelectOption value="">전체</NativeSelectOption><NativeSelectOption value="1">고정만</NativeSelectOption></NativeSelect></Field>
       <Field className="limit-filter"><FieldLabel htmlFor="limit">표시 개수</FieldLabel><NativeSelect id="limit" size="sm" value={draft.limit} onChange={(event) => setDraft({ limit: event.target.value })}>{[20, 50, 100].map((limit) => <NativeSelectOption key={limit} value={limit}>{limit}개</NativeSelectOption>)}</NativeSelect></Field>
       <Button variant="ghost" size="sm" type="button" onClick={() => navigate("/")}>초기화</Button>
-    </FieldGroup>}
+    </FieldGroup></div>}
   </form>;
 }
 

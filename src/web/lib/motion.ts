@@ -316,17 +316,30 @@ export function spinIn(el: Target) {
   gsap.fromTo(el, { rotate: -90, opacity: 0 }, { rotate: 0, opacity: 1, duration: dur("micro"), ease: EASE.enter, clearProps: CLEAR });
 }
 
+/** 위에서 아래로 펼친다. 바깥(el)은 높이만 0→auto로 늘리고 안쪽(첫 자식)은 제 높이를 지켜, 윗줄부터 드러난다.
+ *  안쪽을 아래 정렬한 채 그 높이를 줄이면 아랫부분만 잘려 보이고 패딩만큼 튀어나온다. 불투명도는 안쪽에 준다:
+ *  바깥이 반투명하면 그 안의 유리(backdrop-filter)가 뒤를 비추지 못한다. 접히는 중이면 지금 높이에서 이어 펼친다. */
 export function expandHeight(el: HTMLElement | null) {
   if (!el) return;
-  if (reduced()) { gsap.set(el, { clearProps: "height,opacity,overflow" }); return; }
-  gsap.fromTo(el, { height: 0, opacity: 0, overflow: "hidden" },
-    { height: "auto", opacity: 1, duration: dur("base"), ease: EASE.move, clearProps: "height,opacity,overflow" });
+  const content = el.firstElementChild;
+  const running = gsap.isTweening(el);
+  gsap.killTweensOf([el, content]);
+  if (reduced()) { gsap.set([el, content], { clearProps: "height,overflow,opacity,transform" }); return; }
+  gsap.fromTo(el, { height: running ? el.offsetHeight : 0, overflow: "hidden" },
+    { height: "auto", duration: dur("base"), ease: EASE.move, clearProps: "height,overflow" });
+  if (!content) return;
+  const shown = { opacity: 1, y: 0, duration: dur("base"), ease: EASE.enter, clearProps: "opacity,transform" };
+  if (running) gsap.to(content, shown); else gsap.fromTo(content, { opacity: 0, y: -6 }, shown);
 }
 
+/** expandHeight의 반대. 끝나거나 다시 펼쳐져 끊기면 resolve한다. */
 export function collapseHeight(el: HTMLElement | null): Promise<void> {
   if (!el || reduced()) return Promise.resolve();
+  const content = el.firstElementChild;
+  gsap.killTweensOf([el, content]);
   return new Promise((resolve) => {
     const done = () => resolve();
-    gsap.to(el, { height: 0, opacity: 0, overflow: "hidden", duration: dur("base"), ease: EASE.move, onComplete: done, onInterrupt: done });
+    if (content) gsap.to(content, { opacity: 0, y: -6, duration: dur("base"), ease: EASE.exit });
+    gsap.fromTo(el, { height: el.offsetHeight, overflow: "hidden" }, { height: 0, duration: dur("base"), ease: EASE.move, onComplete: done, onInterrupt: done });
   });
 }

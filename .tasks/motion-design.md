@@ -107,7 +107,7 @@ reduced-motion: 위 모든 값 0(즉시). 단 opacity 페이드는 80ms까지 �
 
 | # | 전환 | 명세 |
 |---|---|---|
-| F1 | 상세 필터 행 펼침/접힘 | height 0↔auto + opacity, `base`·`power3.inOut`(GSAP `height: "auto"`). 접힘 완료 후 언마운트(과도 상태 패턴 1). |
+| F1 | 상세 필터 행 펼침/접힘 | 감싼 `.advanced-reveal`의 height 0↔auto(`base`·`power3.inOut`, GSAP `height: "auto"`) + 행의 opacity·y -6px(`power3.out`). 행 자체를 줄이면 아래 정렬된 입력칸이 아랫부분만 잘려 보이고 패딩만큼 튀므로 바깥만 줄인다. 접히는 중에 다시 펼치면 지금 높이에서 잇는다. 접힘 완료 후 언마운트(과도 상태 패턴 1). |
 | F2 | 필터 칩 추가·제거 | 추가 scale .9→1·opacity (`micro`), 제거는 즉시. |
 | F3 | 테마 전환 | 배경화면 크로스페이드는 CSS 200ms 유지. 추가로 메뉴바 해·달 아이콘 회전 교체(rotate −90→0, `micro`). |
 | F4 | 연결 상태 점 변화 | scale 1→1.4→1 `micro` 펄스 1회. |

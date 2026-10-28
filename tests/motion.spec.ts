@@ -164,6 +164,41 @@ test("메뉴는 페이드인하고 Esc에 종료 트윈 뒤 사라진다", async
   await expect(page.locator(".menubar-mark")).toBeFocused();
 });
 
+test("상세 필터 행은 0에서 윗줄부터 펼쳐지고, 접히는 중에 다시 누르면 그 높이에서 이어 펼친다", async ({ page }) => {
+  record("filters", "필터 확인");
+  // 가짜 시계로 트윈을 멈춰 가며 본다. 예전에는 행 자체의 높이를 줄여 아래 정렬된 입력칸의 아랫부분만 잘려 보였다.
+  await page.clock.install();
+  await ready(page);
+  await page.clock.pauseAt(Date.now() + 1000);
+  const toggle = page.getByRole("button", { name: "상세 필터", exact: true });
+  const box = () => page.evaluate(() => {
+    const reveal = document.querySelector(".advanced-reveal")!.getBoundingClientRect();
+    const row = document.querySelector("#advanced-filters")!;
+    return { height: reveal.height, offset: row.getBoundingClientRect().top - reveal.top, full: row.getBoundingClientRect().height,
+      opacity: Number(getComputedStyle(row).opacity), inline: document.querySelector(".advanced-reveal")!.getAttribute("style") ?? "" };
+  });
+  await toggle.click();
+  await page.clock.runFor(16);
+  expect((await box()).height).toBeLessThan(4);
+  await page.clock.runFor(100);
+  const middle = await box();
+  expect(middle.height).toBeGreaterThan(4); expect(middle.height).toBeLessThan(middle.full);
+  expect(middle.offset).toBeLessThanOrEqual(0); expect(middle.offset).toBeGreaterThan(-7);
+  await page.clock.runFor(300);
+  const open = await box();
+  expect(open.height).toBe(open.full); expect(open.offset).toBe(0); expect(open.opacity).toBe(1); expect(open.inline).toBe("");
+
+  await toggle.click();
+  await page.clock.runFor(120);
+  const closing = (await box()).height;
+  expect(closing).toBeGreaterThan(0); expect(closing).toBeLessThan(open.full);
+  await toggle.click();
+  await page.clock.runFor(16);
+  expect((await box()).height).toBeGreaterThanOrEqual(closing - 1);
+  await page.clock.runFor(300);
+  expect(await box()).toEqual(open);
+});
+
 test("복사 토스트는 떠오른 뒤 3.5초 안에 사라진다", async ({ page, context }) => {
   record("toast", "토스트 확인");
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
