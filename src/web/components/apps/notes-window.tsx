@@ -7,6 +7,7 @@ import { WindowTitleBar } from "../desktop/window-title-bar";
 import { AppIcon } from "../desktop/app-icons";
 import { DesktopMenu, type MenuEntry } from "../desktop/menu";
 import { NoteDocument } from "./note-editor";
+import { SplitView } from "../desktop/split-view";
 import {
   childMap, isWithin, labelOf, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type Row,
@@ -159,7 +160,7 @@ export function NotesWindow() {
       <Button type="button" variant="ghost" size="icon-sm" aria-label="새 메모" title="새 메모" onClick={() => newNote()}><SquarePen aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="삭제" title="삭제" disabled={!current} onClick={() => removeItem(selected)}><Trash aria-hidden="true" /></Button>
     </div>} />}>
-    <div className="notes-layout" data-pane={pane}>
+    <SplitView name="notes" label="메모 목록" className="notes-layout" data-pane={pane} defaultWidth={256} minWidth={200} maxWidth={480} minMain={320} side={
       <aside className="notes-sidebar material-chrome" aria-label="메모 목록"
         onContextMenu={(event) => { if (event.defaultPrevented) return; event.preventDefault(); openMenu("root", null, event.clientX, event.clientY); }}>
         <div className="notes-search">
@@ -178,7 +179,7 @@ export function NotesWindow() {
               onMenu={(id, left, top) => openMenu("item", id, left, top)} onDelete={removeItem} onToggle={setExpanded} />}
         <div className="notes-footer"><span>메모 {counts.notes}개{counts.folders ? ` · 폴더 ${counts.folders}개` : ""}</span><span className="notes-sync" data-sync={status === "ready" ? sync : status}>{status === "loading" ? "불러오는 중…" : status === "error" ? "서버 연결 대기"
           : sync === "saving" ? "저장 중…" : sync === "offline" ? "저장 대기 · 다시 시도 중" : sync === "rejected" ? "저장 실패" : "Relay DB에 저장됨"}</span></div>
-      </aside>
+      </aside>} main={
       <section className="notes-content" aria-label={current?.kind === "note" ? "메모 편집" : "폴더 내용"}>
         {status === "error" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>메모를 불러오지 못했습니다. Relay 서버에 다시 연결하는 중입니다.</span></div>}
         {status === "ready" && sync === "offline" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버에 저장하지 못했습니다. 변경은 이 브라우저에 남겨 두었다가 연결되면 다시 저장합니다.</span></div>}
@@ -187,8 +188,7 @@ export function NotesWindow() {
           ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open} />
           : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")}
               onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
-      </section>
-    </div>
+      </section>} />
     {trash && <div className="notes-undo material-toast" role="status">
       <span>{trash.kind === "folder" ? `‘${trash.label}’ 폴더${trash.notes ? `와 메모 ${trash.notes}개` : ""}를 삭제했습니다.` : `‘${trash.label}’ 메모를 삭제했습니다.`}</span>
       <Button type="button" size="xs" variant="secondary" onClick={() => { undoRemove(); requestAnimationFrame(() => focusRow(useNotes.getState().selected)); }}>실행 취소</Button>

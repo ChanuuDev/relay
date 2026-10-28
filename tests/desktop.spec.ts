@@ -529,3 +529,54 @@ test("설정의 글자 크기는 창 안의 글자·줄 높이·줄바꿈 기준
   await expect.poll(toolbarWrap).toBe("nowrap");
   expect(errors).toEqual([]);
 });
+
+test("세션·메모·파일 탐색기의 왼쪽 패널은 경계를 끌어 넓히고, 다시 열어도 남으며, 두 번 누르면 기본 폭으로 돌아간다", async ({ page }) => {
+  record("split", "패널 폭 확인");
+  await ready(page);
+  const cases = [
+    { app: "세션", id: "sessions", side: ".list-panel", base: 340 },
+    { app: "메모", id: "notes", side: ".notes-sidebar", base: 256 },
+    { app: "파일 탐색기", id: "files", side: ".files-sidebar", base: 240 },
+  ];
+  const width = async (id: string, side: string) => Math.round((await box(page, `${win(id)} ${side}`)).width);
+  // 픽셀 반올림 차이는 1px까지 같은 폭으로 본다.
+  const near = async (id: string, side: string, value: number) => Math.abs((await width(id, side)) - value) <= 1;
+  for (const { app, id, side, base } of cases) {
+    await page.locator(dock(app)).click();
+    await expect(page.locator(win(id))).toHaveAttribute("data-focused", "");
+    // 창이 떠오르는 동안은 크기가 작으므로 다 뜰 때까지 기다린다.
+    await expect.poll(() => near(id, side, base)).toBe(true);
+    const handle = page.locator(`${win(id)} .split-handle`);
+    await expect(handle).toHaveAttribute("role", "separator");
+    const edge = await box(page, `${win(id)} .split-handle`);
+    await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(edge.x + 60, edge.y + edge.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(() => near(id, side, base + 60)).toBe(true);
+  }
+  // 창마다 따로 기억한다.
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  for (const { app, id, side, base } of cases) {
+    await page.locator(dock(app)).click();
+    await expect.poll(() => near(id, side, base + 60)).toBe(true);
+  }
+  // 창 크기를 바꿔도 왼쪽 폭은 그대로다.
+  await page.locator(`${win("files")} .window-title`).dblclick();
+  await expect(page.locator(win("files"))).toHaveAttribute("data-maximized", "");
+  await expect.poll(() => near("files", ".files-sidebar", 300)).toBe(true);
+  // 키보드로도 옮기고, 두 번 누르면 기본 폭
+  await page.locator(`${win("files")} .split-handle`).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => width("files", ".files-sidebar")).toBeLessThan(300);
+  await page.locator(`${win("files")} .split-handle`).dblclick();
+  await expect.poll(() => near("files", ".files-sidebar", 240)).toBe(true);
+  // 최소 폭 아래로는 줄지 않는다.
+  const edge = await box(page, `${win("files")} .split-handle`);
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(edge.x - 300, edge.y + 200, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => near("files", ".files-sidebar", 168)).toBe(true);
+});

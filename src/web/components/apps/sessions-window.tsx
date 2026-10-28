@@ -6,6 +6,7 @@ import { FilterChips, FilterControls, SessionFiltersForm } from "../session-filt
 import { SessionList } from "../session-list";
 import { SessionDetail } from "../session-detail";
 import { Crossfade } from "../transitions";
+import { SplitView } from "../desktop/split-view";
 import { DetailPlaceholder } from "../context-guide";
 import { staggerIn } from "../../lib/motion";
 import type { BriefSession, ChainData, DetailData, HealthData, HistoryData, ListData, QueryResult } from "../../lib/queries";
@@ -31,14 +32,17 @@ export function SessionsWindow({ list, detail, updates, relations, chain, health
       </WindowTitleBar>
     </SessionFiltersForm>}>
     <FilterChips params={params} activeFilters={activeFilters} />
-    <div id="workspace" className="sessions-body" tabIndex={-1} ref={bodyRef}>
-      <SessionList list={list} selectedId={selectedId} activeFilters={activeFilters} listKey={params.toString()}
-        storeDirectory={health?.dataDirectory} copy={copy} onPage={onPage} />
-      <Crossfade swapKey={selectedId ?? ""} container={bodyRef} select={DETAIL_SLOT} onEntered={staggerHeader}>
-        {selectedId
-          ? <SessionDetail key={selectedId} detail={detail} updates={updates} children={relations} chain={chain} storeDirectory={health?.dataDirectory} copy={copy} />
-          : <DetailPlaceholder />}
-      </Crossfade>
+    <div id="workspace" className="sessions-body" tabIndex={-1}>
+      <SplitView name="sessions" label="세션 목록" defaultWidth={340} minWidth={260} maxWidth={640} minMain={360} side={
+        <SessionList list={list} selectedId={selectedId} activeFilters={activeFilters} listKey={params.toString()}
+          storeDirectory={health?.dataDirectory} copy={copy} onPage={onPage} />} main={
+        <div className="detail-slot" ref={bodyRef}>
+          <Crossfade swapKey={selectedId ?? ""} container={bodyRef} select={DETAIL_SLOT} onEntered={staggerHeader}>
+            {selectedId
+              ? <SessionDetail key={selectedId} detail={detail} updates={updates} children={relations} chain={chain} storeDirectory={health?.dataDirectory} copy={copy} />
+              : <DetailPlaceholder />}
+          </Crossfade>
+        </div>} />
     </div>
     <footer className="statusbar material-chrome">
       <span>총 {total?.toLocaleString() ?? "—"}건 · 최근 갱신순</span>

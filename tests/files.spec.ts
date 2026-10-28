@@ -153,3 +153,64 @@ test("파일 탐색기: 탐색기에서 보기·기본 앱으로 열기는 서�
   await page.getByRole("button", { name: "이 PC", exact: true }).first().click();
   await expect(page.locator(".files-home")).toBeVisible();
 });
+
+test("파일 탐색기: 왼쪽 트리가 지금 폴더까지 펼쳐지고, 오른쪽 클릭으로 즐겨찾기를 고친다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  const tree = page.locator(".files-tree");
+  const node = (name: string) => tree.locator(`[role=treeitem][aria-label="${name}"]`);
+  // 이 PC 아래가 지금 폴더까지 펼쳐지고 지금 폴더가 골라져 있다.
+  await expect(node("이 PC")).toHaveAttribute("aria-expanded", "true");
+  await expect(node("둘러보기")).toHaveAttribute("aria-selected", "true");
+  await expect(node("둘러보기")).toBeInViewport();
+  // 펼침 단추로 하위 폴더를 읽어 오고, 하위 폴더가 없는 폴더는 펼침 단추가 사라진다.
+  await node("둘러보기").locator(":scope > .tree-row .tree-chevron").click();
+  await expect(node("하위 폴더")).toBeVisible();
+  await node("하위 폴더").locator(":scope > .tree-row .tree-chevron").click();
+  await expect(node("하위 폴더")).not.toHaveAttribute("aria-expanded");
+  // 트리 항목을 누르면 그 폴더로 간다.
+  await node("하위 폴더").locator(":scope > .tree-row").click();
+  await expect(row(page, "안쪽.md")).toBeVisible();
+  await expect(node("하위 폴더")).toHaveAttribute("aria-selected", "true");
+
+  // 키보드: ←로 상위 항목, ←로 접기, →로 펼치기, Enter로 열기
+  await node("하위 폴더").focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(node("둘러보기")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(node("둘러보기")).toHaveAttribute("aria-expanded", "false");
+  await expect(node("하위 폴더")).toHaveCount(0);
+  await page.keyboard.press("ArrowRight");
+  await expect(node("하위 폴더")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(row(page, "보고서.txt")).toBeVisible();
+
+  // 오른쪽 클릭 → 즐겨찾기에 추가하면 즐겨찾기 묶음과 이 PC 시작 화면에 나온다.
+  const favorites = node("즐겨찾기").locator(":scope > [role=group] > [role=treeitem]");
+  const before = await favorites.count();
+  await node("하위 폴더").locator(":scope > .tree-row").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "즐겨찾기에 추가" }).click();
+  await expect(page.locator(".files-toast")).toContainText("즐겨찾기에 추가했습니다.");
+  await expect(favorites).toHaveCount(before + 1);
+  await expect(favorites.last()).toHaveAttribute("aria-label", "하위 폴더");
+  // 본문 목록의 폴더 메뉴에도 같은 항목이 있고, 이미 즐겨찾기면 제거로 바뀐다.
+  await row(page, "하위 폴더").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "즐겨찾기에서 제거" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  // 위로 이동하고, 다시 열어도 남는다.
+  await favorites.last().locator(":scope > .tree-row").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "위로 이동" }).click();
+  await expect(favorites.nth(before - 1)).toHaveAttribute("aria-label", "하위 폴더");
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("파일 탐색기")).click();
+  await expect(favorites.nth(before - 1)).toHaveAttribute("aria-label", "하위 폴더");
+  await page.getByRole("button", { name: "이 PC", exact: true }).first().click();
+  await expect(page.locator(".files-place", { hasText: "하위 폴더" })).toBeVisible();
+  // 제거
+  await favorites.nth(before - 1).locator(":scope > .tree-row").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "즐겨찾기에서 제거" }).click();
+  await expect(favorites).toHaveCount(before);
+  expect(path.basename(disk)).toBe("둘러보기");
+  expect(errors).toEqual([]);
+});

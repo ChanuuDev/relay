@@ -235,6 +235,15 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 .menu-check svg { width: 12px; height: 12px; }
 .menu-separator { margin: 4px 6px; border-top: 1px solid var(--border); }
 
+/* 왼쪽 패널 경계(SplitView, shadcn Resizable): 1px 머리카락 선이고, 양옆 4px까지 잡히며, 올리거나 끌면 파란 막대가 뜬다. */
+.split-view { flex: 1; min-width: 0; min-height: 0; }
+.split-handle { position: relative; z-index: 6; width: 1px; flex: 0 0 1px; background: var(--border); outline: none; }
+.split-handle::after { content: ""; position: absolute; inset: 0 -4px; width: auto; transform: none; }
+.split-handle::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; border-radius: 2px; transform: translateX(-50%);
+  background: var(--primary); opacity: 0; transition: opacity .15s ease-out .08s; pointer-events: none; }
+.split-handle:is([data-separator="hover"], [data-separator="active"], [data-separator="focus"])::before { opacity: .85; }
+.split-handle[data-separator="active"]::before { transition-delay: 0s; }
+
 /* 창 */
 .window { position: fixed; }
 .window[data-minimized] { display: none; }
@@ -316,6 +325,7 @@ body[data-window-dragging] .window-frame { transition: none; }
 .filter-chips button > svg { width: 12px; height: 12px; }
 .sessions-body { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 .sessions-body:focus { outline: none; }
+.detail-slot { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
 .list-panel { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* 교체 직전 DOM을 떠 둔 오버레이(§3-C1). 위치·크기는 인라인으로 준다.
    바탕(4) < 새 패널(5) < 클론(6) 순으로 겹쳐 교차 중에도 합성 불투명도가 1을 유지한다. */
@@ -583,14 +593,15 @@ img.agent-avatar { background: transparent; object-fit: contain; }
   .window[data-detail] .window-toolbar, .window[data-detail] .advanced-filters, .window[data-detail] .filter-chips { display: none; }
   .window[data-detail] .title-list { display: none; }
   .window[data-detail] .title-detail { display: inline; }
-  .window:not([data-detail]) .detail-placeholder { display: none; }
+  /* 좁은 창은 목록과 상세 중 하나만 보이므로 경계도 숨긴다. 패널 자체(#sessions-side·#sessions-main)를 감춰야 남은 쪽이 폭을 다 쓴다.
+     패널은 인라인 display: flex를 가지므로 !important로 감춘다(SplitView 패널 공통). */
+  .window[data-detail] #sessions-side, .window:not([data-detail]) #sessions-main, .sessions-body .split-handle { display: none !important; }
 }
 @container sessions (min-width: 640px) {
   .window:not([data-detail]) .source-column, .window:not([data-detail]) .time-column { display: block; }
   .window:not([data-detail]) .compact-meta { display: none; }
 }
 @container sessions (min-width: 900px) {
-  .list-panel { flex: 0 0 340px; border-right: 1px solid var(--border); }
   .window:not([data-detail]) .source-column, .window:not([data-detail]) .time-column { display: none; }
   .window:not([data-detail]) .compact-meta { display: flex; }
 }
@@ -734,7 +745,7 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-layout { flex: 1; min-height: 0; display: flex; }
 
 /* 사이드바: 유리 위에 검색·트리·개수 */
-.notes-sidebar { width: 256px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.notes-sidebar { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .notes-search { padding: 10px 10px 6px; flex-shrink: 0; }
 .notes-search [data-slot="input-group"] { border-color: var(--glass-control-border); }
 .notes-search [data-slot="input-group"]:hover { background: var(--glass-control-hover); }
@@ -938,9 +949,7 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 }
 /* 좁은 창: 목록과 내용을 한 번에 하나씩 보인다(13px에서 520px). */
 @container notes (max-width: 40em) {
-  .notes-sidebar { width: 100%; border-right: 0; }
-  .notes-layout[data-pane="tree"] .notes-content { display: none; }
-  .notes-layout[data-pane="content"] .notes-sidebar { display: none; }
+  .notes-layout[data-pane="tree"] #notes-main, .notes-layout[data-pane="content"] #notes-side, .notes-layout > .split-handle { display: none !important; }
   .notes-back { display: inline-flex; }
   .notes-content-bar { padding: 0 14px; }
   .note-time { display: none; }
@@ -997,21 +1006,25 @@ form.files-path .address-field { height: 30px; }
 .files-crumb[data-root]:not([aria-current]) { padding: 0; width: 24px; justify-content: center; }
 .files-path-edit { flex: 1; align-self: stretch; min-width: 16px; cursor: text; }
 
-.files-layout { flex: 1; min-height: 0; display: flex; }
+.files-content { flex: 1; min-width: 0; min-height: 0; display: flex; }
 
 /* 사이드바: Finder처럼 즐겨찾기와 드라이브 */
-.files-sidebar { width: 216px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
-.files-nav { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; padding: 8px 8px 12px; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
-.files-nav-head { padding: 14px 10px 5px; font-size: var(--fs-11); font-weight: 600; color: var(--glass-text-muted); }
-.files-nav-head:first-child { padding-top: 4px; }
-.files-nav-item { display: flex; align-items: center; gap: 8px; height: calc(1em + 15px); padding: 0 10px; border-radius: 6px; flex-shrink: 0;
-  font-size: var(--fs-13); text-align: left; color: inherit; transition: background-color .12s ease-out; }
-.files-nav-item > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.files-nav-item > svg { width: 16px; height: 16px; color: var(--primary); }
-.files-nav-item:hover { background: var(--glass-control-fill); }
-.files-nav-item[aria-current] { background: var(--selected); }
-.window:not([data-focused]) .files-nav-item[aria-current] { background: var(--selected-inactive); }
-.window:not([data-focused]) .files-nav-item > svg { color: var(--glass-text-muted); }
+.files-sidebar { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+/* 탐색 창 트리: 메모 트리의 행(.tree-row·.tree-chevron·.tree-label)을 그대로 쓰고 아이콘 색만 바꾼다. */
+.files-tree, .files-tree-group { list-style: none; margin: 0; padding: 0; }
+.files-tree { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.files-tree-item[data-node="fav-root"], .files-tree-item[data-node="pc-root"] { margin-top: 6px; }
+.files-tree-item[data-node="fav-root"]:first-child { margin-top: 0; }
+.files-tree-item:is([data-node="fav-root"], [data-node="pc-root"]) > .tree-row .tree-label { font-weight: 600; }
+.files-tree-icon[data-tone="star"] { color: #f5a524; fill: color-mix(in srgb, #f5a524 30%, transparent); }
+.files-tree-icon[data-tone="place"] { color: var(--primary); }
+.files-tree-icon[data-tone="drive"] { color: var(--muted-foreground); }
+.files-tree-icon[data-tone="folder"] { color: var(--files-folder); fill: color-mix(in srgb, var(--files-folder) 24%, transparent); }
+.window:not([data-focused]) .files-tree-icon:is([data-tone="place"], [data-tone="folder"]) { color: var(--glass-text-muted); fill: none; }
+.files-tree-item[data-hidden] > .tree-row { opacity: .55; }
+.files-tree-note { display: flex; align-items: center; gap: 6px; min-height: calc(1em + 13px); padding: 0 8px 0 calc(26px + var(--depth, 0) * 16px);
+  font-size: var(--fs-11); line-height: 1.5; color: var(--glass-text-muted); }
+.files-tree-note > svg { width: 12px; height: 12px; animation: browser-spin 1s linear infinite; }
 .files-nav-error { padding: 10px; font-size: var(--fs-11); line-height: 1.6; color: var(--glass-text-muted); }
 
 /* 내용: 열 머리 · 목록 · 상태 줄 */
@@ -1099,6 +1112,7 @@ form.files-path .address-field { height: 30px; }
 .files-place-icon[data-place="pictures"] { background: linear-gradient(180deg, #ffc27a, #f0663a); }
 .files-place-icon[data-place="music"] { background: linear-gradient(180deg, #ff86ab, #e0245e); }
 .files-place-icon[data-place="videos"] { background: linear-gradient(180deg, #c3a1ff, #7c3aed); }
+.files-place-icon[data-place="folder"] { background: linear-gradient(180deg, #ffd45e, #f0a500); }
 .files-place-text, .files-drive-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .files-place-text strong, .files-drive-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-13); font-weight: 600; line-height: var(--lh-20); }
 .files-place-text small, .files-drive-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-11); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
@@ -1141,21 +1155,29 @@ form.files-path .address-field { height: 30px; }
 .files-toast[data-tone="error"] > span { color: var(--destructive); }
 .files-toast [data-slot="button"] svg { width: 13px; height: 13px; }
 
-/* 좁은 창: 미리 보기(13px에서 754px), 사이드바·종류 열(598px), 날짜 열·찾기 칸(442px) 순으로 걷는다. */
-@container files (max-width: 58em) {
-  .files-preview, .files-preview-toggle { display: none; }
-}
+/* 창 너비: 46em(13px에서 598px) 이하면 경로 줄이 제목 아래로 내려가고 탐색 창을 숨긴다. 34em 이하면 찾기 칸도 숨긴다. */
 @container files (max-width: 46em) {
   .window[data-window="files"] .titlebar { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
   .window[data-window="files"] .window-toolbar { order: 3; flex-basis: 100%; }
-  .files-sidebar { display: none; }
-  .files-layout { --files-grid: minmax(0, 1fr) 132px 68px; }
-  .files-columns [data-column="kind"], .files-row [data-column="kind"] { display: none; }
+  #files-side, .files-layout > .split-handle { display: none !important; }
   .files-filter { width: 132px; }
   .files-home { padding: 18px 16px 24px; }
 }
 @container files (max-width: 34em) {
-  .files-layout { --files-grid: minmax(0, 1fr) 68px; }
-  .files-columns [data-column="modified"], .files-row [data-column="modified"] { display: none; }
   .files-filter { display: none; }
+}
+/* 탐색 창 폭을 끌어 바꾸므로 미리 보기와 열은 창이 아니라 남은 자리를 잰다.
+   내용 자리가 54em보다 좁으면 미리 보기를, 목록이 40em보다 좁으면 종류 열을, 29em보다 좁으면 날짜 열을 걷어 이름 열이 늘 남는다. */
+.files-content { container: files-content / inline-size; }
+.files-main { container: files-main / inline-size; }
+@container files-content (max-width: 54em) {
+  .files-preview { display: none; }
+}
+@container files-main (max-width: 40em) {
+  .files-columns, .files-list { --files-grid: minmax(0, 1fr) 148px 68px; }
+  .files-columns [data-column="kind"], .files-row [data-column="kind"] { display: none; }
+}
+@container files-main (max-width: 29em) {
+  .files-columns, .files-list { --files-grid: minmax(0, 1fr) 68px; }
+  .files-columns [data-column="modified"], .files-row [data-column="modified"] { display: none; }
 }

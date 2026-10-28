@@ -11,11 +11,14 @@ export type Location = string | null;
 export type View = "list" | "grid";
 export type SortKey = "name" | "modified" | "kind" | "size";
 export type Sort = { key: SortKey; desc: boolean };
-type Prefs = { view: View; hidden: boolean; preview: boolean; sort: Sort; location: Location };
+/** favorites가 null이면 사용자 폴더(places) 기본 즐겨찾기를 쓴다. expanded는 펼친 트리 항목 키(`fav:경로`, `pc:경로`, `pc:`)다. */
+type Prefs = { view: View; hidden: boolean; preview: boolean; sort: Sort; location: Location; favorites: string[] | null; expanded: string[] };
 
 const PREFS_KEY = "relay-files-v1";
 const MAX_HISTORY = 100;
-const DEFAULT_PREFS: Prefs = { view: "list", hidden: false, preview: true, sort: { key: "name", desc: false }, location: null };
+const DEFAULT_PREFS: Prefs = { view: "list", hidden: false, preview: true, sort: { key: "name", desc: false }, location: null, favorites: null, expanded: ["fav:", "pc:"] };
+const MAX_FAVORITES = 50;
+const MAX_EXPANDED = 200;
 const SORT_KEYS: SortKey[] = ["name", "modified", "kind", "size"];
 
 function loadPrefs(): Prefs {
@@ -23,8 +26,10 @@ function loadPrefs(): Prefs {
     const raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null") as Partial<Prefs> | null;
     if (!raw || typeof raw !== "object") return DEFAULT_PREFS;
     const sort = raw.sort && SORT_KEYS.includes(raw.sort.key) ? { key: raw.sort.key, desc: Boolean(raw.sort.desc) } : DEFAULT_PREFS.sort;
+    const strings = (value: unknown, max: number) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0).slice(0, max) : null);
     return { view: raw.view === "grid" ? "grid" : "list", hidden: raw.hidden === true, preview: raw.preview !== false, sort,
-      location: typeof raw.location === "string" && raw.location ? raw.location : null };
+      location: typeof raw.location === "string" && raw.location ? raw.location : null,
+      favorites: strings(raw.favorites, MAX_FAVORITES), expanded: strings(raw.expanded, MAX_EXPANDED) ?? DEFAULT_PREFS.expanded };
   } catch { return DEFAULT_PREFS; }
 }
 
@@ -32,10 +37,17 @@ type State = Prefs & {
   history: Location[]; index: number; selected: string | null;
   go: (location: Location, select?: string | null) => void; back: () => void; forward: () => void; settle: (path: string) => void;
   select: (path: string | null) => void; setView: (view: View) => void; toggleHidden: () => void; togglePreview: () => void; sortBy: (key: SortKey) => void;
+  /** current는 지금 보이는 즐겨찾기(기본값이면 사용자 폴더 목록). 처음 고칠 때 기본값을 실제 목록으로 굳힌다. */
+  addFavorite: (path: string, current: string[]) => void; removeFavorite: (path: string, current: string[]) => void;
+  moveFavorite: (path: string, delta: number, current: string[]) => void; resetFavorites: () => void;
+  setExpanded: (key: string, open: boolean) => void; expandAll: (keys: string[]) => void; collapseAll: () => void;
 };
 
 const save = (state: Prefs) => {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify({ view: state.view, hidden: state.hidden, preview: state.preview, sort: state.sort, location: state.location })); }
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ view: state.view, hidden: state.hidden, preview: state.preview, sort: state.sort, location: state.location,
+      favorites: state.favorites, expanded: state.expanded }));
+  }
   catch { /* 저장 공간이 없어도 창은 동작한다. */ }
 };
 
@@ -70,6 +82,28 @@ export const useFiles = create<State>((set, get) => {
     toggleHidden: () => update({ hidden: !get().hidden }),
     togglePreview: () => update({ preview: !get().preview }),
     sortBy: (key) => { const { sort } = get(); update({ sort: { key, desc: sort.key === key ? !sort.desc : key === "modified" || key === "size" } }); },
+    addFavorite: (path, current) => { if (!current.includes(path)) update({ favorites: [...current, path].slice(0, MAX_FAVORITES) }); },
+    removeFavorite: (path, current) => update({ favorites: current.filter((item) => item !== path) }),
+    moveFavorite: (path, delta, current) => {
+      const from = current.indexOf(path);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= current.length) return;
+      const next = [...current];
+      next.splice(to, 0, ...next.splice(from, 1));
+      update({ favorites: next });
+    },
+    resetFavorites: () => update({ favorites: null }),
+    setExpanded: (key, open) => {
+      const { expanded } = get();
+      if (open === expanded.includes(key)) return;
+      update({ expanded: open ? [...expanded, key].slice(-MAX_EXPANDED) : expanded.filter((item) => item !== key) });
+    },
+    expandAll: (keys) => {
+      const { expanded } = get();
+      const missing = keys.filter((key) => !expanded.includes(key));
+      if (missing.length) update({ expanded: [...expanded, ...missing].slice(-MAX_EXPANDED) });
+    },
+    collapseAll: () => update({ expanded: [] }),
   };
 });
 

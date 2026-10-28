@@ -1,27 +1,29 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type SubmitEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowUp, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, EyeOff, FileWarning, FolderOpen, HardDrive, House, Image, LayoutGrid, List,
-  LoaderCircle, Monitor, Music, PanelRight, RotateCw, Search, SquareArrowOutUpRight, TriangleAlert, Video, X, type LucideIcon,
+  ArrowUp, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, EyeOff, FileWarning, Folder, FolderOpen, HardDrive, LayoutGrid, List,
+  LoaderCircle, Monitor, PanelRight, RotateCw, Search, SquareArrowOutUpRight, TriangleAlert, X,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { DesktopMenu, type MenuEntry } from "../desktop/menu";
+import { SplitView } from "../desktop/split-view";
+import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
   contentUrl, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, readTextPreview, sortEntries, TEXT_PREVIEW_BYTES, useFiles,
-  type Drive, type FileEntry, type Listing, type Location, type Place, type Places, type SortKey,
+  type Drive, type FileEntry, type Listing, type Location, type Places, type SortKey,
 } from "../../lib/files";
 
-const PLACE_ICONS: Record<Place["id"], LucideIcon> = { home: House, desktop: Monitor, documents: FolderOpen, downloads: Download, pictures: Image, music: Music, videos: Video };
 /** 격자 보기에서 섬네일을 그리는 그림 크기 상한. 큰 사진 수천 장이 한꺼번에 내려오지 않게 한다. */
 const THUMB_MAX_BYTES = 24 * 1024 * 1024;
 const optionId = (index: number) => `files-item-${index}`;
 const COLUMNS: { key: SortKey; label: string }[] = [{ key: "name", label: "이름" }, { key: "modified", label: "수정한 날짜" }, { key: "kind", label: "종류" }, { key: "size", label: "크기" }];
 
-type Menu = { entry: FileEntry | null; left: number; top: number };
+/** 본문 항목(entry)·빈 곳(둘 다 없음)·왼쪽 트리 항목(tree)의 오른쪽 클릭 메뉴. */
+type Menu = { entry: FileEntry | null; tree?: TreeTarget; left: number; top: number };
 type Notice = { text: string; tone: "info" | "error"; id: number };
 
 /** Windows 디스크를 둘러보는 파일 탐색기. 서버는 읽기만 하고, 열기·탐색기에서 보기는 운영체제에 넘긴다. */
@@ -40,6 +42,8 @@ export function FilesWindow() {
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<Menu | null>(null);
   const [menuLeaving, setMenuLeaving] = useState(false);
+  // 닫는 트윈이 끝나기 전에 새 메뉴를 열면, 끝난 트윈이 새 메뉴를 닫지 않도록 실제로 닫는 중인지 따로 기억한다.
+  const leavingRef = useRef(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const typeahead = useRef({ text: "", at: 0 });
@@ -67,7 +71,15 @@ export function FilesWindow() {
   const selectedIndex = entries.findIndex((entry) => entry.path === selected);
   const current = selectedIndex >= 0 ? entries[selectedIndex] : null;
   const drives = places.data?.drives ?? [];
+  const favoritePaths = useFiles((state) => state.favorites);
+  const favorites = favoritesOf(favoritePaths, places.data);
+  const favoriteList = favorites.map((favorite) => favorite.path);
+  const isFavorite = (target: string) => favoriteList.some((path) => path.toLowerCase() === target.toLowerCase());
 
+  // 왼쪽 트리는 Windows 탐색기처럼 지금 폴더까지 `이 PC` 아래를 펼친다.
+  useEffect(() => {
+    if (data) useFiles.getState().expandAll(["pc:", ...data.crumbs.slice(0, -1).map((crumb) => `pc:${crumb.path}`)]);
+  }, [data?.path]); // eslint-disable-line react-hooks/exhaustive-deps
   // 위치가 바뀌면 거르기를 지우고, 앞에 있는 창이면 목록에 초점을 둔다.
   useEffect(() => { setQuery(""); }, [location]);
   useEffect(() => {
@@ -108,20 +120,52 @@ export function FilesWindow() {
     document.body.append(link); link.click(); link.remove();
   }
 
-  function openMenu(entry: FileEntry | null, left: number, top: number) {
+  function openMenu(entry: FileEntry | null, left: number, top: number, tree?: TreeTarget) {
     if (entry) select(entry.path);
+    leavingRef.current = false;
     setMenuLeaving(false);
-    setMenu({ entry, left, top });
+    setMenu({ entry, tree, left, top });
   }
   function closeMenu(returnFocus: boolean) {
-    if (!menu || menuLeaving) return;
+    if (!menu || leavingRef.current) return;
+    leavingRef.current = true;
     setMenuLeaving(true);
-    if (returnFocus) listRef.current?.focus({ preventScroll: true });
+    if (!returnFocus) return;
+    // 트리에서 연 메뉴는 트리 항목으로, 본문에서 연 메뉴는 목록으로 초점을 돌려준다.
+    if (menu.tree) (document.querySelector<HTMLElement>(".files-tree [role=treeitem][tabindex='0']"))?.focus({ preventScroll: true });
+    else listRef.current?.focus({ preventScroll: true });
   }
+  const favoriteEntry = (target: string): MenuEntry => (isFavorite(target)
+    ? { kind: "item", id: "unpin", label: "즐겨찾기에서 제거", onSelect: () => { useFiles.getState().removeFavorite(favoriteList.find((path) => path.toLowerCase() === target.toLowerCase())!, favoriteList); say("즐겨찾기에서 뺐습니다."); } }
+    : { kind: "item", id: "pin", label: "즐겨찾기에 추가", onSelect: () => { useFiles.getState().addFavorite(target, favoriteList); say("즐겨찾기에 추가했습니다."); } });
+  const treeEntries = (tree: TreeTarget): MenuEntry[] => {
+    const collapse: MenuEntry = { kind: "item", id: "collapse", label: "모두 접기", onSelect: () => useFiles.getState().collapseAll() };
+    if (tree.kind === "fav-root") return [
+      { kind: "item", id: "reset", label: "기본 즐겨찾기로 되돌리기", disabled: favoritePaths === null, onSelect: () => useFiles.getState().resetFavorites() },
+      { kind: "separator", id: "sep" }, collapse,
+    ];
+    if (tree.kind === "pc-root" || tree.path === null) return [{ kind: "item", id: "open", label: "열기", onSelect: () => go(null) }, { kind: "separator", id: "sep" }, collapse];
+    const target = tree.path;
+    const at = favoriteList.indexOf(target);
+    return [
+      { kind: "item", id: "open", label: "열기", onSelect: () => go(target) },
+      favoriteEntry(target),
+      ...(tree.kind === "favorite" ? [
+        { kind: "item" as const, id: "up", label: "위로 이동", disabled: at <= 0, onSelect: () => useFiles.getState().moveFavorite(target, -1, favoriteList) },
+        { kind: "item" as const, id: "down", label: "아래로 이동", disabled: at < 0 || at >= favoriteList.length - 1, onSelect: () => useFiles.getState().moveFavorite(target, 1, favoriteList) },
+      ] : []),
+      { kind: "separator", id: "sep" },
+      { kind: "item", id: "explorer", label: "탐색기에서 열기", onSelect: () => void system(target, "open") },
+      { kind: "item", id: "copy", label: "경로 복사", onSelect: () => void copyPath(target) },
+      { kind: "separator", id: "sep2" }, collapse,
+    ];
+  };
   const menuEntries = (target: Menu): MenuEntry[] => {
+    if (target.tree) return treeEntries(target.tree);
     const entry = target.entry;
     if (entry) return [
       { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
+      ...(entry.kind === "directory" ? [favoriteEntry(entry.path)] : []),
       { kind: "item", id: "reveal", label: "탐색기에서 보기", onSelect: () => void system(entry.path, "reveal") },
       ...(entry.kind === "file" ? [{ kind: "item" as const, id: "download", label: "내려받기", onSelect: () => download(entry.path) }] : []),
       { kind: "separator", id: "sep" },
@@ -129,7 +173,7 @@ export function FilesWindow() {
     ];
     return [
       { kind: "item", id: "refresh", label: "새로 고침", onSelect: refresh },
-      ...(location !== null ? [{ kind: "item" as const, id: "explorer", label: "탐색기에서 이 폴더 열기", onSelect: () => void system(location, "open") }] : []),
+      ...(location !== null ? [{ kind: "item" as const, id: "explorer", label: "탐색기에서 이 폴더 열기", onSelect: () => void system(location, "open") }, favoriteEntry(location)] : []),
       { kind: "separator", id: "sep" },
       { kind: "radio", id: "list", label: "목록 보기", checked: view === "list", onSelect: () => setView("list") },
       { kind: "radio", id: "grid", label: "아이콘 보기", checked: view === "grid", onSelect: () => setView("grid") },
@@ -219,11 +263,13 @@ export function FilesWindow() {
         <PathBar location={location} listing={data} drives={drives} onGo={(target) => go(target)} />
       </div>
     </WindowTitleBar>}>
-    <div className="files-layout" data-preview={showPreview && location !== null ? "" : undefined}>
-      <Sidebar places={places.data} location={location} error={places.isError ? places.error.message : null} onGo={(target) => go(target)} />
+    <SplitView name="files" label="탐색 창" className="files-layout" defaultWidth={240} minWidth={168} maxWidth={520} minMain={320} side={
+      <FilesTree places={places.data} favorites={favorites} location={location} showHidden={showHidden} error={places.isError ? places.error.message : null}
+        onGo={(target) => go(target)} onMenu={(tree, left, top) => openMenu(null, left, top, tree)} />} main={
+    <div className="files-content">
       <section className="files-main" aria-label="폴더 내용" onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
         {location === null
-          ? <ThisPC places={places.data} loading={places.isPending} onGo={(target) => go(target)} />
+          ? <ThisPC places={places.data} favorites={favorites} loading={places.isPending} onGo={(target) => go(target)} />
           : errorMessage
             ? <div className="files-empty" role="alert"><FileWarning aria-hidden="true" /><strong>이 위치를 열 수 없습니다</strong><span>{errorMessage}</span>
               <div className="files-empty-actions"><Button type="button" size="sm" variant="secondary" onClick={up}><ChevronUp aria-hidden="true" />상위 폴더</Button>
@@ -255,11 +301,11 @@ export function FilesWindow() {
       </section>
       {showPreview && location !== null && <PreviewPane entry={current} folder={data} onOpen={openEntry} onSystem={(target, action) => void system(target, action)}
         onDownload={download} onCopy={(target) => void copyPath(target)} />}
-    </div>
+    </div>} />
     {notice && <div className="files-toast material-toast" role={notice.tone === "error" ? "alert" : "status"} data-tone={notice.tone}><span>{notice.text}</span>
       <Button type="button" variant="ghost" size="icon-xs" aria-label="알림 닫기" onClick={() => setNotice(null)}><X aria-hidden="true" /></Button></div>}
     {menu && <DesktopMenu items={menuEntries(menu)} position={{ left: menu.left, top: Math.min(menu.top, window.innerHeight - 200) }} leaving={menuLeaving}
-      onClose={closeMenu} onExited={() => { setMenu(null); setMenuLeaving(false); }} />}
+      onClose={closeMenu} onExited={() => { if (!leavingRef.current) return; leavingRef.current = false; setMenu(null); setMenuLeaving(false); }} />}
   </Window>;
 }
 
@@ -342,38 +388,18 @@ function PathBar({ location, listing, drives, onGo }: { location: Location; list
   </nav>;
 }
 
-function Sidebar({ places, location, error, onGo }: { places: Places | undefined; location: Location; error: string | null; onGo: (target: Location) => void }) {
-  return <aside className="files-sidebar material-chrome" aria-label="위치 목록">
-    <nav className="files-nav">
-      <p className="files-nav-head">즐겨찾기</p>
-      {(places?.places ?? []).map((place) => {
-        const Icon = PLACE_ICONS[place.id];
-        return <button key={place.id} type="button" className="files-nav-item" aria-current={location === place.path ? "location" : undefined} title={place.path} onClick={() => onGo(place.path)}>
-          <Icon aria-hidden="true" data-place={place.id} /><span>{place.label}</span></button>;
-      })}
-      <p className="files-nav-head">이 PC</p>
-      <button type="button" className="files-nav-item" aria-current={location === null ? "location" : undefined} onClick={() => onGo(null)}>
-        <Monitor aria-hidden="true" data-place="pc" /><span>이 PC</span></button>
-      {(places?.drives ?? []).map((drive) => <button key={drive.path} type="button" className="files-nav-item" aria-current={location === drive.path ? "location" : undefined}
-        title={driveName(drive)} onClick={() => onGo(drive.path)}>
-        <HardDrive aria-hidden="true" data-place="drive" /><span>{driveName(drive)}</span></button>)}
-      {error && <p className="files-nav-error">{error}</p>}
-    </nav>
-  </aside>;
-}
-
 /** 시작 화면: 즐겨찾기 카드와 드라이브 사용량. */
-function ThisPC({ places, loading, onGo }: { places: Places | undefined; loading: boolean; onGo: (target: Location) => void }) {
+function ThisPC({ places, favorites, loading, onGo }: { places: Places | undefined; favorites: Favorite[]; loading: boolean; onGo: (target: Location) => void }) {
   if (loading) return <div className="files-loading" role="status"><LoaderCircle aria-hidden="true" /><span>불러오는 중…</span></div>;
   return <div className="files-home">
     <section aria-labelledby="files-home-places">
       <h3 id="files-home-places">즐겨찾기</h3>
       <ul className="files-place-grid">
-        {(places?.places ?? []).map((place) => {
-          const Icon = PLACE_ICONS[place.id];
-          return <li key={place.id}><button type="button" className="files-place" onClick={() => onGo(place.path)} title={place.path}>
-            <span className="files-place-icon" data-place={place.id}><Icon aria-hidden="true" /></span>
-            <span className="files-place-text"><strong>{place.label}</strong><small>{place.path}</small></span>
+        {favorites.map((favorite) => {
+          const Icon = favorite.place ? PLACE_ICONS[favorite.place] : Folder;
+          return <li key={favorite.path}><button type="button" className="files-place" onClick={() => onGo(favorite.path)} title={favorite.path}>
+            <span className="files-place-icon" data-place={favorite.place ?? "folder"}><Icon aria-hidden="true" /></span>
+            <span className="files-place-text"><strong>{favorite.label}</strong><small>{favorite.path}</small></span>
           </button></li>;
         })}
       </ul>
