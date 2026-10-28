@@ -7,6 +7,8 @@ import legacySchema from "../src/db/migrations/001_init.sql" with { type: "text"
 import v2Schema from "../src/db/migrations/002_init.sql" with { type: "text" };
 import v3Schema from "../src/db/migrations/003_init.sql" with { type: "text" };
 import v4Schema from "../src/db/migrations/004_init.sql" with { type: "text" };
+import v5Schema from "../src/db/migrations/005_init.sql" with { type: "text" };
+import { CalculatorStore } from "../src/calculator/calculator.store";
 import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
 import { SessionService } from "../src/session/session.service";
@@ -147,6 +149,28 @@ describe("Database record migration", () => {
       expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 0 });
       expect(db.query("SELECT count(*) AS n FROM sessions").get()).toEqual({ n: 2 });
     } finally { db.close(); }
+  });
+
+  test("v5 databases gain the calculator history in place and keep sessions and notes", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v5Schema);
+    db.exec("PRAGMA user_version = 5");
+    const at = "2026-10-28T00:00:00.000Z";
+    db.query(`INSERT INTO sessions (id, provider, agent, provider_session_id, working_directory, summary, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run("ses_v5", "openai", "codex", "v5", root, "맥락", at, at);
+    db.query("INSERT INTO notes (id, kind, parent_id, title, body, created_at, updated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("n", "note", null, "메모", "본문", 1, 1, 1);
+    const before = { sessions: db.query("SELECT * FROM sessions").all(), notes: db.query("SELECT * FROM notes").all() };
+    db.close();
+    const writer = openDatabase(loadConfig(dir));
+    try {
+      expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect({ sessions: writer.query("SELECT * FROM sessions").all(), notes: writer.query("SELECT * FROM notes").all() }).toEqual(before);
+      const calculator = new CalculatorStore(writer);
+      expect(calculator.list()).toEqual({ schemaVersion: 1, items: [] });
+      calculator.apply({ action: "add", item: { id: "c1", expression: "1 + 1", result: "2", createdAt: 5 } });
+      expect(calculator.list().items).toEqual([{ id: "c1", expression: "1 + 1", result: "2", createdAt: 5 }]);
+      expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { writer.close(); }
   });
 
   test("v4 databases gain the notes tables in place and keep every session", () => {

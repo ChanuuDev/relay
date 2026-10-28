@@ -15,7 +15,7 @@ describe("File explorer API", () => {
   const memo = "첫 줄\n둘째 줄\n";
   beforeEach(() => {
     f = fixture(); launched = [];
-    const handle = handler(f.service, f.config, undefined, { launch: (target, action, directory) => { launched.push([target, action, directory]); } });
+    const handle = handler(f.service, f.config, { files: { launch: (target, action, directory) => { launched.push([target, action, directory]); } } });
     request = async (url, init = {}) => handle(new Request(`${origin}${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
     disk = realpathSync(f.dir);
     mkdirSync(path.join(disk, "폴더 하나"));

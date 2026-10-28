@@ -1229,3 +1229,76 @@ form.files-path { flex: 1; min-width: 140px; }
   .files-columns, .files-list { --files-grid: minmax(0, 1fr) 68px; }
   .files-columns [data-column="modified"], .files-row [data-column="modified"] { display: none; }
 }
+
+/* ── 계산기 창: 왼쪽 기록 패널(유리) + 오른쪽 표시창·키패드(불투명) ─────────────── */
+.window[data-window="calculator"] { --calc-orange: #ff9500; --calc-orange-hover: #ffa424; }
+.dark .window[data-window="calculator"] { --calc-orange: #ff9f0a; --calc-orange-hover: #ffb340; }
+.window[data-window="calculator"] .window-frame { container: calculator / inline-size; }
+.calculator-body { position: relative; }
+.calc-frame { flex: 1; min-height: 0; display: flex; }
+.calc-layout { flex: 1; min-height: 0; display: flex; }
+/* 기록 패널을 감추거나(넓은 창의 기록 단추), 좁은 창에서 한쪽만 보인다. */
+.calc-layout[data-side="hidden"] #calculator-side, .calc-layout[data-main="hidden"] #calculator-main,
+.calc-layout:is([data-side="hidden"], [data-main="hidden"]) > .split-handle { display: none !important; }
+.calc-layout[data-main="hidden"] #calculator-side { flex: 1 1 auto !important; max-width: none !important; }
+.calc-history-toggle { width: 28px; height: 28px; border-radius: var(--radius-control); color: inherit; }
+.calc-history-toggle svg { width: 15px; height: 15px; }
+.calc-history-toggle[aria-pressed="true"] { background: var(--glass-control-fill); color: var(--primary); }
+
+/* 기록: 날짜별 묶음, 표시창처럼 오른쪽 맞춤의 식(흐리게)과 결과(굵게) */
+.calc-history { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.calc-history-head { display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 8px 0 16px; flex-shrink: 0;
+  font-size: var(--fs-12); font-weight: 600; color: var(--glass-text-muted); }
+.calc-history-head [data-slot="button"] { width: 26px; height: 26px; border-radius: var(--radius-control); color: inherit; }
+.calc-history-head [data-slot="button"] svg { width: 14px; height: 14px; }
+.calc-history-head [data-slot="button"]:disabled { opacity: .3; }
+.calc-history-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
+.calc-day + .calc-day { margin-top: 6px; }
+.calc-day h3 { margin: 0; padding: 6px 10px 4px; font-size: var(--fs-11); font-weight: 600; color: var(--glass-text-muted); }
+.calc-entry { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; width: 100%; padding: 8px 10px; border-radius: 8px; text-align: right;
+  cursor: pointer; transition: background-color .12s ease-out; content-visibility: auto; contain-intrinsic-size: auto 52px; }
+.calc-entry:hover { background: var(--glass-control-fill); }
+.calc-entry:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.calc-entry[data-menu] { box-shadow: inset 0 0 0 2px var(--primary); }
+.calc-entry-expression { max-width: 100%; font-size: var(--fs-12); line-height: 1.4; color: var(--glass-text-muted); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.calc-entry-result { max-width: 100%; font-size: calc(16px * var(--font-scale)); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.calc-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 100%; padding: 24px 16px;
+  text-align: center; font-size: var(--fs-12); line-height: 1.5; color: var(--glass-text-muted); }
+.calc-empty svg { width: 28px; height: 28px; margin-bottom: 6px; opacity: .55; }
+.calc-empty strong { font-size: var(--fs-13); font-weight: 600; color: var(--foreground); }
+.calc-history-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: calc(1em + 17px); padding: 0 14px; flex-shrink: 0;
+  border-top: 1px solid var(--border); font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* 표시창: 위 줄은 미리 보기(= 값) 또는 끝낸 식, 아래 큰 줄은 입력 중인 식 또는 결과. 길면 글자가 작아진다. */
+.calc-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 12px 16px 16px; background: var(--background); outline: none; }
+.calc-display { flex: 1 1 96px; min-height: 76px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; gap: 2px;
+  padding: 0 6px; text-align: right; overflow: hidden; }
+.calc-upper { min-height: 1.45em; max-width: 100%; font-size: calc(15px * var(--font-scale)); line-height: 1.45; color: var(--glass-text-muted);
+  overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.calc-big { display: block; max-width: 100%; font-weight: 400; line-height: 1.12; letter-spacing: -.02em; overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums; transition: font-size .12s ease-out; }
+.calc-display[data-state="error"] .calc-big { color: var(--destructive); letter-spacing: 0; }
+
+/* 키패드: 알약 키 4×5. 숫자는 유리 채움, 기능은 한 단계 짙게, 연산은 주황. 누르는 동안(마우스·키보드) 살짝 줄어든다. */
+.calc-pad { flex: 1 1 300px; min-height: 220px; max-height: 380px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.calc-key { display: grid; place-items: center; min-height: 0; border-radius: var(--radius-control); font-size: 22px; font-weight: 400; color: var(--foreground);
+  background: var(--glass-control-fill); box-shadow: inset 0 0 0 1px var(--glass-control-border); user-select: none; -webkit-user-select: none;
+  font-variant-numeric: tabular-nums; transition: background-color .12s ease-out, color .12s ease-out, transform .08s ease-out, filter .12s ease-out; }
+.calc-key svg { width: 22px; height: 22px; }
+.calc-key:hover { background: var(--glass-control-hover); }
+.calc-key[data-tone="function"] { background: color-mix(in srgb, var(--foreground) 13%, transparent); }
+.calc-key[data-tone="function"]:hover { background: color-mix(in srgb, var(--foreground) 19%, transparent); }
+.calc-key-text { font-size: 17px; font-weight: 500; }
+.calc-key[data-tone="operator"] { font-size: 26px; color: #fff; background: var(--calc-orange); box-shadow: none; }
+.calc-key[data-tone="operator"]:hover { background: var(--calc-orange-hover); }
+/* 고른 연산자(다음 숫자를 기다리는 중)는 색을 뒤집는다. */
+.calc-key[data-tone="operator"][data-active] { color: var(--calc-orange); background: color-mix(in srgb, var(--calc-orange) 14%, var(--background)); box-shadow: inset 0 0 0 2px var(--calc-orange); }
+.calc-key:active, .calc-key[data-pressed] { transform: scale(.94); filter: brightness(.9); }
+.dark .calc-key:active, .dark .calc-key[data-pressed] { filter: brightness(1.25); }
+.calc-key:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* 좁은 창(13px에서 442px): 기록과 계산기는 화면이 한쪽씩 보이고(data-side·data-main), 여백을 줄인다. */
+@container calculator (max-width: 34em) {
+  .calc-main { padding: 8px 12px 12px; }
+  .calc-pad { gap: 8px; }
+}

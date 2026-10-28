@@ -25,7 +25,7 @@ function defaults(W: number, H: number, mobile: boolean): Windows {
   const make = (id: AppId, open: boolean, z: number): Win =>
     ({ ...clampBox(APPS[id].box(W, H), W, H, APPS[id].min), open, minimized: false, maximized: false, z });
   // 가이드가 먼저 z를 받아 세션 창 뒤에 놓인다.
-  return { guide: make("guide", guideOpen, 1), sessions: make("sessions", true, 2), command: make("command", false, 0), notes: make("notes", false, 0), files: make("files", false, 0), settings: make("settings", false, 0), youtube: make("youtube", false, 0) };
+  return { guide: make("guide", guideOpen, 1), sessions: make("sessions", true, 2), command: make("command", false, 0), notes: make("notes", false, 0), files: make("files", false, 0), calculator: make("calculator", false, 0), settings: make("settings", false, 0), youtube: make("youtube", false, 0) };
 }
 
 type Saved = Record<string, Partial<Win>>;

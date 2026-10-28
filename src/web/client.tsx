@@ -16,6 +16,7 @@ import { SettingsWindow } from "./components/apps/settings-window";
 import { YouTubeWindow } from "./components/apps/youtube-window";
 import { NotesWindow } from "./components/apps/notes-window";
 import { FilesWindow } from "./components/apps/files-window";
+import { CalculatorWindow } from "./components/apps/calculator-window";
 import { resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
@@ -211,6 +212,7 @@ function App() {
       <YouTubeWindow />
       <NotesWindow />
       <FilesWindow />
+      <CalculatorWindow copy={copy} />
     </main>
     <Dock />
     {updateReady && <div id="update-status" className="update-toast material-toast" role="status">

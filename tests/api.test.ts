@@ -6,6 +6,7 @@ import { RelayError } from "../src/errors";
 import { fixture, input } from "./helpers";
 import { NoteStore } from "../src/notes/notes.store";
 import { HOOK_SUMMARY } from "../src/session/session.service";
+import { CalculatorStore, MAX_HISTORY } from "../src/calculator/calculator.store";
 
 describe("Local read-only HTTP API", () => {
   let f: ReturnType<typeof fixture>;
@@ -189,7 +190,7 @@ describe("Notes API: the only write the web server accepts", () => {
   });
   const list = async () => (await send("/api/v1/notes")).json() as Promise<{ revision: number; items: Array<Record<string, unknown>> }>;
   beforeEach(() => {
-    f = fixture(); const handle = handler(f.service, f.config, new NoteStore(f.db));
+    f = fixture(); const handle = handler(f.service, f.config, { notes: new NoteStore(f.db) });
     send = async (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
   });
   afterEach(() => f.close());
@@ -293,7 +294,7 @@ describe("Notes API: the only write the web server accepts", () => {
 
     const other = fixture();
     try {
-      const handle = handler(other.service, other.config, new NoteStore(other.db));
+      const handle = handler(other.service, other.config, { notes: new NoteStore(other.db) });
       const to = async (url: string, init: RequestInit = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
       const imported = await importFile(text, {}, to);
       expect(imported.status).toBe(200);
@@ -365,7 +366,7 @@ describe("Session actions API: tidying records from the list", () => {
   });
   const json = async (response: Response | Promise<Response>) => (await response).json();
   beforeEach(() => {
-    f = fixture(); const handle = handler(f.service, f.config, undefined, undefined, f.service);
+    f = fixture(); const handle = handler(f.service, f.config, { writer: f.service });
     send = async (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
   });
   afterEach(() => f.close());
@@ -444,5 +445,86 @@ describe("Session actions API: tidying records from the list", () => {
     expect(response.status).toBe(405); expect(response.headers.get("Allow")).toBe("GET");
     expect((await plain(new Request(`http://127.0.0.1:7474/api/v1/sessions/${id}/actions`, { headers: { host: "127.0.0.1:7474" } }))).status).toBe(404);
     expect(f.service.byId(id).session.endedAt).toBeNull();
+  });
+});
+
+describe("Calculator history API: what = finished, kept in the Relay store", () => {
+  let f: ReturnType<typeof fixture>;
+  let send: (url: string, init?: RequestInit) => Promise<Response>;
+  const origin = "http://127.0.0.1:7474";
+  const path = "/api/v1/calculator/history";
+  const post = (body: unknown, headers: Record<string, string> = {}, query = "") => send(`${path}${query}`, {
+    method: "POST", body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers },
+  });
+  const list = async () => (await (await send(path)).json()) as { schemaVersion: number; items: Array<Record<string, unknown>> };
+  const add = (id: string, createdAt: number, expression = "1 + 1", result = "2") => post({ action: "add", item: { id, expression, result, createdAt } });
+  beforeEach(() => {
+    f = fixture(); const handle = handler(f.service, f.config, { calculator: new CalculatorStore(f.db) });
+    send = async (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+  });
+  afterEach(() => f.close());
+
+  test("adds once per id, lists newest first, deletes one and clears all", async () => {
+    expect(await list()).toEqual({ schemaVersion: 1, items: [] });
+    const first = await add("c-1", 1000, "1,234.5 × 2", "2,469");
+    expect(first.status).toBe(200); expect(await first.json()).toEqual({ schemaVersion: 1, added: true });
+    // 보내지 못해 다시 보낸 같은 계산은 한 번만 남는다.
+    expect(await (await add("c-1", 1000, "1,234.5 × 2", "2,469")).json()).toEqual({ schemaVersion: 1, added: false });
+    await add("c-2", 3000); await add("c-3", 2000);
+    expect((await list()).items).toEqual([
+      { id: "c-2", expression: "1 + 1", result: "2", createdAt: 3000 },
+      { id: "c-3", expression: "1 + 1", result: "2", createdAt: 2000 },
+      { id: "c-1", expression: "1,234.5 × 2", result: "2,469", createdAt: 1000 },
+    ]);
+    expect(await (await post({ action: "delete", id: "c-3" })).json()).toEqual({ schemaVersion: 1, deleted: 1 });
+    expect(await (await post({ action: "delete", id: "c-3" })).json()).toEqual({ schemaVersion: 1, deleted: 0 });
+    expect(await (await post({ action: "clear" })).json()).toEqual({ schemaVersion: 1, deleted: 2 });
+    expect((await list()).items).toEqual([]);
+    // 세션 쪽은 건드리지 않는다.
+    expect(f.service.list().page.total).toBe(0);
+  });
+
+  test("keeps the newest MAX_HISTORY calculations and drops older ones", () => {
+    const store = new CalculatorStore(f.db);
+    for (let i = 0; i < MAX_HISTORY + 3; i++) store.apply({ action: "add", item: { id: `c${i}`, expression: `${i} + 0`, result: String(i), createdAt: i } });
+    const items = store.list().items;
+    expect(items).toHaveLength(MAX_HISTORY);
+    expect(items[0].id).toBe(`c${MAX_HISTORY + 2}`);
+    expect(items.at(-1)!.id).toBe("c3");
+  });
+
+  test("only accepts JSON posted by the same-origin screen and refuses malformed changes without writing", async () => {
+    const good = { action: "add", item: { id: "ok", expression: "2 × 3", result: "6", createdAt: 1 } };
+    const cases: Array<[Record<string, string>, number]> = [
+      [{ origin: "" }, 403], [{ origin: "http://evil.example" }, 403], [{ "sec-fetch-site": "cross-site" }, 403], [{ "sec-fetch-site": "same-site" }, 403],
+      [{ "content-type": "text/plain" }, 415], [{ host: "evil.example:7474" }, 403],
+    ];
+    for (const [headers, status] of cases) expect((await post(good, headers)).status, JSON.stringify(headers)).toBe(status);
+    for (const bad of ["{", "[]", {}, { action: "rename" }, { action: "add" }, { action: "add", item: [] },
+      { action: "add", item: { id: "a b", expression: "1", result: "1" } }, { action: "add", item: { id: "a", expression: "", result: "1" } },
+      { action: "add", item: { id: "a", expression: "1", result: "x".repeat(101) } }, { action: "add", item: { id: "a", expression: "1", result: "1", extra: 1 } },
+      { action: "add", item: { id: "a", expression: "1", result: "1" }, more: 1 }, { action: "delete" }, { action: "delete", id: 5 }, { action: "clear", all: true }]) {
+      const response = await post(bad);
+      expect(response.status, JSON.stringify(bad).slice(0, 80)).toBe(400);
+      expect((await response.json()).error.code).toBe("INVALID_ARGUMENT");
+    }
+    expect((await post(good, {}, "?x=1")).status).toBe(400);
+    expect((await send(`${path}?x=1`)).status).toBe(400);
+    const put = await send(path, { method: "PUT", headers: { origin, "content-type": "application/json" }, body: "{}" });
+    expect(put.status).toBe(405); expect(put.headers.get("Allow")).toBe("GET, POST");
+    expect((await list()).items).toEqual([]);
+    // createdAt이 없거나 틀리면 서버 시각을 쓴다.
+    const before = Date.now();
+    await post({ action: "add", item: { id: "late", expression: "1", result: "1", createdAt: "어제" } });
+    expect((await list()).items[0].createdAt as number).toBeGreaterThanOrEqual(before);
+  });
+
+  test("without a calculator store the screen gets no history route", async () => {
+    const plain = handler(f.service, f.config);
+    expect((await plain(new Request(`http://127.0.0.1:7474${path}`, { headers: { host: "127.0.0.1:7474" } }))).status).toBe(404);
+    const response = await plain(new Request(`http://127.0.0.1:7474${path}`, { method: "POST", body: "{}",
+      headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json" } }));
+    expect(response.status).toBe(405); expect(response.headers.get("Allow")).toBe("GET");
   });
 });
