@@ -58,6 +58,12 @@ test("install-hooks registers Claude, Grok, Codex and Cursor session hooks and t
   expect(claude.hooks.SessionEnd[0].hooks[0].timeout).toBe(10);
   expect(claude.hooks.PreCompact).toHaveLength(1);
   expect(claude.hooks.PreCompact[0].hooks[0].command).toContain("hook claude --compact");
+  // Only Claude Code says when the session changes model; the switch adds the new model to the record's list.
+  expect(claude.hooks.PostModelSwitch).toHaveLength(1);
+  expect(claude.hooks.PostModelSwitch[0]).not.toHaveProperty("matcher");
+  expect(claude.hooks.PostModelSwitch[0].hooks[0].command).toContain("hook claude --model-switch");
+  expect(claude.hooks.PostModelSwitch[0].hooks[0].timeout).toBe(10);
+  expect(claude.hooks.SessionStart[1].hooks[0].command).not.toContain("--model-switch");
 
   const grok = JSON.parse(readFileSync(path.join(home(), ".grok", "hooks", "relay.json"), "utf8"));
   const grokCommand = String(grok.hooks.SessionStart[0].hooks[0].command).toLowerCase();
@@ -80,6 +86,8 @@ test("install-hooks registers Claude, Grok, Codex and Cursor session hooks and t
   const codexCompact = String(codex.hooks.PreCompact[0].hooks[0].command).toLowerCase();
   expect(codexCompact.includes("hook codex --compact") || codexCompact.includes("relay-hook-codex-compact.cmd")).toBe(true);
   expect(codex.hooks.PreCompact[0].hooks[0].statusMessage).toBe("Relay compaction note");
+  expect(codex.hooks).not.toHaveProperty("PostModelSwitch");
+  expect(grok.hooks).not.toHaveProperty("PostModelSwitch");
 
   // Cursor keeps its own file shape: a version, and plain command lists per camelCase event.
   const cursor = JSON.parse(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8"));
@@ -104,6 +112,7 @@ test("install-hooks registers Claude, Grok, Codex and Cursor session hooks and t
   expect(settled.hooks.SessionStart).toHaveLength(2);
   expect(settled.hooks.SessionEnd).toHaveLength(1);
   expect(settled.hooks.PreCompact).toHaveLength(1);
+  expect(settled.hooks.PostModelSwitch).toHaveLength(1);
   const cursorAgain = JSON.parse(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8"));
   expect(cursorAgain.hooks.sessionStart).toHaveLength(1);
   expect(cursorAgain.hooks.preCompact).toHaveLength(1);

@@ -88,6 +88,11 @@ export class SessionRepository {
     this.db.query("UPDATE sessions SET metadata_json = json_set(metadata_json, '$.compaction', json(?)) WHERE id = ?").run(JSON.stringify(value), id);
   }
 
+  /** The models are what the host reported, not context: the record's time of last update and its history stay as they were. */
+  model(id: string, model: string | null) {
+    this.db.query("UPDATE sessions SET model = ? WHERE id = ?").run(model, id);
+  }
+
   reopen(id: string) {
     this.db.query("UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ?").run(id);
   }

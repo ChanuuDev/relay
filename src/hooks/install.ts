@@ -6,17 +6,20 @@ import { GROK_RULE_MARKER, GROK_SESSION_RULE } from "./context";
 
 export type HookChange = "added" | "updated" | "unchanged" | "skipped";
 export type HookHost = "claude" | "grok" | "codex" | "cursor";
-export type HookEvent = "SessionStart" | "SessionEnd" | "PreCompact";
+export type SessionEvent = "SessionStart" | "SessionEnd" | "PreCompact";
+export type HookEvent = SessionEvent | "PostModelSwitch";
 /** The session hooks Relay registers: the first record when a session opens, the close when it ends, and a note when the host compacts its context. */
-export const HOOK_EVENTS: HookEvent[] = ["SessionStart", "SessionEnd", "PreCompact"];
+export const HOOK_EVENTS: SessionEvent[] = ["SessionStart", "SessionEnd", "PreCompact"];
+/** Claude Code also says when the session changes model, so its record lists every model the session ran on. */
+export const CLAUDE_EVENTS: HookEvent[] = [...HOOK_EVENTS, "PostModelSwitch"];
 /** Seconds a host waits for a Relay hook. Codex gives SessionEnd hooks one second by default and allows at most three, so its end hook is registered within that limit. */
 const HOOK_TIMEOUT = 10;
 const CODEX_END_TIMEOUT = 3;
 /** The flag that tells `relay hook` which event fired, and the suffix that tells the wrappers apart. */
-const EVENT_FLAG: Record<HookEvent, string> = { SessionStart: "", SessionEnd: " --end", PreCompact: " --compact" };
-const EVENT_SUFFIX: Record<HookEvent, string> = { SessionStart: "", SessionEnd: "-end", PreCompact: "-compact" };
+const EVENT_FLAG: Record<HookEvent, string> = { SessionStart: "", SessionEnd: " --end", PreCompact: " --compact", PostModelSwitch: " --model-switch" };
+const EVENT_SUFFIX: Record<HookEvent, string> = { SessionStart: "", SessionEnd: "-end", PreCompact: "-compact", PostModelSwitch: "-model-switch" };
 /** Cursor names the same events in camelCase inside `~/.cursor/hooks.json`. */
-export const CURSOR_EVENTS: Record<HookEvent, string> = { SessionStart: "sessionStart", SessionEnd: "sessionEnd", PreCompact: "preCompact" };
+export const CURSOR_EVENTS: Record<SessionEvent, string> = { SessionStart: "sessionStart", SessionEnd: "sessionEnd", PreCompact: "preCompact" };
 /** Hosts whose hook commands go through a `.cmd` wrapper on Windows. */
 export const WRAPPED_HOSTS = ["grok", "codex", "cursor"] as const;
 
@@ -139,15 +142,14 @@ export function wrapperScript(alias: HookHost, event: HookEvent = "SessionStart"
   return `@echo off\r\nif exist "%~dp0relay.exe" (\r\n  "%~dp0relay.exe" hook ${alias}${EVENT_FLAG[event]}\r\n) else (\r\n  echo {}\r\n)\r\n`;
 }
 
-// Every entry names the alias, so the end and compact forms are told apart before the start form is assumed.
+// Every entry names the alias, so the end, compact and model-switch forms are told apart before the start form is assumed.
 function isRelayCommand(command: unknown, alias: string, event: HookEvent) {
   if (typeof command !== "string") return false;
   const normalized = command.replaceAll("\\", "/").toLowerCase();
-  const end = normalized.includes(`hook ${alias} --end`) || normalized.includes(`relay-hook-${alias}-end.cmd`);
-  const compact = normalized.includes(`hook ${alias} --compact`) || normalized.includes(`relay-hook-${alias}-compact.cmd`);
-  if (event === "SessionEnd") return end;
-  if (event === "PreCompact") return compact;
-  return !end && !compact && (normalized.includes(`hook ${alias}`) || normalized.includes(`relay-hook-${alias}.cmd`));
+  const flagged = (other: HookEvent) => normalized.includes(`hook ${alias}${EVENT_FLAG[other]}`) || normalized.includes(`relay-hook-${alias}${EVENT_SUFFIX[other]}.cmd`);
+  const others: HookEvent[] = ["SessionEnd", "PreCompact", "PostModelSwitch"];
+  if (event !== "SessionStart") return flagged(event);
+  return !others.some(flagged) && (normalized.includes(`hook ${alias}`) || normalized.includes(`relay-hook-${alias}.cmd`));
 }
 
 function parseJsonFile(file: string): { missing: true } | { value: Record<string, unknown> } | { error: string } {
@@ -219,7 +221,7 @@ function ensureEvent(doc: HookDoc, event: HookEvent, alias: string, command: str
   return "added";
 }
 
-function ensureCursorEvent(doc: CursorDoc, event: HookEvent, command: string): HookChange {
+function ensureCursorEvent(doc: CursorDoc, event: SessionEvent, command: string): HookChange {
   if (!doc.hooks || Array.isArray(doc.hooks) || typeof doc.hooks !== "object") doc.hooks = {};
   const name = CURSOR_EVENTS[event];
   const list = Array.isArray(doc.hooks[name]) ? doc.hooks[name]! : [];
@@ -233,7 +235,7 @@ function ensureCursorEvent(doc: CursorDoc, event: HookEvent, command: string): H
   return "updated";
 }
 
-type HostCommands = Record<HookEvent, { command: string; extra?: Partial<CommandHook> }>;
+type HostCommands = Partial<Record<HookEvent, { command: string; extra?: Partial<CommandHook> }>>;
 
 const settle = (changes: HookChange[]): HookChange => changes.includes("updated") ? "updated" : changes.includes("added") ? "added" : "unchanged";
 
@@ -243,7 +245,7 @@ function installHostFile(file: string, alias: HookHost, commands: HostCommands):
   if ("error" in parsed) return { host: alias, path: file, status: "skipped", detail: parsed.error };
   const doc = ("missing" in parsed ? {} : parsed.value) as HookDoc;
   const before = JSON.stringify(doc);
-  const status = settle(HOOK_EVENTS.map(event => ensureEvent(doc, event, alias, commands[event].command, commands[event].extra)));
+  const status = settle(Object.entries(commands).map(([event, entry]) => ensureEvent(doc, event as HookEvent, alias, entry.command, entry.extra)));
   if (status === "unchanged" && !("missing" in parsed) && JSON.stringify(doc) === before) {
     return { host: alias, path: file, status };
   }
@@ -261,7 +263,7 @@ function installCursorFile(file: string, commands: HostCommands): HookInstallEnt
   }
   const doc: CursorDoc = { version: 1, ...(existing ?? {}) };
   const before = JSON.stringify(doc);
-  const status = settle(HOOK_EVENTS.map(event => ensureCursorEvent(doc, event, commands[event].command)));
+  const status = settle(HOOK_EVENTS.map(event => ensureCursorEvent(doc, event, commands[event]!.command)));
   if (status === "unchanged" && existing && JSON.stringify(doc) === before) return { host: "cursor", path: file, status };
   writeJson(file, doc);
   return { host: "cursor", path: file, status: existing ? status : "added" };
@@ -283,15 +285,15 @@ export function installHostHooks(options: HookInstallOptions = {}): HookInstallR
         }
       }
     }
-    const commands = (alias: HookHost, extra?: (event: HookEvent) => Partial<CommandHook>) => Object.fromEntries(HOOK_EVENTS.map(event => [event, {
+    const commands = (alias: HookHost, events: HookEvent[] = HOOK_EVENTS, extra?: (event: HookEvent) => Partial<CommandHook>) => Object.fromEntries(events.map(event => [event, {
       command: alias !== "claude" && process.platform === "win32" ? path.join(bin, wrapperName(alias, event)) : hookCommand(executable, alias, event),
       extra: extra?.(event),
     }])) as HostCommands;
     const hosts = [
-      installHostFile(path.join(home, ".claude", "settings.json"), "claude", commands("claude")),
+      installHostFile(path.join(home, ".claude", "settings.json"), "claude", commands("claude", CLAUDE_EVENTS)),
       installHostFile(path.join(grok, "hooks", "relay.json"), "grok", commands("grok")),
       ...codexHomes(options, home).map(dir => installHostFile(path.join(dir, "hooks.json"), "codex",
-        commands("codex", event => ({
+        commands("codex", HOOK_EVENTS, event => ({
           statusMessage: event === "SessionEnd" ? "Relay session end" : event === "PreCompact" ? "Relay compaction note" : "Relay session record",
           timeout: event === "SessionEnd" ? CODEX_END_TIMEOUT : HOOK_TIMEOUT,
         })))),

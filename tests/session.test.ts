@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmdirSync } from "node:fs";
 import path from "node:path";
-import { HOOK_SUMMARY, SessionService } from "../src/session/session.service";
+import { HOOK_SUMMARY, SessionService, withModels } from "../src/session/session.service";
 import type { GitClue } from "../src/session/session.types";
 import { age, fixture, input, root } from "./helpers";
 
@@ -385,6 +385,34 @@ describe("Session Service", () => {
     const updated = service.update("c", "더 진행").session;
     expect(updated.git?.commit).toBe("abc1234"); expect(updated.compaction?.count).toBe(2);
     expect(f.service.compact("c", undefined, "manual").session.git?.commit).toBe("abc1234");
+  });
+
+  test("the models a host reports join one list in the order first seen, without touching the context, the time or the history", () => {
+    expect(withModels(null, [])).toBeNull();
+    expect(withModels(null, ["claude-opus-5-5", "claude-fable-5-1", "claude-opus-5-5"])).toBe("claude-opus-5-5, claude-fable-5-1");
+    expect(withModels("claude-opus-5-5", ["astra-6", "claude-opus-5-5"])).toBe("claude-opus-5-5, astra-6");
+    // Blank names, other values, the separator and control characters never reach the list.
+    expect(withModels(null, ["", "  ", null, 5, "a,b", " gpt-6\n "])).toBe("gpt-6");
+    // A name that would push the list past what a record keeps is left off; the names already there stay.
+    expect(withModels(null, ["x".repeat(150), "y".repeat(60), "z"])).toBe(`${"x".repeat(150)}, z`);
+
+    f.service.record(input("m")); f.service.update("m", "진행");
+    const before = f.service.show("m", undefined, true);
+    expect(f.service.models("m", undefined, ["gpt-6.1-sol"]).session.model).toBe("gpt-6.1-sol");
+    expect(f.service.models("m", "openai", ["gpt-6.1-sol", "gpt-6.1-mini"]).session.model).toBe("gpt-6.1-sol, gpt-6.1-mini");
+    const after = f.service.show("m", undefined, true);
+    expect(after.session.model).toBe("gpt-6.1-sol, gpt-6.1-mini");
+    expect(after.session.updatedAt).toBe(before.session.updatedAt); expect(after.updates).toEqual(before.updates);
+    expect(() => f.service.models("missing", undefined, ["gpt-6"])).toThrow("찾을 수 없습니다");
+    // The hook records the session again on resume without naming a model; the list it gathered is no conflict.
+    expect(f.service.record(input("m")).session.model).toBe("gpt-6.1-sol, gpt-6.1-mini");
+    expect(() => f.service.record(input("m", { model: "other" }))).toThrow("다른 생성 정보");
+    // Taking over adds the model the agent names to the list the hooks gathered instead of replacing it.
+    f.service.record(input("origin", { provider: "anthropic", agent: "claude-code" }));
+    f.service.record(input("taker"));
+    f.service.models("taker", undefined, ["gpt-6.1-sol"]);
+    const linked = f.service.record({ ...input("taker"), model: "gpt-6.1-mini", summary: "이어받음" }, "origin", "anthropic");
+    expect(linked.session.model).toBe("gpt-6.1-sol, gpt-6.1-mini");
   });
 
 });

@@ -20,6 +20,23 @@ export const PROVIDERS = {
 export type ProviderAlias = keyof typeof PROVIDERS;
 export const ALIASES = Object.keys(PROVIDERS) as ProviderAlias[];
 
+/** The longest model list a record keeps; a name that would push past it is left off. */
+const MODELS_LIMIT = 200;
+
+/**
+ * The models a session ran on, as one line in the order they were first seen: `claude-opus-5-5, claude-fable-5-1`.
+ * A name already listed keeps its place; one that is blank, holds the separator or would not fit is left off.
+ */
+export function withModels(current: string | null, added: readonly unknown[]): string | null {
+  const names = current ? current.split(",").map(name => name.trim()).filter(Boolean) : [];
+  for (const value of added) {
+    const name = typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]+/g, "").trim() : "";
+    if (!name || name.includes(",") || names.includes(name) || [...names, name].join(", ").length > MODELS_LIMIT) continue;
+    names.push(name);
+  }
+  return names.length ? names.join(", ") : null;
+}
+
 export type ClueReader = (cwd: string) => GitClue | null;
 
 export interface Change { sessionName?: string; status?: string }
@@ -102,7 +119,8 @@ export class SessionService {
       const cwd = givenCwd ?? directory(parent?.workingDirectory ?? process.cwd(), true);
       const sessionName = input.sessionName === undefined ? parent?.sessionName ?? null : givenName;
       if (existing) {
-        if (existing.agent !== agent || existing.sessionName !== sessionName || existing.model !== model ||
+        // The hooks add models as the session runs, so a record that names none does not differ in them.
+        if (existing.agent !== agent || existing.sessionName !== sessionName || (input.model !== undefined && existing.model !== model) ||
           existing.workingDirectory !== cwd || existing.parentSessionId !== (parent?.id ?? null) ||
           this.repo.firstSummary(existing.id) !== summary) {
           throw new RelayError("SESSION_EXISTS", "같은 제공자·ID로 다른 생성 정보가 이미 저장되어 있습니다.", 4, 409);
@@ -148,7 +166,7 @@ export class SessionService {
     }
     const session: Session = { ...existing, parentSessionId: parent.id,
       sessionName: incoming.input.sessionName === undefined ? existing.sessionName : incoming.name,
-      model: incoming.input.model === undefined ? existing.model : incoming.model,
+      model: withModels(existing.model, [incoming.model]),
       status: incoming.input.status === undefined ? existing.status : incoming.status,
       summary: incoming.summary, updatedAt: new Date().toISOString(), endedAt: null, endReason: null,
       git: this.readClue(existing.workingDirectory) ?? existing.git };
@@ -188,6 +206,19 @@ export class SessionService {
       const compaction = { count: (session.compaction?.count ?? 0) + 1, lastAt: new Date().toISOString(), trigger };
       this.repo.compact(session.id, compaction);
       return { schemaVersion: 1, session: { ...session, compaction } };
+    });
+  }
+
+  /**
+   * Models the host reported for the session join its list in the order they were first seen. Like a
+   * compaction they are not context: the time of last update and the history stay as they were.
+   */
+  models(id: string, provider: string | undefined, reported: readonly unknown[]) {
+    return this.write(() => {
+      const session = this.resolve(id, provider);
+      const model = withModels(session.model, reported);
+      if (model !== session.model) this.repo.model(session.id, model);
+      return { schemaVersion: 1, session: { ...session, model } };
     });
   }
 

@@ -87,9 +87,9 @@ Git 저장소 안에서 `record`·`update`·`continue`를 실행하면 브랜치
 relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식별자> --provider <현재 회사 식별자> --agent <현재 도구 식별자> --session-id <현재 실제 Session ID> --summary <확인한 사실과 이어갈 작업>
 ```
 
-세션 훅이 현재 세션을 기록해 두었든 아니든 같은 `continue`를 그대로 실행한다. 현재 세션 기록이 없으면 `continue`가 부모에 연결된 새 기록을 만들므로, 훅 기록이 없다고 `record`를 먼저 하거나 기다리지 않는다. 부모가 없는 기존 기록이면 출처를 연결하고 준 요약을 이력에 덧붙이며, `--session-name`과 `--model`을 주면 훅이 알 수 없었던 값을 채운다. 만든 시각·도구·프로젝트 경로는 바뀌지 않는다. 이미 같은 부모에 연결돼 있으면 재시도로 보고 아무것도 바꾸지 않으니 이후 맥락은 `update`로 남긴다. 다른 부모에 연결돼 있으면 `PARENT_CONFLICT`이며 임의로 다시 연결하지 않고 사용자에게 알린다.
+세션 훅이 현재 세션을 기록해 두었든 아니든 같은 `continue`를 그대로 실행한다. 현재 세션 기록이 없으면 `continue`가 부모에 연결된 새 기록을 만들므로, 훅 기록이 없다고 `record`를 먼저 하거나 기다리지 않는다. 부모가 없는 기존 기록이면 출처를 연결하고 준 요약을 이력에 덧붙이며, `--session-name`을 주면 훅이 알 수 없었던 이름을 채우고, `--model`은 훅이 모은 모델 목록에 더한다. 만든 시각·도구·프로젝트 경로는 바뀌지 않는다. 이미 같은 부모에 연결돼 있으면 재시도로 보고 아무것도 바꾸지 않으니 이후 맥락은 `update`로 남긴다. 다른 부모에 연결돼 있으면 `PARENT_CONFLICT`이며 임의로 다시 연결하지 않고 사용자에게 알린다.
 
-새 모델을 확실히 알 때만 `--model`을 지정한다. 부모 경로가 사라졌거나 다른 작업 폴더를 명시했다면 확인된 `--cwd`를 사용한다. 이미 있는 기록을 연결할 때 `--cwd`는 무시된다. 필요하면 동일 `--data-dir`을 계속 전달한다. 연결 후에는 현재 Session ID로 의미 있는 작업 단위마다 `relay update`를 실행한다.
+모델은 훅이 채우므로 보통 `--model`을 주지 않으며, 훅이 모를 모델을 확실히 알 때만 지정한다. 부모 경로가 사라졌거나 다른 작업 폴더를 명시했다면 확인된 `--cwd`를 사용한다. 이미 있는 기록을 연결할 때 `--cwd`는 무시된다. 필요하면 동일 `--data-dir`을 계속 전달한다. 연결 후에는 현재 Session ID로 의미 있는 작업 단위마다 `relay update`를 실행한다.
 
 입력 문자열은 인자 배열로 전달하거나 해당 셸에 맞게 인용한다. 저장 결과를 받지 못한 `continue`도 자동 재전송하지 말고 `relay show <ID> --provider <provider> --history --json`으로 먼저 확인한다.
 
@@ -104,11 +104,12 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 
 ## Agent 훅
 
-Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok|cursor>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있고, `SessionEnd` 훅에서 `relay hook <별칭> --end`를 호출하면 종료를 기록하며, `PreCompact` 훅에서 `relay hook <별칭> --compact`를 호출하면 컨텍스트 압축 횟수와 시각을 남긴다. 훅은 다음 규칙을 따른다.
+Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 `relay hook <codex|claude|grok|cursor>`을 호출하면 세션의 첫 기록을 자동으로 남길 수 있고, `SessionEnd` 훅에서 `relay hook <별칭> --end`를 호출하면 종료를 기록하며, `PreCompact` 훅에서 `relay hook <별칭> --compact`를 호출하면 컨텍스트 압축 횟수와 시각을 남긴다. Claude Code의 `PostModelSwitch` 훅은 `relay hook claude --model-switch`로 바꾼 모델을 남긴다. 훅은 다음 규칙을 따른다.
 
 - Codex·Claude Code의 시작 훅은 `hookSpecificOutput.additionalContext`에 기록 안내와 호스트의 실제 세션 ID·provider·agent를 담는다. Cursor의 `sessionStart` 훅은 같은 안내를 `additional_context`로 돌려주며, 세션 ID는 페이로드의 `conversation_id`다. Agent는 첫 작업 전에 스킬을 읽고 기존 기록을 확인하며, 없을 때만 생성하고 이전 작업은 `continue`로 연결한다. 중간 작업도 의미 있는 단위마다 목표·현재 상태·변경 파일·검증 결과·남은 위험이나 다음 작업을 짧게 `update`한다. 스킬을 찾지 못하면 `relay --help`로 확인하고, 기록 실패는 한 줄로 알린 뒤 원래 작업을 계속한다.
 - 호스트가 컨텍스트를 압축한 뒤 세션을 다시 시작하면(`source: compact`) 시작 훅은 첫 기록 안내 대신 기록을 다시 읽고 보완하라는 안내를 돌려준다. `--compact`는 아무 안내도 돌려주지 않고 `session.compaction`만 갱신하며, 요약·갱신 시각·이력은 건드리지 않는다.
 - Grok은 SessionStart 출력을 무시하므로 같은 안내를 `$GROK_HOME/rules/relay-session.md`(기본 `~/.grok/rules/relay-session.md`)에 설치한다. Grok이 세션 시작 때 자동으로 읽는 전역 규칙이며 실제 ID는 현재 호스트의 `GROK_SESSION_ID`를 사용한다. CLI 설치와 `relay install-hooks`가 이 파일을 구성한다. Relay 관리 표시가 있는 사본은 갱신하고, 같은 경로의 사용자 파일이나 링크는 보존한 뒤 `건너뜀`으로 알린다.
+- 모델은 훅이 채운다. 페이로드의 `model`·`to_model`과 `transcript_path` 대화 기록에서 응답한 모델을 처음 쓴 순서대로 `session.model`에 쉼표로 이어 쌓는다(예: `claude-opus-5-5, claude-fable-5-1`). Agent는 모델을 따로 기록하지 않는다.
 - 저장소를 열기 전에 JSON 응답 한 건을 출력한다. 종료 훅·Grok 시작 훅·사용할 수 없는 입력은 `{}`를 반환한다. 저장소 오류, 잘못된 JSON, `relay` 부재가 Agent 세션을 막지 않도록 실패를 조용히 처리한다.
 - 세션 ID는 페이로드의 `session_id`에서 읽고, 없으면 `CLAUDE_CODE_SESSION_ID`·`CODEX_THREAD_ID`·`GROK_SESSION_ID` 환경변수를 쓴다. 임의 ID를 만들지 않는다.
 - 세션 이름은 작업 폴더 이름으로, 요약은 첫 기록임을 나타내는 짧은 문장으로 저장한다. 이후 실제 맥락은 Agent가 `relay update`로 갱신한다.
@@ -131,7 +132,7 @@ Claude Code의 `SessionStart` 훅이나 호스트의 동등한 세션 훅에서 
 }
 ```
 
-`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex·Cursor의 SessionStart·SessionEnd·PreCompact 훅과 Grok 시작 안내를 등록한다. Grok은 `$GROK_HOME/hooks/relay.json`(기본 `~/.grok/hooks/relay.json`), Codex는 `~/.codex/hooks.json`이며 `CODEX_HOME`이 설정된 환경에서는 그 폴더의 `hooks.json`에도 등록한다. Cursor는 `~/.cursor/hooks.json`에 `sessionStart`·`sessionEnd`·`preCompact`로 등록한다. Codex는 SessionEnd 훅에 최대 3초만 허용하므로 Codex 종료 훅은 timeout 3초로 등록한다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
+`relay.exe` 실행과 `relay install-hooks`가 Claude·Grok·Codex·Cursor의 SessionStart·SessionEnd·PreCompact 훅, Claude의 PostModelSwitch 훅과 Grok 시작 안내를 등록한다. Grok은 `$GROK_HOME/hooks/relay.json`(기본 `~/.grok/hooks/relay.json`), Codex는 `~/.codex/hooks.json`이며 `CODEX_HOME`이 설정된 환경에서는 그 폴더의 `hooks.json`에도 등록한다. Cursor는 `~/.cursor/hooks.json`에 `sessionStart`·`sessionEnd`·`preCompact`로 등록한다. Codex는 SessionEnd 훅에 최대 3초만 허용하므로 Codex 종료 훅은 timeout 3초로 등록한다. Codex는 등록 후 `/hooks`에서 시작·종료 항목을 각각 신뢰한다. `relay hook` 호출은 등록을 건너뛴다.
 
 훅은 첫 기록을 자동화하는 편의 장치이며 기록의 전제 조건이 아니다. 훅이 등록되지 않았거나 실행되지 않아 첫 기록이 없으면 Agent가 「현재 세션 기록」 절차대로 `record`하고, 이어받을 때는 `continue`한다.
 

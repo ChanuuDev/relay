@@ -8,6 +8,7 @@ import { errorBody, invalid, RelayError, storageError } from "./errors";
 import { gitClue } from "./git";
 import { SESSION_COMPACT_PROMPT, SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
+import { transcriptModels } from "./hooks/transcript";
 import { NoteStore, parseExport } from "./notes/notes.store";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
@@ -185,10 +186,14 @@ function readExport(file: string): unknown {
   try { return JSON.parse(text); } catch { invalid(`JSON 파일이 아닙니다: ${file}`); }
 }
 
+/** Which hook event fired; none of them means the session started. */
+type HookOptions = { end?: boolean; compact?: boolean; modelSwitch?: boolean };
+
 program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin으로 받아 첫 기록·종료·압축 처리 (${ALIASES.join("/")})`)
   .option("--end", "SessionEnd: 종료 시각·사유를 기록하고, 훅 자동 기록만 남은 세션은 삭제")
   .option("--compact", "PreCompact: 컨텍스트 압축 횟수와 시각을 기록")
-  .action(async (alias: string, options: { end?: boolean; compact?: boolean }, command: Command) => {
+  .option("--model-switch", "PostModelSwitch: 세션이 바꾼 모델을 모델 목록에 추가")
+  .action(async (alias: string, options: HookOptions, command: Command) => {
     // Answer once before opening the store; recording must never block or fail the host session.
     let answered = false;
     try {
@@ -215,9 +220,18 @@ program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin�
       try {
         // The hook has a few seconds at most, so it records without reading the working tree.
         const service = new SessionService(new SessionRepository(db), config.retentionDays);
-        if (options.end) service.end(sessionId, provider, endReason(payload));
-        else if (options.compact) service.compact(sessionId, provider, typeof payload.trigger === "string" ? payload.trigger : undefined);
-        else service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY });
+        // The host knows the model, the agent does not need to say it: the list takes the models the
+        // transcript shows answering, then the one the payload names (Codex·Cursor on every event, Claude Code on a switch).
+        const noteModels = () => {
+          const models = [...transcriptModels(payload.transcript_path), payload.model, payload.to_model];
+          if (models.some(model => typeof model === "string")) service.models(sessionId, provider, models);
+        };
+        const steps = options.modelSwitch ? [noteModels]
+          : options.end ? [() => service.end(sessionId, provider, endReason(payload)), noteModels]
+          : options.compact ? [() => service.compact(sessionId, provider, typeof payload.trigger === "string" ? payload.trigger : undefined), noteModels]
+          : [() => service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY }), noteModels];
+        // Each step stands alone, so a record that cannot be written still gets its models, and the other way round.
+        for (const step of steps) { try { step(); } catch { /* 기록 실패가 세션을 막지 않는다 */ } }
       } finally { db.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
     finally { if (!answered) process.stdout.write("{}\n"); }
@@ -228,9 +242,9 @@ program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin�
  * host starts the session again after compacting its context, the steps to read the record back.
  * Grok ignores SessionStart output and reads the same guidance from its rules file instead.
  */
-function hookOutput(host: ProviderAlias, options: { end?: boolean; compact?: boolean }, payload: Record<string, unknown>,
+function hookOutput(host: ProviderAlias, options: HookOptions, payload: Record<string, unknown>,
   info: { provider: string; agent: string; sessionId: string }): unknown {
-  if (options.end || options.compact || host === "grok") return {};
+  if (options.end || options.compact || options.modelSwitch || host === "grok") return {};
   const compacted = [payload.source, payload.session_source].includes("compact");
   const text = `${compacted ? SESSION_COMPACT_PROMPT : SESSION_START_PROMPT}\n\n현재 호스트가 제공한 세션 정보: ${JSON.stringify(info)}`;
   if (host === "cursor") return { additional_context: text };

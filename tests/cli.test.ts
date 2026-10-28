@@ -420,6 +420,57 @@ describe("CLI processes", () => {
     expect(cli(dir, ["show", "worked"]).data.session.endReason).toBe("logout");
   }, 20000);
 
+  test("hooks fill the model list from the host's payload and transcript, so the agent never has to name it", () => {
+    const hook = (payload: Record<string, unknown>, alias = "claude", ...flags: string[]) => {
+      const result = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", alias, ...flags, "--data-dir", dir],
+        { cwd: root, env: { ...process.env, CLAUDE_CODE_SESSION_ID: undefined, CODEX_THREAD_ID: undefined, GROK_SESSION_ID: undefined },
+          stdin: Buffer.from(JSON.stringify(payload)), stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+      return JSON.parse(result.stdout.toString());
+    };
+    const transcript = path.join(dir, "claude.jsonl");
+    const reply = (model: string, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ parentUuid: null, isSidechain: false, type: "assistant", message: { model, id: "msg", type: "message", role: "assistant", content: [] }, ...extra });
+    const user = JSON.stringify({ type: "user", message: { role: "user", content: 'see {"type":"assistant","model":"quoted-model"}' } });
+    // Claude Code names no model when a session starts, so a fresh session has none yet.
+    hook({ session_id: "claude-m", cwd: root, source: "startup", transcript_path: transcript });
+    expect(cli(dir, ["show", "claude-m"]).data.session.model).toBeNull();
+    writeFileSync(transcript, [user, reply("claude-opus-5-5"), "not json", reply("<synthetic>"),
+      reply("claude-haiku-5-5", { isSidechain: true }), reply("claude-opus-5-5")].join("\n") + "\n");
+    cli(dir, ["update", "--session-id", "claude-m", "--summary", "작업 중"]);
+    const before = cli(dir, ["show", "claude-m", "--history"]).data;
+    // A switch answers with nothing; the list keeps the model that answered so far, then the one switched to.
+    expect(hook({ session_id: "claude-m", cwd: root, transcript_path: transcript, hook_event_name: "PostModelSwitch",
+      from_model: "claude-sonnet-5-5", to_model: "claude-fable-5-1", source: "command" }, "claude", "--model-switch")).toEqual({});
+    const switched = cli(dir, ["show", "claude-m", "--history"]).data;
+    expect(switched.session.model).toBe("claude-opus-5-5, claude-fable-5-1");
+    expect(switched.session.updatedAt).toBe(before.session.updatedAt); expect(switched.updates).toEqual(before.updates);
+    writeFileSync(transcript, readFileSync(transcript, "utf8") + reply("claude-fable-5-1") + "\n" + reply("claude-opus-5-5") + "\n");
+    expect(hook({ session_id: "claude-m", cwd: root, transcript_path: transcript, reason: "prompt_input_exit" }, "claude", "--end")).toEqual({});
+    const ended = cli(dir, ["show", "claude-m"]).data.session;
+    expect(ended.model).toBe("claude-opus-5-5, claude-fable-5-1"); expect(ended.endReason).toBe("prompt_input_exit");
+    // Resuming records the session again without a model; the gathered list is kept and the end no longer holds.
+    hook({ session_id: "claude-m", cwd: root, source: "resume", transcript_path: transcript });
+    const resumed = cli(dir, ["show", "claude-m"]).data.session;
+    expect(resumed.model).toBe("claude-opus-5-5, claude-fable-5-1"); expect(resumed.endedAt).toBeNull();
+    // A switch in a session the store does not know creates nothing.
+    expect(hook({ session_id: "claude-unknown", to_model: "claude-opus-5-5" }, "claude", "--model-switch")).toEqual({});
+    expect(cli(dir, ["show", "claude-unknown"]).code).toBe(3);
+
+    // Codex names its model on every event and in each turn's context.
+    hook({ session_id: "codex-m", cwd: root, source: "startup", model: "gpt-6.1-sol" }, "codex");
+    expect(cli(dir, ["show", "codex-m"]).data.session.model).toBe("gpt-6.1-sol");
+    const rollout = path.join(dir, "rollout.jsonl");
+    writeFileSync(rollout, [{ type: "session_meta", payload: { model: "ignored" } }, { type: "turn_context", payload: { model: "gpt-6.1-sol" } },
+      { type: "turn_context", payload: { model: "gpt-6.1-mini" } }].map(line => JSON.stringify(line)).join("\n"));
+    expect(hook({ session_id: "codex-m", cwd: root, transcript_path: rollout, model: "gpt-6.1-max", trigger: "auto" }, "codex", "--compact")).toEqual({});
+    const codex = cli(dir, ["show", "codex-m"]).data.session;
+    expect(codex.model).toBe("gpt-6.1-sol, gpt-6.1-mini, gpt-6.1-max"); expect(codex.compaction.count).toBe(1);
+    // Cursor names the model in every payload as well.
+    expect(hook({ conversation_id: "cursor-m", workspace_roots: [root], model: "composer-2" }, "cursor")).toHaveProperty("additional_context");
+    expect(cli(dir, ["show", "cursor-m", "--provider", "cursor"]).data.session.model).toBe("composer-2");
+  }, 20000);
+
   test("failed history writes roll back through CLI and error stream", () => {
     cli(dir, record("a")); const db = new Database(path.join(dir, "relay.db"));
     db.exec("CREATE TRIGGER fail BEFORE INSERT ON session_updates BEGIN SELECT RAISE(ABORT, 'injected'); END;"); db.close();

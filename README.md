@@ -32,6 +32,7 @@ Relay는 찾아갈 단서만 전달하고, 내용 파악은 Agent가 실제 프�
 - **자동 첫 기록**: Claude Code, Codex, Grok, Cursor의 SessionStart 훅이 세션 시작 시 식별 정보를 기록합니다.
 - **종료 기록**: SessionEnd 훅이 종료 시각과 사유를 남깁니다. 훅 자동 기록만 남은 채 끝난 세션은 목록만 차지하므로 지웁니다.
 - **압축 대응**: PreCompact 훅이 컨텍스트 압축 횟수와 시각을 남기고, 압축 뒤 다시 시작하는 세션에는 Relay 기록을 다시 읽고 보완하라는 안내를 넣어 줍니다.
+- **모델 기록**: 훅이 도구가 알려 준 모델과 대화 기록에 남은 응답 모델을 세션의 모델 목록에 씁니다. 세션 중에 모델을 바꾸면 `claude-opus-5-5, claude-fable-5-1`처럼 처음 쓴 순서대로 쌓이며, Agent가 따로 기록하지 않아 토큰이 들지 않습니다.
 - **조회**: 출처별 최근 세션, 프로젝트별 조회, 이름·ID·요약·경로 부분 검색을 지원합니다.
 - **세션 연결**: `continue`로 이전 세션과 현재 세션의 부모·자식 관계를 남깁니다.
 - **작업 상태와 고정**: Agent가 `--status`로 남긴 마지막 작업 상태(작업 중·막힘·인계 대기·완료)를 목록·상세·이력에 표시하고 필터합니다. `pin`으로 고정한 세션은 보관 기간과 종료 정리에서 제외됩니다.
@@ -59,6 +60,7 @@ Relay는 찾아갈 단서만 전달하고, 내용 파악은 Agent가 실제 프�
 | **고정** | `relay pin`으로 표시한 세션입니다. 보관 기간 자동 삭제와 훅 종료 정리에서 제외되며 JSON 필드는 `pinned`입니다. |
 | **Git 단서** | CLI로 기록한 시점의 브랜치·짧은 커밋 해시·수정 파일 수입니다. JSON 필드는 `git`이며 저장소 밖이면 `null`입니다. |
 | **압축 기록** | PreCompact 훅이 남기는 컨텍스트 압축 횟수·마지막 시각·계기입니다. JSON 필드는 `compaction`이며, 있으면 압축 전 대화의 세부가 기록에 없을 수 있다는 뜻입니다. |
+| **모델** | 세션이 쓴 모델을 처음 쓴 순서대로 쉼표로 이은 목록입니다(예: `claude-opus-5-5, claude-fable-5-1`). 훅이 채우며 JSON 필드는 `model`입니다. Claude Code는 시작할 때 모델을 알려 주지 않으므로, 모델을 바꾸거나 압축·종료하기 전까지는 `미기록`으로 보일 수 있습니다. |
 
 ## 설치
 
@@ -74,7 +76,7 @@ npm run build
 .\scripts\install-cli.ps1
 ```
 
-설치 스크립트는 `dist\relay.exe`를 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 그 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 네 도구(Claude Code·Codex·Grok·Cursor)의 SessionStart·SessionEnd·PreCompact 훅을 등록하고 `relay install-skills`로 `relay-session` 스킬을 Claude Code·Grok·Codex의 사용자 스킬 폴더에 둡니다. 이미 빌드된 실행 파일이 있다면 설치 스크립트만 실행하면 됩니다.
+설치 스크립트는 `dist\relay.exe`를 `%USERPROFILE%\.local\bin\relay.exe`에 복사하고, 그 폴더를 사용자 PATH에 추가한 뒤 `relay install-hooks`로 네 도구(Claude Code·Codex·Grok·Cursor)의 SessionStart·SessionEnd·PreCompact 훅(Claude Code는 PostModelSwitch 포함)을 등록하고 `relay install-skills`로 `relay-session` 스킬을 Claude Code·Grok·Codex의 사용자 스킬 폴더에 둡니다. 이미 빌드된 실행 파일이 있다면 설치 스크립트만 실행하면 됩니다.
 
 ```powershell
 relay --version
@@ -221,11 +223,11 @@ relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 
 
 ### 시작·종료 훅
 
-`relay install-hooks`가 네 도구의 SessionStart·SessionEnd·PreCompact 훅, 시작 안내와 `relay-session` 스킬을 함께 설치합니다. `install-cli.ps1`도 이 명령을 호출하므로 CLI 설치 때 자동으로 적용됩니다. `relay.exe`를 실행할 때마다 빠진 훅과 Grok 시작 안내를 다시 채웁니다. 기존의 다른 훅은 유지하고, Relay 항목이 이미 있으면 실행 파일 경로와 제한 시간만 맞춥니다.
+`relay install-hooks`가 네 도구의 SessionStart·SessionEnd·PreCompact 훅과 Claude Code의 PostModelSwitch 훅, 시작 안내와 `relay-session` 스킬을 함께 설치합니다. `install-cli.ps1`도 이 명령을 호출하므로 CLI 설치 때 자동으로 적용됩니다. `relay.exe`를 실행할 때마다 빠진 훅과 Grok 시작 안내를 다시 채웁니다. 기존의 다른 훅은 유지하고, Relay 항목이 이미 있으면 실행 파일 경로와 제한 시간만 맞춥니다.
 
 | 도구 | 훅 위치 | 시작 명령 | 종료 명령 | 압축 명령 |
 | --- | --- | --- | --- | --- |
-| Claude Code | 사용자 설정 `hooks.SessionStart` · `SessionEnd` · `PreCompact` | `relay.exe hook claude` | `relay.exe hook claude --end` | `relay.exe hook claude --compact` |
+| Claude Code | 사용자 설정 `hooks.SessionStart` · `SessionEnd` · `PreCompact` · `PostModelSwitch` | `relay.exe hook claude` | `relay.exe hook claude --end` | `relay.exe hook claude --compact` (모델 전환: `relay.exe hook claude --model-switch`) |
 | Codex | `~/.codex/hooks.json` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `relay-hook-codex.cmd` | `relay-hook-codex-end.cmd` | `relay-hook-codex-compact.cmd` |
 | Grok | `$GROK_HOME/hooks/relay.json` (기본 `~/.grok/hooks/relay.json`) | `relay-hook-grok.cmd` | `relay-hook-grok-end.cmd` | `relay-hook-grok-compact.cmd` |
 | Cursor | `~/.cursor/hooks.json`의 `sessionStart` · `sessionEnd` · `preCompact` | `relay-hook-cursor.cmd` | `relay-hook-cursor-end.cmd` | `relay-hook-cursor-compact.cmd` |
@@ -248,6 +250,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 - Codex·Claude Code의 시작 훅은 `hookSpecificOutput.additionalContext`로 위 프로젝트 지침에 해당하는 안내를 Agent에게 전달합니다. 스킬 읽기, `relay --help` 확인, 기존 기록 조회, `continue` 연결, 중간 진행 요약과 실패 시 작업 계속을 안내하며, 호스트가 제공한 실제 세션 ID와 provider/agent도 함께 전달합니다. 시작·재개 시 Agent의 맥락에 추가되는 안내이며 채팅창에 사용자 메시지로 입력되지는 않습니다.
 - Grok은 SessionStart 출력을 무시하므로 같은 안내를 `$GROK_HOME/rules/relay-session.md`(기본 `~/.grok/rules/relay-session.md`)에 설치합니다. Grok이 세션 시작 때 자동으로 읽는 [사용자 전역 규칙](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/12-project-rules.md#rules-directories)이며 실제 ID는 현재 호스트의 `GROK_SESSION_ID`를 사용합니다. 설치 결과에 안내 파일 경로와 상태가 표시됩니다. 반복 등록해도 중복되지 않고, Relay가 관리하는 사본만 갱신합니다. 같은 경로의 사용자 파일이나 링크는 덮어쓰지 않고 `건너뜀`으로 알립니다. 응답 형식과 제한은 [Codex 훅 문서](https://learn.chatgpt.com/docs/hooks#sessionstart), [Claude Code 훅 문서](https://code.claude.com/docs/en/hooks#sessionstart), [Grok 훅 문서](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/10-hooks.md#output-passive-hooks)를 기준으로 합니다.
 - Cursor의 `sessionStart` 훅은 같은 안내를 Cursor가 읽는 `additional_context`로 돌려주고, 세션 ID는 페이로드의 `conversation_id`(Cursor CLI가 `agent --resume`에 쓰는 chat id)를 씁니다. 작업 경로는 `workspace_roots`의 첫 항목입니다. 설정 형식은 [Cursor 훅 문서](https://cursor.com/docs/agent/hooks)를 따릅니다.
+- 모든 훅은 세션의 모델 목록(`model`)도 채웁니다. 페이로드의 `model`(Codex·Cursor는 모든 이벤트에 있음)과 Claude Code `PostModelSwitch`의 `to_model`, 그리고 `transcript_path` 대화 기록에서 실제로 응답한 모델(Claude Code는 본 대화 응답의 `message.model`, Codex는 `turn_context`의 `model`)을 처음 쓴 순서대로 더합니다. 서브에이전트 응답과 Claude Code가 스스로 만든 `<synthetic>` 응답은 빼며, 요약·갱신 시각·이력은 건드리지 않습니다. 모델 전환 훅은 `{}`를 돌려주므로 Agent 맥락에 아무것도 더하지 않습니다.
 - 호스트가 컨텍스트를 압축하면 `PreCompact` 훅이 세션의 `compaction`(횟수·마지막 시각·계기)만 갱신하고 `{}`를 돌려줍니다. Claude Code와 Codex는 압축 뒤 `source: compact`로 시작 훅을 다시 부르는데, 이때는 첫 기록 안내 대신 `relay show --history`로 기록을 다시 읽고 `update`로 보완하라는 안내를 넣습니다. Grok은 같은 안내를 시작 규칙 파일에서 읽습니다.
 - 훅은 저장소를 열기 전에 JSON 응답 한 건을 출력하고 기록을 시도합니다. 종료 훅·압축 훅·Grok 시작 훅·사용할 수 없는 입력은 `{}`를 반환하며, 기록 오류가 도구의 세션을 막지 않습니다.
 - 세션 ID는 페이로드의 `session_id`, `sessionId`, `thread_id`, 그다음 해당 도구의 환경변수 순으로 찾습니다. 다른 도구의 환경변수는 사용하지 않으며, 서브에이전트 페이로드(`agent_id`, `subagentType`, `subagent_type`)는 기록하거나 안내하지 않습니다.
@@ -308,6 +311,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `session.status` / `session.pinned` | Agent가 마지막으로 선언한 작업 상태(`working`·`blocked`·`handoff`·`done`, 없으면 `null`)와 고정 여부. 이력의 `updates[].status`는 각 기록 시점의 상태 |
 | `session.git` | 기록 시점의 `branch`·`commit`·`dirty`(수정 파일 수)·`at`. 저장소 밖이거나 훅 자동 기록이면 `null` |
 | `session.compaction` | PreCompact 훅이 남긴 `count`·`lastAt`·`trigger`(`auto`/`manual`). 압축이 없었으면 `null` |
+| `session.model` | 훅이 모은 모델 목록(처음 쓴 순서, `, `로 구분). 아직 모르면 `null` |
 | `parentSession` / `children` / `childrenPage` | 이어받은 이전 세션과 이 세션을 이어받은 세션들 |
 
 ## 터미널과 브라우저 화면

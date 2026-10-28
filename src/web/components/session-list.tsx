@@ -86,7 +86,7 @@ export function SessionList({ list, selectedId, activeFilters, storeDirectory, c
               <p className="row-summary">{session.summary}</p>
               <div className="compact-meta"><span>{session.agent}</span><span>·</span><span>{projectName(session.workingDirectory)}</span><span>·</span><span>{relativeTime(session.updatedAt)}</span></div>
             </div>
-            <div className="source-column"><strong>{session.agent}</strong><span>{session.model ?? session.provider}</span><span className="project-label" title={session.workingDirectory}><Folder />{projectName(session.workingDirectory)}</span></div>
+            <div className="source-column"><strong>{session.agent}</strong><span title={session.model ?? undefined}>{session.model ?? session.provider}</span><span className="project-label" title={session.workingDirectory}><Folder />{projectName(session.workingDirectory)}</span></div>
             <div className="time-column"><time title={`${timestamp(session.updatedAt)} · ${session.updatedAt}`}>{relativeTime(session.updatedAt)}</time><span>{new Date(session.updatedAt).toLocaleDateString("ko-KR")}</span></div>
             <div className="row-action"><CopyButton value={() => sessionContext(session, { shell: useUI.getState().shell, storeDirectory })} copy={copy} label="세션 컨텍스트 복사" /></div>
           </li>)}</FlipList>
