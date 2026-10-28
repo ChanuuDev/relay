@@ -121,7 +121,7 @@ export function MenuBar({ connection, dark }: { connection: Connection; dark: bo
     </div>
     <div className="menubar-right">
       <div id="connection-state" role="status"><span ref={dotRef} className="connection-dot" data-state={connection} /><span className="connection-text">{CONNECTION_TEXT[connection]}</span></div>
-      <span className="local-label">로컬 · 세션 읽기 전용</span>
+      <span className="local-label">로컬 전용</span>
       <button ref={themeRef} type="button" className="menubar-icon" aria-label={dark ? "라이트 모드로 전환" : "다크 모드로 전환"} onClick={() => setTheme(dark ? "light" : "dark")}>
         {dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
       </button>

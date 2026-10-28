@@ -5,7 +5,7 @@ import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
 import { exportFileName, NoteStore, parseBatch, parseExport } from "../notes/notes.store";
 import { fileResponse, listDirectory, openPath, places, systemLauncher, type Launcher } from "../files/files.service";
-import { api } from "./api";
+import { api, parseAction } from "./api";
 import { assets } from "./assets";
 import { PID_HEADER } from "./control";
 import { checkRequest, checkWrite, MAX_IMPORT_BYTES, playerHeaders, securityHeaders } from "./security";
@@ -17,10 +17,13 @@ export const NOTES_EXPORT_PATH = "/api/v1/notes/export";
 export const NOTES_IMPORT_PATH = "/api/v1/notes/import";
 export const FILES_PATH = "/api/v1/files";
 export const FILES_OPEN_PATH = "/api/v1/files/open";
+/** 목록에서 하는 세션 정리. `:id`는 Relay 내부 ID다. */
+export const SESSION_ACTIONS = /^\/api\/v1\/sessions\/([^/]+)\/actions$/;
 
-/** 세션은 읽기만 한다. 쓰기는 메모 저장(POST /api/v1/notes)과 가져오기(POST /api/v1/notes/import)뿐이고, 메모 저장소(notes)가 있을 때만 열린다.
+/** 세션 조회는 service(읽기 전용 연결)로 한다. 메모 저장소(notes)를 주면 메모 저장(POST /api/v1/notes)과 가져오기(POST /api/v1/notes/import)가,
+ *  쓰기 연결의 세션 서비스(writer)를 주면 목록에서 하는 세션 정리(POST /api/v1/sessions/:id/actions)가 열린다.
  *  파일 탐색기(files)를 주면 로컬 디스크를 읽는 GET /api/v1/files*와, 탐색기·기본 앱으로 넘기는 POST /api/v1/files/open이 열린다. */
-export function handler(service: SessionService, config: Config, notes?: NoteStore, files?: { launch: Launcher }) {
+export function handler(service: SessionService, config: Config, notes?: NoteStore, files?: { launch: Launcher }, writer?: SessionService) {
   // 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
   const pid = { [PID_HEADER]: String(process.pid) };
   const headers = { ...securityHeaders(config.webPort), ...pid };
@@ -76,6 +79,16 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
       return Response.json(openPath(await readBody(request), files!.launch), { headers });
     } catch (error) { return failed(error, "POST"); }
   };
+  /** 작업 상태·고정·종료·종료 취소·삭제. 메모 저장과 같은 쓰기 검사(같은 출처 JSON)를 거친다. */
+  const actOnSession = async (request: Request, encoded: string) => {
+    try {
+      checkWrite(request, config.webPort);
+      if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "세션 정리는 query를 받지 않습니다.");
+      let id: string;
+      try { id = decodeURIComponent(encoded); } catch { throw new RelayError("INVALID_ARGUMENT", "잘못된 URL 인코딩입니다."); }
+      return Response.json(writer!.act(id, parseAction(await readBody(request))), { headers });
+    } catch (error) { return failed(error, "POST"); }
+  };
   /** 파일 탐색기 조회. 디스크 내용이라 다른 사이트(같은 컴퓨터의 다른 포트 포함)가 넣는 요청은 받지 않는다. */
   const readFiles = (request: Request, url: URL): Response => {
     const site = request.headers.get("sec-fetch-site");
@@ -98,11 +111,12 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
       const exportPath = Boolean(notes) && url.pathname === NOTES_EXPORT_PATH;
       const importPath = Boolean(notes) && url.pathname === NOTES_IMPORT_PATH;
       const filesPath = Boolean(files) && (url.pathname === FILES_PATH || url.pathname.startsWith(`${FILES_PATH}/`));
+      const actionPath = Boolean(writer) && SESSION_ACTIONS.test(url.pathname);
       if (notesPath && notes) allow = "GET, POST";
-      if (importPath || (filesPath && url.pathname === FILES_OPEN_PATH)) allow = "POST";
+      if (importPath || actionPath || (filesPath && url.pathname === FILES_OPEN_PATH)) allow = "POST";
       const player = url.pathname === PLAYER_PATH;
       checkRequest(request, config.webPort, { allowCrossSite: player });
-      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", importPath ? "가져오기는 POST만 허용합니다." : "열기는 POST만 허용합니다.", 2, 405);
+      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : actionPath ? "세션 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
       if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? "메모는 GET 조회와 POST 저장만 허용합니다." : "GET 조회만 허용합니다.", 2, 405);
       if (notesPath) return listNotes(request, url);
       if (exportPath) return exportNotes(url);
@@ -121,6 +135,8 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
       if (notes && pathname === NOTES_PATH) return saveNotes(request);
       if (notes && pathname === NOTES_IMPORT_PATH) return importNotes(request);
       if (files && pathname === FILES_OPEN_PATH) return openFile(request);
+      const action = writer ? SESSION_ACTIONS.exec(pathname) : null;
+      if (action) return actOnSession(request, action[1]);
     }
     return read(request);
   };
@@ -128,18 +144,20 @@ export function handler(service: SessionService, config: Config, notes?: NoteSto
 
 export function startServer(config: Config) {
   const db = openDatabase(config, true);
-  // 세션은 읽기 전용 연결로 읽고, 메모만 따로 연 쓰기 연결로 저장한다.
-  const notesDb = openDatabase(config);
+  // 세션은 읽기 전용 연결로 읽고, 쓰기(메모 저장, 목록에서 하는 세션 정리)는 따로 연 쓰기 연결로 한다.
+  const writeDb = openDatabase(config);
   const service = new SessionService(new SessionRepository(db));
+  const writer = new SessionService(new SessionRepository(writeDb), config.retentionDays);
   let server;
   try {
-    server = Bun.serve({ hostname: config.webHost, port: config.webPort, fetch: handler(service, config, new NoteStore(notesDb), { launch: systemLauncher }),
+    server = Bun.serve({ hostname: config.webHost, port: config.webPort,
+      fetch: handler(service, config, new NoteStore(writeDb), { launch: systemLauncher }, writer),
       maxRequestBodySize: MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
-    db.close(); notesDb.close();
+    db.close(); writeDb.close();
     if ((error as { code?: string }).code === "EADDRINUSE") throw new RelayError("PORT_IN_USE", "포트가 사용 중입니다. 기존 서버를 확인하거나 --port를 지정하세요.", 6, 500);
     throw new RelayError("SERVER_START_FAILED", "로컬 서버를 시작할 수 없습니다. 포트와 권한을 확인하세요.", 6, 500);
   }
   let stopped = false;
-  return { server, async stop() { if (!stopped) { stopped = true; await server.stop(false); db.close(); notesDb.close(); } } };
+  return { server, async stop() { if (!stopped) { stopped = true; await server.stop(false); db.close(); writeDb.close(); } } };
 }

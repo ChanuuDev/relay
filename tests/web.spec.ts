@@ -399,3 +399,69 @@ test("connection indicator stays neutral until loaded and reflects offline recov
   await launch();
   await expect(page.locator("#connection-state .connection-dot")).toHaveAttribute("data-state", "online", { timeout: 10000 });
 });
+
+test("the list's right-click menu sets the work state, ends, pins and deletes a session", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", err => errors.push(err.message));
+  const parent = record("tidy-parent", "정리할 작업").session;
+  cli(["continue", "tidy-parent", "--parent-provider", "openai", "--provider", "openai", "--agent", "codex", "--session-id", "tidy-child",
+    "--session-name", "이어받은 작업", "--summary", "이어받음"]);
+  const before = cli(["show", "tidy-parent", "--provider", "openai"]).session.updatedAt;
+  await ready(page);
+  const row = page.locator(`#list-content .session-row[data-flip-id="${parent.id}"]`);
+  const menu = page.getByRole("menu");
+  const notice = page.locator("#session-action-status");
+
+  await row.locator(".row-summary").click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await expect(row).toHaveAttribute("data-menu", "");
+  await expect(menu.getByRole("menuitemradio", { name: "작업 중" })).toBeFocused();
+  await page.screenshot({ path: test.info().outputPath("session-menu.png") });
+  await menu.getByRole("menuitemradio", { name: "완료" }).click();
+  await expect(row.locator(".status-badge")).toHaveText("완료");
+  await expect(notice).toContainText("‘정리할 작업’ 세션을 완료로 표시했습니다.");
+
+  await row.click({ button: "right" });
+  await expect(menu.getByRole("menuitemradio", { name: "완료" })).toHaveAttribute("aria-checked", "true");
+  await menu.getByRole("menuitem", { name: "종료 처리" }).click();
+  await expect(row.locator(".ended-badge")).toBeVisible();
+
+  // 키보드: 행의 링크에서 Shift+F10으로 열고 Esc로 닫으면 초점이 행으로 돌아온다.
+  await row.locator(".session-name").focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem", { name: "종료 취소" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(row.locator(".session-name")).toBeFocused();
+  await page.keyboard.press("Shift+F10");
+  await menu.getByRole("menuitem", { name: "종료 취소" }).click();
+  await expect(row.locator(".ended-badge")).toHaveCount(0);
+  await row.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "고정", exact: true }).click();
+  await expect(row.locator(".pin-mark")).toBeVisible();
+  // 손으로 바꾼 상태·고정·종료는 맥락이 아니라 갱신 시각과 이력이 그대로다(목록 순서도 그대로).
+  expect(cli(["show", "tidy-parent", "--provider", "openai"]).session).toMatchObject({ status: "done", pinned: true, endedAt: null, updatedAt: before });
+
+  // 보고 있던 세션을 지운다. 확인 창은 이어받은 세션을 알리고, 처음 초점은 취소이며 Esc는 취소다.
+  await row.locator(".row-summary").click();
+  await expect(page).toHaveURL(new RegExp(`/sessions/${parent.id}`));
+  await row.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "삭제…" }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("‘정리할 작업’ 기록을 삭제할까요?");
+  await expect(dialog).toContainText("이어받은 세션 1건");
+  await expect(dialog.getByRole("button", { name: "취소" })).toBeFocused();
+  await page.screenshot({ path: test.info().outputPath("session-delete-confirm.png") });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(row.locator(".session-name")).toBeFocused();
+  await row.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "삭제…" }).click();
+  await dialog.getByRole("button", { name: "삭제", exact: true }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page).toHaveURL(`${env.url}/`);
+  await expect(notice).toContainText("‘정리할 작업’ 세션 기록을 삭제했습니다.");
+  await expect(page.locator("#list-content .session-row")).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "이어받은 작업" })).toBeFocused();
+  expect(cli(["show", "tidy-child", "--provider", "openai"]).session.parentSessionId).toBeNull();
+  expect(errors).toEqual([]);
+});

@@ -5,7 +5,7 @@ export type QueryResult<T> = { data: T | undefined; error: Error | null; isPendi
 
 export type BriefSession = Pick<Session, "id" | "provider" | "agent" | "providerSessionId" | "sessionName" | "summary" | "status">;
 export type ListData<T = Session> = { schemaVersion: number; items: T[]; page: Page };
-export type DetailData = { schemaVersion: number; session: Session; parentSession: BriefSession | null };
+export type DetailData = { schemaVersion: number; session: Session; parentSession: BriefSession | null; childrenPage: Page };
 export type ChainData = { schemaVersion: number; sessionId: string; items: ChainNode[]; truncated: boolean };
 export type HealthData = { schemaVersion: number; dataDirectory: string; databasePath: string; appVersion: string; build?: string };
 export type HistoryData = ListData<SessionUpdate>;

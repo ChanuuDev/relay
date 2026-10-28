@@ -5,6 +5,7 @@ import { openDatabase } from "../src/db/database";
 import { RelayError } from "../src/errors";
 import { fixture, input } from "./helpers";
 import { NoteStore } from "../src/notes/notes.store";
+import { HOOK_SUMMARY } from "../src/session/session.service";
 
 describe("Local read-only HTTP API", () => {
   let f: ReturnType<typeof fixture>;
@@ -351,5 +352,97 @@ describe("Notes API: the only write the web server accepts", () => {
     expect(postExport.status).toBe(405); expect(postExport.headers.get("Allow")).toBe("GET");
     expect((await importFile(good, {}, async (url, init) => send(`${url}?x=1`, init))).status).toBe(400);
     expect((await importFile(good)).status).toBe(200);
+  });
+});
+
+describe("Session actions API: tidying records from the list", () => {
+  let f: ReturnType<typeof fixture>;
+  let send: (url: string, init?: RequestInit) => Promise<Response>;
+  const origin = "http://127.0.0.1:7474";
+  const act = (id: string, body: unknown, headers: Record<string, string> = {}, query = "") => send(`/api/v1/sessions/${encodeURIComponent(id)}/actions${query}`, {
+    method: "POST", body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers },
+  });
+  const json = async (response: Response | Promise<Response>) => (await response).json();
+  beforeEach(() => {
+    f = fixture(); const handle = handler(f.service, f.config, undefined, undefined, f.service);
+    send = async (url, init = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+  });
+  afterEach(() => f.close());
+
+  test("sets the work state, pins, ends and reopens without moving the time of last update or the history", async () => {
+    const { id } = f.service.record(input("tidy")).session;
+    const before = f.service.byId(id).session;
+    const status = await act(id, { action: "status", status: "done" });
+    expect(status.status).toBe(200);
+    expect((await status.json()).session.status).toBe("done");
+    expect((await json(act(id, { action: "pin", pinned: true }))).session.pinned).toBe(true);
+    const ended = (await json(act(id, { action: "end" }))).session;
+    expect(ended.endedAt).not.toBeNull(); expect(ended.endReason).toBe("web");
+    // 이미 끝난 세션을 다시 끝내도 종료 시각은 그대로다.
+    expect((await json(act(id, { action: "end" }))).session.endedAt).toBe(ended.endedAt);
+    expect(f.service.byId(id).session).toMatchObject({ status: "done", pinned: true, endedAt: ended.endedAt, endReason: "web",
+      summary: before.summary, updatedAt: before.updatedAt });
+    expect(f.service.updates(id).page.total).toBe(1);
+    expect((await json(act(id, { action: "reopen" }))).session.endedAt).toBeNull();
+    expect(f.service.byId(id).session).toMatchObject({ endedAt: null, endReason: null, updatedAt: before.updatedAt });
+    expect((await json(act(id, { action: "pin", pinned: false }))).session.pinned).toBe(false);
+    expect((await json(act(id, { action: "status", status: "working" }))).session.status).toBe("working");
+    expect(f.service.updates(id).page.total).toBe(1);
+  });
+
+  test("an end set by hand keeps even an untouched automatic record, unlike the host's end hook", async () => {
+    const { id } = f.service.record(input("automatic", { summary: HOOK_SUMMARY })).session;
+    expect((await act(id, { action: "end" })).status).toBe(200);
+    expect(f.service.byId(id).session.endReason).toBe("web");
+  });
+
+  test("deletes; a session others took over from needs force and its children keep their records", async () => {
+    const parent = f.service.record(input("parent")).session;
+    const child = f.service.record(input("child"), "parent").session;
+    const refused = await act(parent.id, { action: "delete" });
+    expect(refused.status).toBe(409); expect((await refused.json()).error.code).toBe("SESSION_LINKED");
+    expect(f.service.list().page.total).toBe(2);
+    const deleted = await act(parent.id, { action: "delete", force: true });
+    expect(deleted.status).toBe(200); expect(await deleted.json()).toMatchObject({ deleted: true, detached: 1, session: { id: parent.id } });
+    expect(f.service.byId(child.id).session.parentSessionId).toBeNull();
+    expect((await act(child.id, { action: "delete", force: false })).status).toBe(200);
+    expect(f.service.list().page.total).toBe(0);
+    const missing = await act(parent.id, { action: "status", status: "done" });
+    expect(missing.status).toBe(404); expect((await missing.json()).error.code).toBe("SESSION_NOT_FOUND");
+  });
+
+  test("only accepts JSON posted by the same-origin screen and refuses malformed actions without writing", async () => {
+    const { id } = f.service.record(input("guarded")).session;
+    const done = { action: "status", status: "done" };
+    const cases: Array<[Record<string, string>, number]> = [
+      [{ origin: "" }, 403], [{ origin: "http://evil.example" }, 403], [{ "sec-fetch-site": "cross-site" }, 403], [{ "sec-fetch-site": "same-site" }, 403],
+      [{ "content-type": "text/plain" }, 415], [{ "content-type": "application/x-www-form-urlencoded" }, 415], [{ host: "evil.example:7474" }, 403],
+    ];
+    for (const [headers, status] of cases) expect((await act(id, done, headers)).status, JSON.stringify(headers)).toBe(status);
+    for (const bad of ["{", "[]", "null", {}, { action: "rename" }, { action: "status" }, { action: "status", status: "finished" }, { action: "status", status: null },
+      { action: "pin" }, { action: "pin", pinned: "yes" }, { action: "end", reason: "x" }, { action: "reopen", force: true }, { action: "delete", force: 1 },
+      { action: "status", status: "done", pinned: true }]) {
+      const response = await act(id, bad);
+      expect(response.status, JSON.stringify(bad)).toBe(400);
+      expect((await response.json()).error.code).toBe("INVALID_ARGUMENT");
+    }
+    expect((await act(id, done, {}, "?x=1")).status).toBe(400);
+    const broken = await send("/api/v1/sessions/%E0%A4%A/actions", { method: "POST", body: JSON.stringify(done),
+      headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin" } });
+    expect(broken.status).toBe(400);
+    const get = await send(`/api/v1/sessions/${id}/actions`);
+    expect(get.status).toBe(405); expect(get.headers.get("Allow")).toBe("POST");
+    expect(f.service.byId(id).session).toMatchObject({ status: null, pinned: false, endedAt: null });
+  });
+
+  test("without a writer the screen gets no tidying route", async () => {
+    const { id } = f.service.record(input("read-only")).session;
+    const plain = handler(f.service, f.config);
+    const response = await plain(new Request(`http://127.0.0.1:7474/api/v1/sessions/${id}/actions`, { method: "POST", body: JSON.stringify({ action: "end" }),
+      headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json" } }));
+    expect(response.status).toBe(405); expect(response.headers.get("Allow")).toBe("GET");
+    expect((await plain(new Request(`http://127.0.0.1:7474/api/v1/sessions/${id}/actions`, { headers: { host: "127.0.0.1:7474" } }))).status).toBe(404);
+    expect(f.service.byId(id).session.endedAt).toBeNull();
   });
 });

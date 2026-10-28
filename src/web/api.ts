@@ -1,7 +1,9 @@
 import type { Config } from "../config";
 import { checkVersion } from "../db/database";
-import { RelayError, storageError } from "../errors";
+import { invalid, RelayError, storageError } from "../errors";
 import type { SessionService } from "../session/session.service";
+import type { SessionAction } from "../session/session.types";
+import { sessionStatus } from "../validation";
 import { version } from "../../package.json";
 import { buildId } from "./assets";
 
@@ -12,6 +14,34 @@ function params(url: URL, allowed: string[]) {
     result[key] = value;
   }
   return result;
+}
+
+/** 목록에서 고른 정리 한 건. 동작마다 받는 키가 정해져 있고 그 밖의 키나 형식은 저장소에 닿기 전에 거절한다. */
+export function parseAction(body: unknown): SessionAction {
+  if (!body || typeof body !== "object" || Array.isArray(body)) invalid("본문은 { action } 객체여야 합니다.");
+  const value = body as Record<string, unknown>;
+  const only = (...keys: string[]) => {
+    for (const key of Object.keys(value)) if (key !== "action" && !keys.includes(key)) invalid(`허용하지 않는 키: ${key}`);
+  };
+  switch (value.action) {
+    case "status":
+      only("status");
+      if (typeof value.status !== "string") invalid("status: working | blocked | handoff | done 중 하나를 입력하세요.");
+      return { action: "status", status: sessionStatus(value.status)! };
+    case "pin":
+      only("pinned");
+      if (typeof value.pinned !== "boolean") invalid("pinned는 true 또는 false여야 합니다.");
+      return { action: "pin", pinned: value.pinned };
+    case "end": case "reopen":
+      only();
+      return { action: value.action };
+    case "delete":
+      only("force");
+      if (value.force !== undefined && typeof value.force !== "boolean") invalid("force는 true 또는 false여야 합니다.");
+      return { action: "delete", force: value.force === true };
+    default:
+      return invalid("action: status | pin | end | reopen | delete 중 하나를 입력하세요.");
+  }
 }
 
 export function api(url: URL, service: SessionService, config: Config): unknown {

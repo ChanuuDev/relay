@@ -245,6 +245,11 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 .menu-check { display: inline-flex; align-items: center; width: 12px; }
 .menu-check svg { width: 12px; height: 12px; }
 .menu-separator { margin: 4px 6px; border-top: 1px solid var(--border); }
+/* 묶음 머리(예: 세션 메뉴의 `작업 상태`). 글자는 항목 글자와 같은 30px에서 시작한다. */
+.menu-label { display: flex; align-items: center; height: 24px; padding: 2px 10px 0 30px; font-size: 11px; font-weight: 600; color: var(--glass-text-muted); }
+/* 되돌릴 수 없는 항목(삭제…)은 빨간 글자, 올리면 빨간 채움 */
+.desktop-menu .menu-item[data-danger] { color: var(--destructive); }
+.menu-item[data-danger]:hover:not(:disabled), .menu-item[data-danger]:focus-visible { background: var(--destructive); color: #fff; }
 
 /* 왼쪽 패널 경계(SplitView, shadcn Resizable): 1px 머리카락 선이고, 양옆 4px까지 잡히며, 올리거나 끌면 파란 막대가 뜬다. */
 .split-view { flex: 1; min-width: 0; min-height: 0; }
@@ -362,6 +367,8 @@ body[data-window-dragging] .window-frame { transition: none; }
 .session-row:hover { background: var(--glass-control-fill); }
 .session-row.selected-row { background: var(--selected); }
 .window:not([data-focused]) .session-row.selected-row { background: var(--selected-inactive); }
+/* 오른쪽 클릭 메뉴가 열린 행: Finder처럼 파란 테두리로 대상을 짚는다. */
+.session-row[data-menu] { box-shadow: inset 0 0 0 2px var(--primary); }
 .selected-row::before, .selected-row + .session-row::before, .session-row:hover::before, .session-row:hover + .session-row::before { border-top-color: transparent; }
 .row-accent { position: absolute; left: 2px; top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: var(--primary);
   transform: scaleY(0); transform-origin: 50% 0; pointer-events: none; }
@@ -854,7 +861,6 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .link-form { display: flex; align-items: center; gap: 6px; width: 320px; }
 .link-form [data-slot="input"] { flex: 1; min-width: 0; height: calc(1em + 13px); }
 .format-menu { min-width: 180px; padding: 4px; }
-.format-menu .menu-item[data-danger]:hover, .format-menu .menu-item[data-danger]:focus-visible { background: var(--destructive); }
 
 /* 아래쪽 입력 창: 창 너비를 그대로 쓰고, 좌우 여백은 경로 줄·서식 도구와 비슷하게만 둔다 */
 .note-scroll { flex: 1; min-height: 0; overflow-y: auto; cursor: text; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
@@ -1170,12 +1176,33 @@ form.files-path { flex: 1; min-width: 140px; }
 .files-preview-actions [data-slot="button"] { justify-content: flex-start; width: 100%; }
 .files-preview-actions svg { width: 14px; height: 14px; }
 
-/* 열기·복사 결과 안내 */
-.files-toast { position: absolute; left: 50%; bottom: 40px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);
+/* 열기·복사 결과 안내(파일 탐색기), 세션 정리 결과 안내(세션 창 상태 줄 위) */
+.sessions-shell { position: relative; }
+.files-toast, .sessions-toast { position: absolute; left: 50%; bottom: 40px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);
   padding: 5px 5px 5px 14px; border-radius: 12px; font-size: var(--fs-12); white-space: nowrap; animation: notes-rise .22s cubic-bezier(.2, .8, .2, 1); }
-.files-toast > span { overflow: hidden; text-overflow: ellipsis; }
-.files-toast[data-tone="error"] > span { color: var(--destructive); }
-.files-toast [data-slot="button"] svg { width: 13px; height: 13px; }
+.files-toast > span, .sessions-toast > span { overflow: hidden; text-overflow: ellipsis; }
+.files-toast[data-tone="error"] > span, .sessions-toast[data-tone="error"] > span { color: var(--destructive); }
+.files-toast [data-slot="button"] svg, .sessions-toast [data-slot="button"] svg { width: 13px; height: 13px; }
+.sessions-toast > svg { width: 14px; height: 14px; color: var(--system-yellow); flex-shrink: 0; }
+
+/* 삭제 확인(Radix AlertDialog): 화면 가운데의 유리 경고창. 처음 초점은 `취소`이고 Esc·바깥 클릭도 취소다. */
+.confirm-overlay { position: fixed; inset: 0; z-index: 95; background: rgb(0 0 0 / .16); animation: confirm-fade .16s ease-out; }
+.confirm-overlay[data-state="closed"] { animation: confirm-fade-out .12s ease-in forwards; }
+.confirm-dialog { position: fixed; left: 50%; top: 50%; z-index: 96; translate: -50% -50%; width: min(304px, calc(100vw - 32px));
+  display: flex; flex-direction: column; align-items: center; padding: 22px 18px 16px; border-radius: 14px; color: var(--foreground); text-align: center;
+  outline: none; animation: confirm-pop .22s cubic-bezier(.2, .8, .2, 1); }
+.confirm-dialog[data-state="closed"] { animation: confirm-drop .12s ease-in forwards; }
+.confirm-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 12px; border-radius: 12px;
+  background: color-mix(in srgb, var(--destructive) 13%, transparent); color: var(--destructive); }
+.confirm-icon svg { width: 22px; height: 22px; }
+.confirm-title { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.confirm-description { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; font-size: var(--fs-12); line-height: 1.55; color: var(--glass-text-muted); }
+.confirm-description p { margin: 0; }
+.confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; margin-top: 18px; }
+@keyframes confirm-fade { from { opacity: 0; } }
+@keyframes confirm-fade-out { to { opacity: 0; } }
+@keyframes confirm-pop { from { opacity: 0; transform: scale(.94); } }
+@keyframes confirm-drop { to { opacity: 0; transform: scale(.97); } }
 
 /* 창 너비: 46em(13px에서 598px) 이하면 경로 줄이 제목 아래로 내려가고 탐색 창을 숨긴다. 34em 이하면 찾기 칸도 숨긴다. */
 @container files (max-width: 46em) {

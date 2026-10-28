@@ -3,10 +3,13 @@ import { checkVersion } from "../db/database";
 import { invalid, RelayError, storageError } from "../errors";
 import { directory, flag, identifier, optionalText, pagination, sessionStatus, text } from "../validation";
 import { SessionRepository } from "./session.repository";
-import { brief, type ChainNode, type Filters, type GitClue, type NewSession, type Session, type SessionStatus } from "./session.types";
+import { brief, type ChainNode, type Filters, type GitClue, type NewSession, type Session, type SessionAction, type SessionStatus } from "./session.types";
 
 /** The note a session hook stores before the agent has said anything about the work. */
 export const HOOK_SUMMARY = "세션 첫 기록 (훅 자동 기록)";
+
+/** The end reason a session closed from the web screen carries, so it reads apart from a host's own close. */
+export const WEB_END_REASON = "web";
 
 /** How many sessions a chain lists before it stops; a store this deep is beyond what anyone reads. */
 export const CHAIN_LIMIT = 200;
@@ -236,16 +239,44 @@ export class SessionService {
    * `force` they hold the record in place, with it they lose only the link.
    */
   delete(id: string, provider?: string, force = false) {
+    return this.write(() => this.erase(this.resolve(id, provider), force));
+  }
+
+  private erase(session: Session, force: boolean) {
+    const children = this.repo.count("WHERE parent_session_id = ?", [session.id]);
+    if (children && !force) {
+      throw new RelayError("SESSION_LINKED", `이어받은 세션 ${children}건이 이 세션에 연결되어 있습니다. --force를 주면 연결을 끊고 삭제합니다.`, 4, 409,
+        { children });
+    }
+    const detached = children ? this.repo.detachChildren(session.id) : 0;
+    this.repo.remove(session.id);
+    return { schemaVersion: 1, session, deleted: true, detached };
+  }
+
+  /**
+   * The web screen tidies the records it lists, naming them by their Relay id. A work state set by hand,
+   * a pin, an end and taking an end back are not context: the time of last update and the history stay
+   * as they were, so the list keeps its order. An end set here keeps the record, unlike the host's end hook.
+   */
+  act(id: string, action: SessionAction) {
     return this.write(() => {
-      const session = this.resolve(id, provider);
-      const children = this.repo.count("WHERE parent_session_id = ?", [session.id]);
-      if (children && !force) {
-        throw new RelayError("SESSION_LINKED", `이어받은 세션 ${children}건이 이 세션에 연결되어 있습니다. --force를 주면 연결을 끊고 삭제합니다.`, 4, 409,
-          { children });
+      const session = this.internal(id);
+      switch (action.action) {
+        case "status":
+          if (session.status !== action.status) this.repo.status(session.id, action.status);
+          return { schemaVersion: 1, session: { ...session, status: action.status } };
+        case "pin":
+          if (session.pinned !== action.pinned) this.repo.pin(session.id, action.pinned);
+          return { schemaVersion: 1, session: { ...session, pinned: action.pinned } };
+        case "end": {
+          if (session.endedAt !== null) return { schemaVersion: 1, session };
+          const ended = { ...session, endedAt: new Date().toISOString(), endReason: WEB_END_REASON };
+          this.repo.end(ended);
+          return { schemaVersion: 1, session: ended };
+        }
+        case "reopen": return { schemaVersion: 1, session: this.reopen(session) };
+        case "delete": return this.erase(session, action.force);
       }
-      const detached = children ? this.repo.detachChildren(session.id) : 0;
-      this.repo.remove(session.id);
-      return { schemaVersion: 1, session, deleted: true, detached };
     });
   }
 

@@ -38,6 +38,13 @@ export interface NewSession {
   provider: string; agent: string; sessionId: string; sessionName?: string;
   model?: string; cwd?: string; summary: string; status?: string;
 }
+/** What the web screen does to a record it lists: set the work state by hand, pin, end or take an end back, delete. */
+export type SessionAction =
+  | { action: "status"; status: SessionStatus }
+  | { action: "pin"; pinned: boolean }
+  | { action: "end" }
+  | { action: "reopen" }
+  | { action: "delete"; force: boolean };
 export interface Filters { provider?: string; agent?: string; cwd?: string; q?: string; status?: string; pinned?: unknown; limit?: unknown; offset?: unknown }
 export type Page = { limit: number; offset: number; total: number };
 /** A session's place in its chain: ancestors first, then the session, then everything that took over from it. */

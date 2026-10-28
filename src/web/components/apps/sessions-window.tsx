@@ -5,6 +5,7 @@ import { WindowTitleBar } from "../desktop/window-title-bar";
 import { FilterChips, FilterControls, SessionFiltersForm } from "../session-filters";
 import { SessionList } from "../session-list";
 import { SessionDetail } from "../session-detail";
+import { useSessionActions } from "../session-actions";
 import { Crossfade } from "../transitions";
 import { SplitView } from "../desktop/split-view";
 import { DetailPlaceholder } from "../context-guide";
@@ -23,6 +24,7 @@ export function SessionsWindow({ list, detail, updates, relations, chain, health
 }) {
   const total = list.data?.page.total;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const actions = useSessionActions({ storeDirectory: health?.dataDirectory, copy });
   return <Window id="sessions" detail={Boolean(selectedId)} bodyClassName="sessions-shell" header={
     <SessionFiltersForm>
       <WindowTitleBar id="sessions" title={<>
@@ -35,7 +37,7 @@ export function SessionsWindow({ list, detail, updates, relations, chain, health
     <div id="workspace" className="sessions-body" tabIndex={-1}>
       <SplitView name="sessions" label="세션 목록" defaultWidth={340} minWidth={260} maxWidth={640} minMain={360} side={
         <SessionList list={list} selectedId={selectedId} activeFilters={activeFilters} listKey={params.toString()}
-          storeDirectory={health?.dataDirectory} copy={copy} onPage={onPage} />} main={
+          storeDirectory={health?.dataDirectory} copy={copy} onPage={onPage} menuId={actions.menuId} onMenu={actions.open} />} main={
         <div className="detail-slot" ref={bodyRef}>
           <Crossfade swapKey={selectedId ?? ""} container={bodyRef} select={DETAIL_SLOT} onEntered={staggerHeader}>
             {selectedId
@@ -50,5 +52,6 @@ export function SessionsWindow({ list, detail, updates, relations, chain, health
       <span className="statusbar-end"><span className="version">RELAY {health?.appVersion ? `v${health.appVersion}` : ""}</span>
         <span>{successAt ? `마지막 성공 조회 ${new Date(successAt).toLocaleTimeString("ko-KR")}` : "마지막 조회 —"} · 3초마다 자동 조회</span></span>
     </footer>
+    {actions.element}
   </Window>;
 }

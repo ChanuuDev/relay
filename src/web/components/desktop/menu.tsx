@@ -7,7 +7,8 @@ import { cn } from "../../lib/utils";
 
 export type MenuEntry =
   | { kind: "separator"; id: string }
-  | { kind: "item" | "radio"; id: string; label: string; checked?: boolean; disabled?: boolean; onSelect: () => void };
+  | { kind: "label"; id: string; label: string }
+  | { kind: "item" | "radio"; id: string; label: string; checked?: boolean; disabled?: boolean; danger?: boolean; onSelect: () => void };
 
 const ITEMS = "[role=menuitem]:not(:disabled), [role=menuitemradio]:not(:disabled)";
 
@@ -45,7 +46,8 @@ export function DesktopMenu({ items, position, leaving, onClose, onExited, class
       style={{ left: Math.max(4, Math.min(position.left, window.innerWidth - 220)), top: position.top }}>
       {items.map((item) => item.kind === "separator"
         ? <div key={item.id} role="separator" className="menu-separator" />
-        : <button key={item.id} type="button" className="menu-item" disabled={item.disabled}
+        : item.kind === "label" ? <div key={item.id} role="presentation" className="menu-label">{item.label}</div>
+        : <button key={item.id} type="button" className="menu-item" disabled={item.disabled} data-danger={item.danger ? "" : undefined}
             role={item.kind === "radio" ? "menuitemradio" : "menuitem"}
             aria-checked={item.kind === "radio" ? Boolean(item.checked) : undefined}
             onClick={() => { item.onSelect(); onClose(true); }}>

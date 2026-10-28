@@ -31,9 +31,11 @@ function ProviderAvatar({ provider, agent }: Pick<Session, "provider" | "agent">
     : <span className="agent-avatar" data-provider={provider} title={provider}>{agent.slice(0, 1).toUpperCase()}</span>;
 }
 
-export function SessionList({ list, selectedId, activeFilters, storeDirectory, copy, onPage, listKey }: {
+export function SessionList({ list, selectedId, activeFilters, storeDirectory, copy, onPage, listKey, menuId, onMenu }: {
   list: QueryResult<ListData>; selectedId?: string; activeFilters: string[]; listKey: string;
   storeDirectory?: string; copy: (value: string) => void; onPage: (offset: number) => void;
+  /** 오른쪽 클릭·`Shift+F10`·메뉴 키로 여는 행 메뉴. menuId는 메뉴가 열린 행이다. */
+  menuId?: string; onMenu?: (session: Session, left: number, top: number) => void;
 }) {
   const panelRef = useRef<HTMLElement>(null);
   const seen = useRef({ key: listKey, rows: new Map<string, string>() });
@@ -76,8 +78,20 @@ export function SessionList({ list, selectedId, activeFilters, storeDirectory, c
             data-flip-id={session.id}
             className={cn("session-row", selectedId === session.id && "selected-row")}
             aria-current={selectedId === session.id ? "true" : undefined}
+            data-menu={menuId === session.id ? "" : undefined}
             onClick={(event) => {
               if (!(event.target as HTMLElement).closest("a,button") && !window.getSelection()?.toString()) navigate(sessionUrl(session.id));
+            }}
+            onContextMenu={(event) => {
+              // 글자를 골라 두었으면 브라우저 메뉴(복사)를 그대로 둔다.
+              if (!onMenu || window.getSelection()?.toString()) return;
+              event.preventDefault(); onMenu(session, event.clientX, event.clientY);
+            }}
+            onKeyDown={(event) => {
+              if (!onMenu || !(event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey))) return;
+              event.preventDefault();
+              const rect = event.currentTarget.getBoundingClientRect();
+              onMenu(session, rect.left + 48, rect.top + 34);
             }}>
             <span className="row-accent" aria-hidden="true" />
             <ProviderAvatar provider={session.provider} agent={session.agent} />

@@ -1,5 +1,5 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import type { Compaction, GitClue, Session, SessionUpdate } from "./session.types";
+import type { Compaction, GitClue, Session, SessionStatus, SessionUpdate } from "./session.types";
 
 const columns = `id, provider, agent, provider_session_id AS providerSessionId,
   session_name AS sessionName, model, working_directory AS workingDirectory,
@@ -77,6 +77,11 @@ export class SessionRepository {
     this.db.query(`UPDATE sessions SET summary = ?, updated_at = ?, ended_at = NULL, end_reason = NULL, status = ?, session_name = ?,
       metadata_json = CASE WHEN ? IS NULL THEN metadata_json ELSE json_set(metadata_json, '$.git', json(?)) END WHERE id = ?`)
       .run(s.summary, s.updatedAt, s.status, s.sessionName, s.git ? 1 : null, JSON.stringify(s.git), s.id);
+  }
+
+  /** A work state set by hand is not context: the record's time of last update and its history stay as they were. */
+  status(id: string, status: SessionStatus) {
+    this.db.query("UPDATE sessions SET status = ? WHERE id = ?").run(status, id);
   }
 
   pin(id: string, pinned: boolean) {
