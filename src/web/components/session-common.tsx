@@ -33,13 +33,14 @@ export function CopyButton({ value, copy, label }: { value: string | (() => stri
     onClick={(event) => { event.stopPropagation(); copy(typeof value === "function" ? value() : value); }}><Copy /></Button></Tip>;
 }
 
-export function ErrorNotice({ id, error }: { id: string; error: Error | null }) {
+/** 조회 오류 알림. `action`은 오류를 푸는 단추(서버 켜기 등)로, 설명 아래에 놓인다. */
+export function ErrorNotice({ id, error, action }: { id: string; error: Error | null; action?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   // B5 알림 등장.
   useGSAP(() => { if (error) enter(ref.current, { y: 6 }); }, { dependencies: [Boolean(error)] });
   if (!error) return null;
   return <Alert ref={ref} variant="destructive" id={id}><CircleAlert /><AlertTitle>조회하지 못했습니다</AlertTitle>
-    <AlertDescription>{error.message}. 마지막 성공 데이터가 있으면 유지하며 자동으로 다시 시도합니다.</AlertDescription></Alert>;
+    <AlertDescription>{error.message}. 마지막 성공 데이터가 있으면 유지하며 자동으로 다시 시도합니다.{action ? <div className="notice-action">{action}</div> : null}</AlertDescription></Alert>;
 }
 
 export function Loading() {

@@ -48,6 +48,17 @@ export function selfCommand(): string[] {
 
 export type Started = { pid: number; already: boolean };
 
+/** 브라우저가 여는 `relay://web?port=7474` 링크. 설치한 화면(PWA)이 서버에 닿지 못하면 이 링크로 백그라운드 서버를 켠다.
+ *  다른 사이트도 이 링크를 열 수 있으므로 포트만 받고(1024–65535), 저장소 같은 경로는 받지 않는다. */
+export function parseLaunchUrl(raw: string): { port: number } {
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new RelayError("INVALID_ARGUMENT", `relay:// 링크가 아닙니다: ${raw}`); }
+  if (url.protocol !== "relay:" || url.host !== "web" || (url.pathname !== "" && url.pathname !== "/")) throw new RelayError("INVALID_ARGUMENT", `지원하지 않는 relay:// 링크입니다: ${raw}`);
+  const port = url.searchParams.has("port") ? Number(url.searchParams.get("port")) : 7474;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new RelayError("INVALID_ARGUMENT", "relay:// 링크의 port는 1024–65535 사이의 숫자여야 합니다.");
+  return { port };
+}
+
 /** 터미널과 분리된 서버를 띄우고 응답할 때까지 기다린다. 이미 Relay가 듣고 있으면 그대로 둔다.
  *  자식은 부모 콘솔에 붙지 않고 표준 입출력도 끊으므로, 터미널을 닫아도 계속 돈다. */
 export async function startDetached(url: string, args: string[], timeoutMs = 10000): Promise<Started> {

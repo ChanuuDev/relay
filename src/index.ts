@@ -21,7 +21,7 @@ import { installSkills } from "./skills/install";
 import { directory } from "./validation";
 import { handoffMarkdown } from "./web/lib/handoff";
 import { sessionCommand } from "./web/lib/session-context";
-import { runningDataDirectory, startDetached, stopServer } from "./web/control";
+import { parseLaunchUrl, runningDataDirectory, startDetached, stopServer } from "./web/control";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
 
@@ -317,6 +317,17 @@ program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C 또�
     const stop = async () => { await running.stop(); process.off("SIGINT", stop); process.off("SIGTERM", stop); };
     process.on("SIGINT", stop); process.on("SIGTERM", stop);
     if (o.open) await openBrowser(url);
+  });
+
+program.command("open-url <url>").description("브라우저가 연 relay:// 링크 처리 (설치 시 Windows에 등록). relay://web?port=7474 → 그 포트에 백그라운드 서버를 켬")
+  .action(async (raw: string, _o, c: Command) => {
+    if (c.optsWithGlobals().json) invalid("open-url은 --json을 지원하지 않습니다.");
+    const { port } = parseLaunchUrl(raw);
+    const config = loadConfig(c.optsWithGlobals().dataDir, String(port));
+    const url = `http://${config.webHost}:${config.webPort}`;
+    const started = await startDetached(url, ["web", "--port", String(config.webPort), "--data-dir", config.dataDirectory]);
+    process.stderr.write(started.already ? `Relay 웹 서버가 이미 실행 중입니다: ${url} (PID ${started.pid})\n` :
+      `Relay ${version}: ${url} (백그라운드 · PID ${started.pid})\n저장소: ${config.databasePath}\n종료: relay web --close\n`);
   });
 
 /** OS 기본 브라우저에는 생성한 루프백 주소만 넘기고, 저장된 세션 텍스트는 절대 넘기지 않는다. */

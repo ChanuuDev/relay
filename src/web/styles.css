@@ -1324,6 +1324,10 @@ form.files-path { flex: 1; min-width: 140px; }
 .hljs-deletion { background: var(--code-del-bg); }
 .hljs-params { color: inherit; }
 
+/* 조회 오류 알림 아래의 해결 단추(서버 켜기) */
+.notice-action { margin-top: 10px; }
+.notice-action [data-slot="button"] svg { width: 13px; height: 13px; }
+
 /* 열기·복사 결과 안내(파일 탐색기·뷰어), 세션 정리 결과 안내(세션 창 상태 줄 위) */
 .sessions-shell { position: relative; }
 .files-toast, .sessions-toast { position: absolute; left: 50%; bottom: 40px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);

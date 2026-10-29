@@ -2,6 +2,8 @@ param(
     [string]$InstallDirectory = (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.local\bin'),
     [string]$ExecutablePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\relay.exe'),
     [switch]$NoPath,
+    [switch]$NoProtocol,
+    [string]$ProtocolKey = 'HKCU:\Software\Classes\relay',
     [switch]$Force
 )
 
@@ -86,6 +88,36 @@ if (-not $NoPath) {
     if (-not (Test-PathEntry $env:Path $installRoot)) { $env:Path = $env:Path.TrimEnd(';') + ';' + $installRoot }
 }
 Write-Output "Installed: $target"
+# The installed app (PWA) opens relay://web?port=N when it cannot reach the server; Windows hands the link to relay.exe, which starts a background server.
+# wscript runs it without a console window; FriendlyAppName makes the browser ask to open "Relay" instead of naming the script host.
+function Register-Protocol([string]$Key, [string]$Executable, [string]$Directory) {
+    $launcher = Join-Path $Directory 'relay-url.vbs'
+    $script = @(
+        "' Relay: hands a relay:// link from the browser to relay.exe without opening a console window.",
+        'If WScript.Arguments.Count < 1 Then WScript.Quit 0',
+        'Dim link: link = WScript.Arguments(0)',
+        'If LCase(Left(link, 8)) <> "relay://" Or InStr(link, """") > 0 Then WScript.Quit 0',
+        ('CreateObject("WScript.Shell").Run """{0}"" open-url """ & link & """", 0, False' -f $Executable)
+    )
+    [IO.File]::WriteAllLines($launcher, $script)
+    $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    $command = if (Test-Path -LiteralPath $wscript) { '"{0}" //B //Nologo "{1}" "%1"' -f $wscript, $launcher } else { '"{0}" open-url "%1"' -f $Executable }
+    foreach ($sub in @('', 'DefaultIcon', 'shell\open\command', 'Application')) {
+        $path = if ($sub) { Join-Path $Key $sub } else { $Key }
+        if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+    }
+    Set-ItemProperty -LiteralPath $Key -Name '(default)' -Value 'URL:Relay'
+    Set-ItemProperty -LiteralPath $Key -Name 'URL Protocol' -Value ''
+    Set-ItemProperty -LiteralPath (Join-Path $Key 'DefaultIcon') -Name '(default)' -Value ('"{0}",0' -f $Executable)
+    Set-ItemProperty -LiteralPath (Join-Path $Key 'shell\open') -Name 'FriendlyAppName' -Value 'Relay'
+    Set-ItemProperty -LiteralPath (Join-Path $Key 'shell\open\command') -Name '(default)' -Value $command
+    Set-ItemProperty -LiteralPath (Join-Path $Key 'Application') -Name 'ApplicationName' -Value 'Relay'
+    return $command
+}
+if (-not $NoProtocol) {
+    try { Write-Output "Protocol registered: relay:// -> $(Register-Protocol $ProtocolKey $target $installRoot)" }
+    catch { Write-Output "Protocol registration skipped: $($_.Exception.Message)" }
+}
 try {
     $hook = & $target install-hooks
     if ($LASTEXITCODE -eq 0) { Write-Output $hook }

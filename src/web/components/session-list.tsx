@@ -1,13 +1,14 @@
 import { useRef } from "react";
 import { useGSAP } from "@gsap/react";
-import { ArrowDown, Folder, Layers } from "lucide-react";
+import { ArrowDown, Folder, Layers, Power } from "lucide-react";
 import type { Session } from "../../session/session.types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { CopyButton, EmptyState, ErrorNotice, Loading, Pager, SessionLink } from "./session-common";
 import { PinMark, StaleBadge, StatusBadge } from "./session-detail";
 import { Crossfade, FlipList } from "./transitions";
-import type { ListData, QueryResult } from "../lib/queries";
+import { ConnectionError, type ListData, type QueryResult } from "../lib/queries";
+import { launchServer } from "../lib/launch";
 import { growAccent, pulse, staggerIn } from "../lib/motion";
 import { navigate, sessionUrl, useUI } from "../lib/store";
 import { endLabel, projectName, relativeTime, timestamp } from "../lib/format";
@@ -70,7 +71,8 @@ export function SessionList({ list, selectedId, activeFilters, storeDirectory, c
 
   return <section className="list-panel material-chrome" aria-label="세션 목록" ref={panelRef}>
     <div className="list-toolbar"><span><Layers />전체 기록</span><span><ArrowDown />최근 갱신순</span></div>
-    <ErrorNotice id="list-error" error={list.error} />
+    <ErrorNotice id="list-error" error={list.error} action={list.error instanceof ConnectionError
+      ? <Button type="button" size="sm" variant="secondary" title="설치한 Relay로 백그라운드 서버를 켭니다" onClick={() => launchServer(true)}><Power aria-hidden="true" />서버 켜기</Button> : null} />
     <Crossfade swapKey={phase} container={panelRef} select="#list-content" from={{ x: 0, y: 0 }}>
       <div id="list-content" aria-busy={list.isPending}>
         {list.isPending ? <Loading /> : list.data ? list.data.items.length ? <>

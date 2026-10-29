@@ -80,9 +80,34 @@ test.skipIf(process.platform !== "win32")("installer replaces a linked skill fol
 
 function installCli(source: string, destination: string, ...extra: string[]) {
   return Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-    path.join(root, "scripts/install-cli.ps1"), "-ExecutablePath", source, "-InstallDirectory", destination, "-NoPath", ...extra],
+    path.join(root, "scripts/install-cli.ps1"), "-ExecutablePath", source, "-InstallDirectory", destination, "-NoPath", "-NoProtocol", ...extra],
     { stdout: "pipe", stderr: "pipe" });
 }
+const powershell = (script: string) => Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "pipe" });
+
+// 설치한 앱이 서버 없이 열렸을 때 relay://web?port=N 링크로 서버를 켤 수 있도록, 설치는 그 프로토콜을 사용자 레지스트리에 등록한다.
+test.skipIf(process.platform !== "win32")("CLI installation registers the relay:// protocol with a windowless launcher that calls relay open-url", () => {
+  const source = path.join(dir, "source.exe"); const destination = path.join(dir, "local bin");
+  const target = path.join(destination, "relay.exe");
+  const key = `HKCU:\\Software\\RelayTest\\${path.basename(dir)}`;
+  writeFileSync(source, "relay test executable");
+  try {
+    const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(root, "scripts/install-cli.ps1"), "-ExecutablePath", source, "-InstallDirectory", destination, "-NoPath", "-ProtocolKey", `${key}\\relay`],
+      { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Protocol registered: relay:// -> ");
+    const read = (sub: string, name: string) => powershell(`(Get-ItemProperty -LiteralPath '${key}\\relay${sub}').'${name}'`).stdout.toString().trim();
+    expect(read("", "URL Protocol")).toBe("");
+    expect(read("", "(default)")).toBe("URL:Relay");
+    expect(read("\\shell\\open", "FriendlyAppName")).toBe("Relay");
+    const command = read("\\shell\\open\\command", "(default)");
+    expect(command).toBe(`"${path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "wscript.exe")}" //B //Nologo "${path.join(destination, "relay-url.vbs")}" "%1"`);
+    const launcher = readFileSync(path.join(destination, "relay-url.vbs"), "utf8");
+    expect(launcher).toContain(`"""${target}"" open-url """ & link & """", 0, False`);
+    expect(launcher).toContain('LCase(Left(link, 8)) <> "relay://"');
+  } finally { powershell(`Remove-Item -LiteralPath '${key}' -Recurse -Force -ErrorAction SilentlyContinue`); }
+}, 15000);
 
 test.skipIf(process.platform !== "win32")("CLI installation preserves an existing binary unless replacement is explicit", () => {
   const source = path.join(dir, "source.exe"); const destination = path.join(dir, "local bin");
@@ -125,7 +150,7 @@ test.skipIf(process.platform !== "win32" || !existsSync(built))("CLI installatio
   expect(before).toBeGreaterThan(0);
   try {
     const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-      path.join(root, "scripts/install-cli.ps1"), "-ExecutablePath", built, "-InstallDirectory", destination, "-NoPath", "-Force"],
+      path.join(root, "scripts/install-cli.ps1"), "-ExecutablePath", built, "-InstallDirectory", destination, "-NoPath", "-NoProtocol", "-Force"],
       { env, stdout: "pipe", stderr: "pipe", timeout: 60000 });
     const output = result.stdout.toString();
     expect(result.exitCode).toBe(0);

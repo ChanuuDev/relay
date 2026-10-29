@@ -598,6 +598,25 @@ describe("web server control", () => {
     expect((await health())?.status).toBe(200);
   }, 30000);
 
+  test("open-url starts a background server for a relay://web link and rejects every other link", async () => {
+    const started = plain(["open-url", `relay://web?port=${port}`]);
+    expect(started.code).toBe(0); expect(started.stdout).toBe("");
+    expect(started.stderr).toContain(`${url()} (백그라운드`); expect(started.stderr).toContain("relay web --close");
+    const response = await health();
+    expect(response?.status).toBe(200);
+    const pid = Number(response!.headers.get("Relay-Pid"));
+    expect(pid).toBeGreaterThan(0); expect(started.stderr).toContain(`PID ${pid}`);
+    const again = plain(["open-url", `relay://web/?port=${port}`]);
+    expect(again.code).toBe(0); expect(again.stderr).toContain("이미 실행 중"); expect(again.stderr).toContain(`PID ${pid}`);
+    expect(plain(["web", "--close", "--port", String(port)]).code).toBe(0);
+    // 다른 사이트도 relay:// 링크를 열 수 있으므로 web 호스트와 포트 범위 밖은 모두 거절한다.
+    for (const bad of ["relay://evil?port=7474", `http://127.0.0.1:${port}/`, "relay://web?port=80", "relay://web?port=abc", "relay://web/x", "not a url"]) {
+      const result = plain(["open-url", bad]);
+      expect(result.code, bad).toBe(2); expect(result.stderr, bad).toStartWith("INVALID_ARGUMENT:");
+    }
+    expect(await health()).toBeNull();
+  }, 30000);
+
   test("--close leaves a foreign server alone and option conflicts fail before anything runs", async () => {
     const foreign = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response("other") });
     try {

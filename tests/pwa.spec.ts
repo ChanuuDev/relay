@@ -88,7 +88,11 @@ test("서버가 꺼져도 설치한 앱 화면이 열리고, 서버를 켜면 �
   await expect(page.locator("#connection-state .connection-dot")).toHaveAttribute("data-state", "offline", { timeout: 10000 });
   await expect(page.locator(".menubar")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Dock" })).toBeVisible();
-  await expect(page.locator("#list-error")).toContainText(`Relay 서버에 연결할 수 없습니다. 터미널에서 relay web --headless --port ${env.port}로 서버를 켜세요`);
+  await expect(page.locator("#list-error")).toContainText("Relay 서버에 연결할 수 없습니다. 설치한 Relay를 자동으로 켜는 중입니다(브라우저가 물으면 열기)");
+  await expect(page.locator("#list-error")).toContainText(`터미널에서 relay web --headless --port ${env.port}로 서버를 켜세요`);
+  // 화면은 Windows에 등록한 relay:// 링크로 설치한 relay에게 서버를 켜 달라고 한다. 외부 프로토콜이라 화면은 그대로 남는다.
+  await expect(page.locator("html")).toHaveAttribute("data-server-launch", `relay://web?port=${env.port}`);
+  await expect(page.locator("#list-error").getByRole("button", { name: "서버 켜기" })).toBeVisible();
   expect(await page.evaluate(() => document.fonts.check('13px "Pretendard Variable"'))).toBe(true);
   await page.waitForTimeout(400);
   await page.screenshot({ path: test.info().outputPath("offline-shell.png") });
