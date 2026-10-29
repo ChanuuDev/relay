@@ -11,6 +11,39 @@
   font-display: swap;
   src: local("Pretendard Variable"), url("/fonts/PretendardVariable.woff2") format("woff2-variations");
 }
+/* 코드 글꼴: JetBrains Mono(OFL). 라틴·라틴 확장만 담고 한글은 Pretendard로 떨어진다. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-latin.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 100 800;
+  font-style: italic;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-latin-italic.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-latin-ext.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 100 800;
+  font-style: italic;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-latin-ext-italic.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
 
 /* macOS 데스크톱 셸 토큰. 라이트가 :root, 다크가 .dark. 결정 근거는 DESIGN-IMPLEMENTATION.md. */
 :root {
@@ -110,7 +143,7 @@
   --color-ring: var(--ring); --color-link: var(--link);
   --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px;
   --font-sans: "Pretendard Variable", Pretendard, -apple-system, "SF Pro Text", "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
-  --font-mono: "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
   /* shadcn 프리미티브의 text-* 유틸리티도 글자 크기 설정을 따른다. 13px에서는 Tailwind 기본값과 같다. */
   --text-xs: calc(12px * var(--font-scale)); --text-sm: calc(14px * var(--font-scale)); --text-base: calc(16px * var(--font-scale)); --text-lg: calc(18px * var(--font-scale));
 }

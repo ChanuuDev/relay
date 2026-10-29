@@ -27,6 +27,10 @@ import iconAnthropic from "./public/icons/providers/anthropic.png" with { type: 
 import iconXAI from "./public/icons/providers/xai.png" with { type: "file" };
 import iconCursor from "./public/icons/providers/cursor.png" with { type: "file" };
 import pretendard from "./public/fonts/PretendardVariable.woff2" with { type: "file" };
+import monoLatin from "./public/fonts/JetBrainsMono-latin.woff2" with { type: "file" };
+import monoLatinItalic from "./public/fonts/JetBrainsMono-latin-italic.woff2" with { type: "file" };
+import monoLatinExt from "./public/fonts/JetBrainsMono-latin-ext.woff2" with { type: "file" };
+import monoLatinExtItalic from "./public/fonts/JetBrainsMono-latin-ext-italic.woff2" with { type: "file" };
 
 // 텍스트 자산은 문자열로, 이미지 자산은 실행 파일에 포함된 파일 경로로 둔다.
 export type Asset = { body: string; type: string } | { file: string; type: string; cache: string };
@@ -70,4 +74,9 @@ export const assets = new Map<string, Asset>([
   ["/icons/providers/xai.png", image(iconXAI, "image/png")],
   ["/icons/providers/cursor.png", image(iconCursor, "image/png")],
   ["/fonts/PretendardVariable.woff2", { file: pretendard, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
+  // 코드 글꼴(JetBrains Mono, 가변 굵기). 라틴·라틴 확장, 정체·이탤릭.
+  ["/fonts/JetBrainsMono-latin.woff2", { file: monoLatin, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
+  ["/fonts/JetBrainsMono-latin-italic.woff2", { file: monoLatinItalic, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
+  ["/fonts/JetBrainsMono-latin-ext.woff2", { file: monoLatinExt, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
+  ["/fonts/JetBrainsMono-latin-ext-italic.woff2", { file: monoLatinExtItalic, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
 ]);

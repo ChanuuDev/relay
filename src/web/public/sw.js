@@ -2,6 +2,7 @@
    항상 서버 응답을 먼저 쓰고(network-first) 응답이 없을 때만 보관본을 꺼낸다. 세션 데이터(/api/)는 보관하지 않는다. */
 const CACHE = "relay-shell-v1";
 const SHELL = ["/", "/app.js", "/style.css", "/theme.js", "/icon.svg", "/manifest.webmanifest", "/fonts/PretendardVariable.woff2",
+  "/fonts/JetBrainsMono-latin.woff2", "/fonts/JetBrainsMono-latin-italic.woff2", "/fonts/JetBrainsMono-latin-ext.woff2", "/fonts/JetBrainsMono-latin-ext-italic.woff2",
   "/wallpaper-dark.jpg", "/wallpaper-light.jpg", "/icons/app-192.png", "/icons/sessions.png", "/icons/guide.png", "/icons/command.png", "/icons/settings.png", "/icons/youtube.png", "/icons/notes.png", "/icons/files.png", "/icons/viewer.png", "/icons/calculator.png"];
 /** 목록과 세션 상세 주소는 같은 HTML을 받는다. 그 밖의 주소는 보관본으로 대신하지 않는다. */
 const APP_ROUTE = /^\/(?:sessions\/[^/]+)?$/;
