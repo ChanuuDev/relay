@@ -25,7 +25,7 @@ export const startCommand = () => `relay web --headless${location.port && locati
 export class ConnectionError extends Error {
   constructor(cause: unknown) {
     const auto = /Win/i.test(navigator.platform);
-    super(auto ? `Relay 서버에 연결할 수 없습니다. 설치한 Relay를 자동으로 켜는 중입니다(브라우저가 물으면 열기). 켜지지 않으면 터미널에서 ${startCommand()}로 서버를 켜세요`
+    super(auto ? `Relay 서버에 연결할 수 없습니다. 설치한 Relay를 자동으로 켜는 중입니다. 처음이면 아래 서버 켜기를 누르고 브라우저 확인 창에서 항상 허용에 표시한 뒤 열기를 누르세요. 그래도 켜지지 않으면 터미널에서 ${startCommand()}로 서버를 켜세요`
       : `Relay 서버에 연결할 수 없습니다. 터미널에서 ${startCommand()}로 서버를 켜세요`, { cause });
     this.name = "ConnectionError";
   }

@@ -19,7 +19,7 @@ import { FilesWindow } from "./components/apps/files-window";
 import { ViewerWindow } from "./components/apps/viewer-window";
 import { CalculatorWindow } from "./components/apps/calculator-window";
 import { ConnectionError, resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
-import { autoLaunchServer } from "./lib/launch";
+import { AUTO_LAUNCH_INTERVAL, autoLaunchServer } from "./lib/launch";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
 import { enter, enterToast, exit, exitToast } from "./lib/motion";
@@ -155,8 +155,14 @@ function App() {
     return () => document.removeEventListener("visibilitychange", hidden);
   }, [serverBuild]);
   // 설치한 앱을 서버 없이 열었으면(보관본 화면) Windows에 등록한 relay:// 링크로 백그라운드 서버를 켠다. 서버가 뜨면 3초 폴링이 스스로 다시 잇는다.
+  // 브라우저는 처음엔 사용자 조작 없이 외부 링크를 열지 않으므로, 그때는 `서버 켜기`를 눌러 `항상 허용`을 고른 뒤부터 자동으로 켜진다. 끊긴 동안은 1분마다 다시 시도한다.
   const unreachable = connection === "offline" && health.error instanceof ConnectionError;
-  useEffect(() => { if (unreachable) autoLaunchServer(); }, [unreachable]);
+  useEffect(() => {
+    if (!unreachable) return;
+    autoLaunchServer();
+    const timer = setInterval(autoLaunchServer, AUTO_LAUNCH_INTERVAL);
+    return () => clearInterval(timer);
+  }, [unreachable]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToastLeaving(true), 3000);

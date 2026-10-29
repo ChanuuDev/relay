@@ -5,7 +5,7 @@ export const serverLaunchUrl = () => `relay://web?port=${location.port || "7474"
 /** 등록은 설치 스크립트가 Windows에만 한다. 다른 OS에서는 자동으로 열지 않고 단추로만 연다. */
 export const canAutoLaunch = () => /Win/i.test(navigator.platform);
 /** 자동 시도 사이의 최소 간격. 브라우저 확인 창이 되풀이해 뜨지 않게 한다. */
-const AUTO_INTERVAL = 60_000;
+export const AUTO_LAUNCH_INTERVAL = 60_000;
 let lastAuto = 0;
 
 export type Launch = { url: string; at: number; manual: boolean };
@@ -21,7 +21,7 @@ export function launchServer(manual: boolean) {
 
 /** 서버에 닿지 못한 화면이 스스로 서버를 켠다. 가려진 탭이거나 방금 시도했으면 건너뛴다. */
 export function autoLaunchServer(): boolean {
-  if (!canAutoLaunch() || document.hidden || Date.now() - lastAuto < AUTO_INTERVAL) return false;
+  if (!canAutoLaunch() || document.hidden || Date.now() - lastAuto < AUTO_LAUNCH_INTERVAL - 1000) return false;
   lastAuto = Date.now();
   launchServer(false);
   return true;
