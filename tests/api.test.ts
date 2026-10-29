@@ -210,14 +210,19 @@ describe("Notes API: the only write the web server accepts", () => {
     const after = await list();
     expect(after.revision).toBe(1);
     expect(after.items).toEqual([
-      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
-      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "# 제목\n\n- [ ] 할 일", createdAt: 2, updatedAt: 3 },
-      { id: "n2", kind: "note", parentId: null, title: "", body: "최상위", createdAt: 4, updatedAt: 4 },
+      { id: "f1", kind: "folder", parentId: null, name: "업무", position: null, createdAt: 1, updatedAt: 1 },
+      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "# 제목\n\n- [ ] 할 일", position: null, createdAt: 2, updatedAt: 3 },
+      { id: "n2", kind: "note", parentId: null, title: "", body: "최상위", position: null, createdAt: 4, updatedAt: 4 },
     ]);
     expect((await send("/api/v1/notes", { headers: { "if-none-match": '"0"' } })).status).toBe(200);
     // 고치기는 같은 id로 다시 보낸다. 폴더를 지우면 안의 메모도 지운다.
     expect((await post({ upserts: [{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", createdAt: 4, updatedAt: 9 }], deletes: ["f1"] })).status).toBe(200);
-    expect((await list()).items).toEqual([{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", createdAt: 4, updatedAt: 9 }]);
+    expect((await list()).items).toEqual([{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", position: null, createdAt: 4, updatedAt: 9 }]);
+    // 끌어 정한 순서(position)는 그대로 남고, 다시 보내면 바뀐다.
+    expect((await post({ upserts: [{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", position: -1.5, createdAt: 4, updatedAt: 9 }], deletes: [] })).status).toBe(200);
+    expect((await list()).items[0].position).toBe(-1.5);
+    expect((await post({ upserts: [{ id: "n2", kind: "note", parentId: null, title: "고침", body: "", position: 3, createdAt: 4, updatedAt: 9 }], deletes: [] })).status).toBe(200);
+    expect((await list()).items[0].position).toBe(3);
     // 세션은 그대로이고 세션 쪽 쓰기는 여전히 막혀 있다.
     const blocked = await send("/api/v1/sessions", { method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}" });
     expect(blocked.status).toBe(405); expect(blocked.headers.get("Allow")).toBe("GET");
@@ -241,7 +246,8 @@ describe("Notes API: the only write the web server accepts", () => {
     }
     expect((await post(batch, { host: "evil.example:7474" })).status).toBe(403);
     for (const bad of ["{", "[]", { upserts: "x" }, { upserts: [{ id: "a b", kind: "note" }] }, { upserts: [{ id: "a", kind: "page" }] },
-      { upserts: [{ id: "a", kind: "note", body: "x".repeat(200_001) }] }, { upserts: [{ id: "a", kind: "folder", parentId: "a" }] }, { deletes: [1] }]) {
+      { upserts: [{ id: "a", kind: "note", body: "x".repeat(200_001) }] }, { upserts: [{ id: "a", kind: "folder", parentId: "a" }] }, { deletes: [1] },
+      { upserts: [{ id: "a", kind: "note", position: "1" }] }, { upserts: [{ id: "a", kind: "folder", position: [] }] }]) {
       const response = await post(bad);
       expect(response.status, JSON.stringify(bad).slice(0, 80)).toBe(400);
       expect((await response.json()).error.code).toBe("INVALID_ARGUMENT");
@@ -323,7 +329,7 @@ describe("Notes API: the only write the web server accepts", () => {
     expect(await result.json()).toEqual({ schemaVersion: 1, revision: 2, added: 2, updated: 1, kept: 3 });
     const items = Object.fromEntries((await list()).items.map((item) => [item.id, item]));
     expect(Object.keys(items).sort()).toEqual(["f1", "local", "lost", "mine", "new", "old"]);
-    expect(items.old).toEqual({ id: "old", kind: "note", parentId: null, title: "고친 메모", body: "새 본문", createdAt: 2, updatedAt: 9 });
+    expect(items.old).toEqual({ id: "old", kind: "note", parentId: null, title: "고친 메모", body: "새 본문", position: null, createdAt: 2, updatedAt: 9 });
     expect(items.mine).toMatchObject({ title: "이쪽이 최신", body: "이쪽", updatedAt: 50 });
     expect(items.local).toMatchObject({ kind: "note", title: "이 환경에만" });
     expect(items.new).toMatchObject({ parentId: "f1", body: "추가" });

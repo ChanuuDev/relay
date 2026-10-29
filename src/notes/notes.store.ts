@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { RelayError, storageError } from "../errors";
 
-/** 폴더와 메모(본문은 Markdown)가 parentId로 트리를 이룬다. null은 최상위다. */
+/** 폴더와 메모(본문은 Markdown)가 parentId로 트리를 이룬다. null은 최상위다.
+ *  position은 형제 사이에서 사용자가 끌어 정한 순서(작을수록 위)다. null이면 순서를 정한 항목 뒤에 폴더 먼저·이름 순으로 놓인다. */
 export type NoteItem =
-  | { id: string; kind: "folder"; parentId: string | null; name: string; createdAt: number; updatedAt: number }
-  | { id: string; kind: "note"; parentId: string | null; title: string; body: string; createdAt: number; updatedAt: number };
+  | { id: string; kind: "folder"; parentId: string | null; name: string; position: number | null; createdAt: number; updatedAt: number }
+  | { id: string; kind: "note"; parentId: string | null; title: string; body: string; position: number | null; createdAt: number; updatedAt: number };
 export type NoteBatch = { upserts: NoteItem[]; deletes: string[] };
 /** 다른 환경으로 옮기는 파일. format은 Relay 메모 파일인지 알아보는 표지다. */
 export type NoteExport = { format: typeof EXPORT_FORMAT; schemaVersion: 1; exportedAt: string; items: NoteItem[] };
@@ -20,7 +21,7 @@ const MAX_BATCH = 5000;
 const MAX_IMPORT = 50_000;
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 
-type Row = { id: string; kind: "folder" | "note"; parent_id: string | null; name: string; title: string; body: string; created_at: number; updated_at: number };
+type Row = { id: string; kind: "folder" | "note"; parent_id: string | null; name: string; title: string; body: string; position: number | null; created_at: number; updated_at: number };
 
 const time = (value: unknown, fallback: number) =>
   (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback);
@@ -28,6 +29,11 @@ const text = (value: unknown, max: number, field: string) => {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") throw new RelayError("INVALID_ARGUMENT", `${field}은(는) 문자열이어야 합니다.`);
   if (value.length > max) throw new RelayError("INVALID_ARGUMENT", `${field}이(가) 너무 깁니다(최대 ${max}자).`);
+  return value;
+};
+const position = (value: unknown, field: string) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new RelayError("INVALID_ARGUMENT", `${field}은(는) 숫자나 null이어야 합니다.`);
   return value;
 };
 const id = (value: unknown, field: string) => {
@@ -54,8 +60,9 @@ function parseItem(value: unknown, field: string, now: number): NoteItem {
   if (parentId === itemId) throw new RelayError("INVALID_ARGUMENT", "항목을 제 안에 넣을 수 없습니다.");
   const createdAt = time(entry.createdAt, now);
   const updatedAt = time(entry.updatedAt, now);
-  if (entry.kind === "folder") return { id: itemId, kind: "folder", parentId, name: text(entry.name, MAX_NAME, "폴더 이름").trim() || "새 폴더", createdAt, updatedAt };
-  if (entry.kind === "note") return { id: itemId, kind: "note", parentId, title: text(entry.title, MAX_NAME, "제목"), body: text(entry.body, MAX_BODY, "본문"), createdAt, updatedAt };
+  const order = position(entry.position, `${field}.position`);
+  if (entry.kind === "folder") return { id: itemId, kind: "folder", parentId, name: text(entry.name, MAX_NAME, "폴더 이름").trim() || "새 폴더", position: order, createdAt, updatedAt };
+  if (entry.kind === "note") return { id: itemId, kind: "note", parentId, title: text(entry.title, MAX_NAME, "제목"), body: text(entry.body, MAX_BODY, "본문"), position: order, createdAt, updatedAt };
   throw new RelayError("INVALID_ARGUMENT", `${field}.kind는 folder 또는 note여야 합니다.`);
 }
 
@@ -76,8 +83,8 @@ export function parseExport(raw: unknown, now = Date.now()): NoteItem[] {
 }
 
 const toItem = (row: Row): NoteItem => (row.kind === "folder"
-  ? { id: row.id, kind: "folder", parentId: row.parent_id, name: row.name, createdAt: row.created_at, updatedAt: row.updated_at }
-  : { id: row.id, kind: "note", parentId: row.parent_id, title: row.title, body: row.body, createdAt: row.created_at, updatedAt: row.updated_at });
+  ? { id: row.id, kind: "folder", parentId: row.parent_id, name: row.name, position: row.position, createdAt: row.created_at, updatedAt: row.updated_at }
+  : { id: row.id, kind: "note", parentId: row.parent_id, title: row.title, body: row.body, position: row.position, createdAt: row.created_at, updatedAt: row.updated_at });
 
 /** 메모 저장소. 묶음마다 revision을 하나 올려, 화면은 그 값만 보고 다시 읽을지 정한다. */
 export class NoteStore {
@@ -93,7 +100,7 @@ export class NoteStore {
       return this.db.transaction(() => ({
         schemaVersion: 1 as const,
         revision: this.revision(),
-        items: (this.db.query("SELECT id, kind, parent_id, name, title, body, created_at, updated_at FROM notes ORDER BY created_at, id").all() as Row[]).map(toItem),
+        items: (this.db.query("SELECT id, kind, parent_id, name, title, body, position, created_at, updated_at FROM notes ORDER BY created_at, id").all() as Row[]).map(toItem),
       }))();
     } catch (error) { throw storageError(error); }
   }
@@ -123,13 +130,13 @@ export class NoteStore {
   merge(items: NoteItem[]): ImportResult {
     try {
       return this.db.transaction(() => {
-        const find = this.db.query("SELECT kind, parent_id, name, title, body, updated_at FROM notes WHERE id = ?");
+        const find = this.db.query("SELECT kind, parent_id, name, title, body, position, updated_at FROM notes WHERE id = ?");
         const changes: NoteItem[] = [];
         let added = 0, kept = 0;
         for (const item of items) {
           const row = find.get(item.id) as Omit<Row, "id" | "created_at"> | null;
           if (!row) { added++; changes.push(item); continue; }
-          const same = row.kind === item.kind && row.parent_id === item.parentId
+          const same = row.kind === item.kind && row.parent_id === item.parentId && row.position === item.position
             && (item.kind === "folder" ? row.name === item.name : row.title === item.title && row.body === item.body);
           if (row.kind !== item.kind || same || item.updatedAt <= row.updated_at) kept++;
           else changes.push(item);
@@ -146,13 +153,13 @@ export class NoteStore {
 
   /** 넣거나 고친다. 이미 있는 항목의 만든 시각은 그대로 둔다. */
   private write(items: NoteItem[], revision: number) {
-    const upsert = this.db.query(`INSERT INTO notes (id, kind, parent_id, name, title, body, created_at, updated_at, revision)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    const upsert = this.db.query(`INSERT INTO notes (id, kind, parent_id, name, title, body, position, created_at, updated_at, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, parent_id = excluded.parent_id, name = excluded.name, title = excluded.title,
-        body = excluded.body, updated_at = excluded.updated_at, revision = excluded.revision`);
+        body = excluded.body, position = excluded.position, updated_at = excluded.updated_at, revision = excluded.revision`);
     for (const item of items) {
       upsert.run(item.id, item.kind, item.parentId, item.kind === "folder" ? item.name : "", item.kind === "note" ? item.title : "",
-        item.kind === "note" ? item.body : "", item.createdAt, item.updatedAt, revision);
+        item.kind === "note" ? item.body : "", item.position, item.createdAt, item.updatedAt, revision);
     }
   }
 

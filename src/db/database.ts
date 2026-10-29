@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/006_init.sql" with { type: "text" };
+import schema from "./migrations/007_init.sql" with { type: "text" };
 
-export const DB_VERSION = 6;
+export const DB_VERSION = 7;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -116,9 +116,15 @@ CREATE INDEX idx_calculations_created ON calculations(created_at DESC, id DESC);
 `);
 }
 
+// v7 lets the notes tree keep the order the user dragged items into. Rows written before v7 have no position
+// and keep the old order (folders first, then by name) after the ordered ones.
+function migrateV6(db: Database) {
+  db.exec("ALTER TABLE notes ADD COLUMN position REAL;");
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current < 0 || current > 5) {
+  if (current < 0 || current > 6) {
     checkVersion(db);
     return;
   }
@@ -138,24 +144,32 @@ function initializeOrMigrate(db: Database) {
       migrateV3(db);
       migrateV4(db);
       migrateV5(db);
+      migrateV6(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 2) {
       migrateV2(db);
       migrateV3(db);
       migrateV4(db);
       migrateV5(db);
+      migrateV6(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 3) {
       migrateV3(db);
       migrateV4(db);
       migrateV5(db);
+      migrateV6(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 4) {
       migrateV4(db);
       migrateV5(db);
+      migrateV6(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 5) {
       migrateV5(db);
+      migrateV6(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 6) {
+      migrateV6(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);

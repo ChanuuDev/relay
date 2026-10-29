@@ -2,8 +2,9 @@ import { create } from "zustand";
 
 /** 폴더와 메모는 parentId로 트리를 이룬다. null은 최상위다. 메모 본문(body)은 Markdown 원문이다.
  *  내용은 Relay 저장소(relay.db)에 두고 `/api/v1/notes`로 읽고 쓴다. 이 브라우저에는 펼친 폴더·고른 항목과 아직 보내지 못한 변경만 남는다. */
-export type Folder = { id: string; kind: "folder"; parentId: string | null; name: string; createdAt: number };
-export type Note = { id: string; kind: "note"; parentId: string | null; title: string; body: string; createdAt: number; updatedAt: number };
+/** position은 형제 사이에서 끌어 정한 순서(작을수록 위)다. null이면 순서를 정한 항목 뒤에 예전처럼 폴더 먼저·이름 순으로 놓인다. */
+export type Folder = { id: string; kind: "folder"; parentId: string | null; name: string; position: number | null; createdAt: number };
+export type Note = { id: string; kind: "note"; parentId: string | null; title: string; body: string; position: number | null; createdAt: number; updatedAt: number };
 export type Item = Folder | Note;
 export type Items = Record<string, Item>;
 /** 트리에 실제로 보이는 한 줄. depth는 0부터, index는 형제 사이 순서(0부터), size는 형제 수. */
@@ -66,11 +67,38 @@ export function markdownFile(note: Note) {
 export const fileNameOf = (note: Note) => `${labelOf(note).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "메모"}.md`;
 export const isEmptyNote = (item: Item | undefined): item is Note => item?.kind === "note" && !item.title.trim() && !item.body.trim();
 
-/** 폴더가 먼저, 같은 종류끼리는 이름 순(숫자는 크기 순). 이름은 미리 구해 둔 것을 쓴다. */
+/** 끌어 정한 순서(position)가 있는 항목이 그 순서대로 먼저 오고, 나머지는 폴더 먼저·이름 순(숫자는 크기 순)이다. 이름은 미리 구해 둔 것을 쓴다. */
 function sortItems(list: Item[]) {
   const labels = new Map(list.map((item) => [item.id, labelOf(item)]));
-  return list.sort((a, b) => (a.kind !== b.kind ? (a.kind === "folder" ? -1 : 1)
-    : collator.compare(labels.get(a.id)!, labels.get(b.id)!) || a.createdAt - b.createdAt));
+  return list.sort((a, b) => {
+    if (a.position !== null || b.position !== null) {
+      if (a.position === null) return 1;
+      if (b.position === null) return -1;
+      if (a.position !== b.position) return a.position - b.position;
+    }
+    return a.kind !== b.kind ? (a.kind === "folder" ? -1 : 1) : collator.compare(labels.get(a.id)!, labels.get(b.id)!) || a.createdAt - b.createdAt;
+  });
+}
+
+/** 새 항목이 parentId 맨 위에 오도록 하는 순서 값. */
+function topPosition(items: Items, parentId: string | null) {
+  let top = 0;
+  for (const item of Object.values(items)) if (item.parentId === parentId && item.position !== null && item.position < top) top = item.position;
+  return top - 1;
+}
+
+/** id를 parentId의 형제 사이 index 자리에 넣는다. 그 형제들은 보이는 순서대로 0, 1, 2…를 다시 받는다(순서가 같은 항목은 그대로 둔다). */
+function placeAt(items: Items, id: string, parentId: string | null, index: number): Items {
+  const item = items[id]!;
+  const siblings = childrenOf(items, parentId).filter((entry) => entry.id !== id);
+  siblings.splice(Math.max(0, Math.min(index, siblings.length)), 0, item);
+  const next = { ...items };
+  let changed = false;
+  siblings.forEach((entry, at) => {
+    const moved = entry.id === id;
+    if (entry.position !== at || (moved && entry.parentId !== parentId)) { next[entry.id] = { ...entry, position: at, ...(moved ? { parentId } : {}) }; changed = true; }
+  });
+  return changed ? next : items;
 }
 
 /** 부모별 자식 목록(정렬됨). 트리를 그릴 때 한 번만 만든다. */
@@ -171,8 +199,9 @@ function shape(raw: unknown): Item | null {
   if (typeof value.id !== "string" || !value.id) return null;
   const parentId = typeof value.parentId === "string" ? value.parentId : null;
   const createdAt = num(value.createdAt, 0);
-  if (value.kind === "folder") return { id: value.id, kind: "folder", parentId, name: str(value.name, MAX_TITLE).trim() || "새 폴더", createdAt };
-  if (value.kind === "note") return { id: value.id, kind: "note", parentId, title: str(value.title, MAX_TITLE), body: str(value.body, MAX_BODY), createdAt, updatedAt: num(value.updatedAt, createdAt) };
+  const position = typeof value.position === "number" && Number.isFinite(value.position) ? value.position : null;
+  if (value.kind === "folder") return { id: value.id, kind: "folder", parentId, name: str(value.name, MAX_TITLE).trim() || "새 폴더", position, createdAt };
+  if (value.kind === "note") return { id: value.id, kind: "note", parentId, title: str(value.title, MAX_TITLE), body: str(value.body, MAX_BODY), position, createdAt, updatedAt: num(value.updatedAt, createdAt) };
   return null;
 }
 
@@ -229,8 +258,10 @@ interface NotesState extends Saved {
   startRename: (id: string | null) => void;
   rename: (id: string, name: string) => void;
   update: (id: string, patch: Partial<Pick<Note, "title" | "body">>) => void;
-  /** 옮길 수 없으면(제 안으로 옮기기 등) false. */
+  /** parentId 폴더의 맨 위로 옮긴다. 옮길 수 없으면(제 안으로 옮기기 등) false. */
   move: (id: string, parentId: string | null) => boolean;
+  /** parentId 폴더의 형제 사이 index 자리(자기를 뺀 목록 기준)로 옮긴다. 옮길 수 없으면 false. */
+  place: (id: string, parentId: string | null, index: number) => boolean;
   remove: (id: string) => void;
   undoRemove: () => void;
   dismissTrash: () => void;
@@ -278,7 +309,8 @@ export const useNotes = create<NotesState>((set, get) => ({
     set((state) => {
       const items = leave(state.items, state.selected, id);
       const parent = parentId !== null && items[parentId]?.kind === "folder" ? parentId : null;
-      const next = { ...items, [id]: { id, kind: "note", parentId: parent, title: "", body: "", createdAt: now, updatedAt: now } satisfies Note };
+      // 새 메모는 그 폴더의 맨 위에 생긴다.
+      const next = { ...items, [id]: { id, kind: "note", parentId: parent, title: "", body: "", position: topPosition(items, parent), createdAt: now, updatedAt: now } satisfies Note };
       return { items: next, selected: id, renaming: null, expanded: reveal(next, state.expanded, parent) };
     });
     return id;
@@ -291,7 +323,7 @@ export const useNotes = create<NotesState>((set, get) => ({
       const names = new Set(childrenOf(items, parent).filter((item) => item.kind === "folder").map(labelOf));
       let name = "새 폴더";
       for (let n = 2; names.has(name); n++) name = `새 폴더 ${n}`;
-      const next = { ...items, [id]: { id, kind: "folder", parentId: parent, name, createdAt: Date.now() } satisfies Folder };
+      const next = { ...items, [id]: { id, kind: "folder", parentId: parent, name, position: topPosition(items, parent), createdAt: Date.now() } satisfies Folder };
       return { items: next, selected: id, renaming: id, expanded: reveal(next, state.expanded, parent) };
     });
     return id;
@@ -323,7 +355,16 @@ export const useNotes = create<NotesState>((set, get) => ({
     if (!item) return false;
     if (parentId !== null && (items[parentId]?.kind !== "folder" || (item.kind === "folder" && isWithin(items, parentId, id)))) return false;
     if (item.parentId === parentId) return true;
-    const next = { ...items, [id]: { ...item, parentId } };
+    const next = { ...items, [id]: { ...item, parentId, position: topPosition(items, parentId) } };
+    set({ items: next, expanded: reveal(next, expanded, parentId) });
+    return true;
+  },
+  place: (id, parentId, index) => {
+    const { items, expanded } = get();
+    const item = items[id];
+    if (!item) return false;
+    if (parentId !== null && (items[parentId]?.kind !== "folder" || (item.kind === "folder" && isWithin(items, parentId, id)))) return false;
+    const next = placeAt(items, id, parentId, index);
     set({ items: next, expanded: reveal(next, expanded, parentId) });
     return true;
   },
@@ -451,7 +492,7 @@ export async function flush() {
   }
 }
 
-const sameItem = (a: Item | undefined, b: Item) => Boolean(a) && a!.kind === b.kind && a!.parentId === b.parentId && a!.createdAt === b.createdAt
+const sameItem = (a: Item | undefined, b: Item) => Boolean(a) && a!.kind === b.kind && a!.parentId === b.parentId && a!.position === b.position && a!.createdAt === b.createdAt
   && (a!.kind === "folder" ? a!.name === (b as Folder).name : a!.title === (b as Note).title && a!.body === (b as Note).body && a!.updatedAt === (b as Note).updatedAt);
 
 /** 서버 목록을 반영한다. 보내지 못한 이 창의 변경(넣기·지우기)은 그대로 두고, 내용이 같은 항목은 이전 객체를 다시 쓴다. */

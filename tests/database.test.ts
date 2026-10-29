@@ -8,6 +8,7 @@ import v2Schema from "../src/db/migrations/002_init.sql" with { type: "text" };
 import v3Schema from "../src/db/migrations/003_init.sql" with { type: "text" };
 import v4Schema from "../src/db/migrations/004_init.sql" with { type: "text" };
 import v5Schema from "../src/db/migrations/005_init.sql" with { type: "text" };
+import v6Schema from "../src/db/migrations/006_init.sql" with { type: "text" };
 import { CalculatorStore } from "../src/calculator/calculator.store";
 import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
@@ -151,6 +152,27 @@ describe("Database record migration", () => {
     } finally { db.close(); }
   });
 
+  test("v6 notes gain an empty position in place, keep their order and accept a dragged order", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v6Schema);
+    db.exec("PRAGMA user_version = 6");
+    db.query("INSERT INTO notes (id, kind, parent_id, name, created_at, updated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?)").run("f", "folder", null, "폴더", 1, 1, 1);
+    db.query("INSERT INTO notes (id, kind, parent_id, title, body, created_at, updated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("n", "note", "f", "메모", "본문", 2, 2, 1);
+    db.query("INSERT INTO calculations (id, expression, result, created_at) VALUES (?, ?, ?, ?)").run("c", "1 + 1", "2", 3);
+    const before = db.query("SELECT * FROM notes ORDER BY id").all() as Record<string, unknown>[];
+    db.close();
+    const writer = openDatabase(loadConfig(dir));
+    try {
+      expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(writer.query("SELECT * FROM notes ORDER BY id").all()).toEqual(before.map((row) => ({ ...row, position: null })));
+      expect(writer.query("SELECT count(*) AS n FROM calculations").get()).toEqual({ n: 1 });
+      const notes = new NoteStore(writer);
+      notes.apply({ upserts: [{ id: "n", kind: "note", parentId: "f", title: "메모", body: "본문", position: 0, createdAt: 2, updatedAt: 2 }], deletes: [] });
+      expect(notes.list().items.find((item) => item.id === "n")?.position).toBe(0);
+      expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { writer.close(); }
+  });
+
   test("v5 databases gain the calculator history in place and keep sessions and notes", () => {
     const db = new Database(path.join(dir, "relay.db"));
     db.exec(v5Schema);
@@ -164,7 +186,8 @@ describe("Database record migration", () => {
     const writer = openDatabase(loadConfig(dir));
     try {
       expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
-      expect({ sessions: writer.query("SELECT * FROM sessions").all(), notes: writer.query("SELECT * FROM notes").all() }).toEqual(before);
+      expect({ sessions: writer.query("SELECT * FROM sessions").all(), notes: writer.query("SELECT * FROM notes").all() })
+        .toEqual({ ...before, notes: before.notes.map((row) => ({ ...(row as object), position: null })) });
       const calculator = new CalculatorStore(writer);
       expect(calculator.list()).toEqual({ schemaVersion: 1, items: [] });
       calculator.apply({ action: "add", item: { id: "c1", expression: "1 + 1", result: "2", createdAt: 5 } });
@@ -188,7 +211,7 @@ describe("Database record migration", () => {
       expect(writer.query("SELECT * FROM sessions").all()).toEqual(before);
       const notes = new NoteStore(writer);
       expect(notes.list()).toEqual({ schemaVersion: 1, revision: 0, items: [] });
-      expect(notes.apply({ upserts: [{ id: "n", kind: "note", parentId: null, title: "첫 메모", body: "본문", createdAt: 1, updatedAt: 1 }], deletes: [] }).revision).toBe(1);
+      expect(notes.apply({ upserts: [{ id: "n", kind: "note", parentId: null, title: "첫 메모", body: "본문", position: null, createdAt: 1, updatedAt: 1 }], deletes: [] }).revision).toBe(1);
       expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
     } finally { writer.close(); }
   });

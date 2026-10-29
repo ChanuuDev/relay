@@ -494,8 +494,8 @@ describe("CLI processes", () => {
   test("notes export writes a file that notes import merges into another store, and bad files change nothing", () => {
     const db = openDatabase(loadConfig(dir));
     new NoteStore(db).apply({ upserts: [
-      { id: "f1", kind: "folder", parentId: null, name: "업무", createdAt: 1, updatedAt: 1 },
-      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "본문", createdAt: 2, updatedAt: 3 },
+      { id: "f1", kind: "folder", parentId: null, name: "업무", position: null, createdAt: 1, updatedAt: 1 },
+      { id: "n1", kind: "note", parentId: "f1", title: "회의", body: "본문", position: null, createdAt: 2, updatedAt: 3 },
     ], deletes: [] });
     db.close();
     const other = temporary();

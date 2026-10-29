@@ -824,6 +824,15 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .window:not([data-focused]) .tree-item[aria-selected="true"] > .tree-row { background: var(--selected-inactive); }
 .tree-item:focus-visible > .tree-row { box-shadow: inset 0 0 0 2px var(--ring); }
 .tree-item[data-drop] > .tree-row { background: var(--notes-drop); box-shadow: inset 0 0 0 1.5px var(--primary); }
+/* 끌어 놓을 자리: 행 위·아래 경계에, 들어갈 깊이의 아이콘 자리부터 그은 파란 선과 왼쪽 끝 동그라미. */
+.tree-item[data-drop-line] > .tree-row::after { content: ""; position: absolute; z-index: 2; left: calc(30px + var(--drop-depth, 0) * 16px); right: 4px; height: 2px; border-radius: 1px;
+  background: var(--primary); pointer-events: none; }
+.tree-item[data-drop-line] > .tree-row::before { content: ""; position: absolute; z-index: 2; left: calc(26px + var(--drop-depth, 0) * 16px); width: 6px; height: 6px; border: 2px solid var(--primary);
+  border-radius: 50%; background: var(--background); box-sizing: border-box; pointer-events: none; }
+.tree-item[data-drop-line="before"] > .tree-row::after { top: -1px; }
+.tree-item[data-drop-line="before"] > .tree-row::before { top: -3px; }
+.tree-item[data-drop-line="after"] > .tree-row::after { bottom: -1px; }
+.tree-item[data-drop-line="after"] > .tree-row::before { bottom: -3px; }
 .tree-item[data-dragging] > .tree-row { opacity: .45; }
 .tree-chevron { display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; border-radius: 4px; color: var(--glass-text-muted); transition: transform .16s ease-out; }
 .tree-chevron svg { width: 12px; height: 12px; stroke-width: 2px; }

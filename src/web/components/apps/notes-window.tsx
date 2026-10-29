@@ -254,17 +254,20 @@ export function NotesWindow() {
   </Window>;
 }
 
-/** 폴더와 메모의 트리. 끌어서 폴더로 옮기고, 화살표·F2·Delete·메뉴 키로 다룬다. */
+/** 끌어 놓을 자리. zone은 행의 위쪽(before)·아래쪽(after) 가장자리 또는 폴더 가운데(inside)이고, parentId·index가 실제로 들어갈 곳이다. */
+type DropAt = { row: string | null; zone: "before" | "after" | "inside"; parentId: string | null; index: number; depth: number };
+
+/** 폴더와 메모의 트리. 끌어서 순서를 바꾸거나 폴더로 옮기고, 화살표·Alt+화살표(순서)·F2·Delete·메뉴 키로 다룬다. */
 function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onDelete, onToggle }: {
   items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; expanded: Record<string, true>; selected: string | null;
   onOpen: (id: string) => void; onMenu: (id: string, left: number, top: number) => void; onDelete: (id: string) => void; onToggle: (id: string, open: boolean) => void;
 }) {
   const renaming = useNotes((state) => state.renaming);
-  const { select, startRename, move } = useNotes.getState();
+  const { select, startRename, place } = useNotes.getState();
   const rows = useMemo(() => visibleRows(items, expanded, map), [items, expanded, map]);
   const treeRef = useRef<HTMLUListElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
-  const [drop, setDrop] = useState<string | null | undefined>(undefined);
+  const [drop, setDrop] = useState<DropAt | null>(null);
   const hover = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
 
   // 고른 항목이 접힌 폴더 안에 있으면 보이는 가장 가까운 조상이 초점을 받는다.
@@ -279,26 +282,39 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
     document.getElementById(rowId(selected))?.focus();
   }, [selected]);
 
-  /** 끌고 있는 항목을 넣을 폴더. 옮길 수 없으면 undefined. */
-  function dropTarget(row: Row | null): string | null | undefined {
+  /** 끌고 있는 항목을 놓을 자리. 행의 위·아래 4분의 1(메모는 반)은 그 사이에 끼우고, 폴더 가운데는 그 폴더 맨 위로 넣는다. 놓을 수 없으면 null. */
+  function dropAt(event: DragEvent, row: Row | null): DropAt | null {
     const item = dragging ? items[dragging] : undefined;
-    if (!item) return undefined;
-    const target = row ? (row.item.kind === "folder" ? row.item.id : row.item.parentId) : null;
-    if (target === item.parentId) return undefined;
-    if (item.kind === "folder" && target !== null && isWithin(items, target, item.id)) return undefined;
-    return target;
+    if (!item) return null;
+    const siblingsOf = (parentId: string | null) => (map.get(parentId) ?? []).filter((entry) => entry.id !== item.id);
+    let at: DropAt;
+    if (!row) at = { row: null, zone: "after", parentId: null, index: siblingsOf(null).length, depth: 0 };
+    else {
+      if (row.item.id === item.id) return null;
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      const y = (event.clientY - rect.top) / Math.max(1, rect.height);
+      const folder = row.item.kind === "folder";
+      const zone = folder ? (y < 0.25 ? "before" : y > 0.75 ? "after" : "inside") : (y < 0.5 ? "before" : "after");
+      const index = siblingsOf(row.item.parentId).findIndex((entry) => entry.id === row.item.id);
+      if (zone === "inside" || (zone === "after" && folder && row.hasChildren && expanded[row.item.id])) {
+        // 폴더 가운데, 또는 펼친 폴더 바로 아래 선은 그 폴더의 맨 위다.
+        at = { row: row.item.id, zone, parentId: row.item.id, index: 0, depth: row.depth + 1 };
+      } else at = { row: row.item.id, zone, parentId: row.item.parentId, index: zone === "before" ? index : index + 1, depth: row.depth };
+    }
+    if (item.kind === "folder" && at.parentId !== null && isWithin(items, at.parentId, item.id)) return null;
+    return at;
   }
   function clearHover() { if (hover.current) clearTimeout(hover.current.timer); hover.current = null; }
   function onDragOver(event: DragEvent, row: Row | null) {
     if (!dragging || !event.dataTransfer.types.includes(DRAG_TYPE)) return;
     event.stopPropagation();
-    const target = dropTarget(row);
-    if (target === undefined) { setDrop(undefined); event.dataTransfer.dropEffect = "none"; return; }
+    const at = dropAt(event, row);
+    if (!at) { setDrop(null); event.dataTransfer.dropEffect = "none"; return; }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    setDrop(target);
-    // 닫힌 폴더 위에 잠시 머무르면 펼친다.
-    const folder = row?.item.kind === "folder" && row.hasChildren && !expanded[row.item.id] ? row.item.id : null;
+    setDrop((now) => (now && now.row === at.row && now.zone === at.zone && now.parentId === at.parentId && now.index === at.index ? now : at));
+    // 닫힌 폴더 가운데에 잠시 머무르면 펼친다.
+    const folder = at.zone === "inside" && row?.hasChildren && !expanded[row.item.id] ? row.item.id : null;
     if (hover.current?.id === folder) return;
     clearHover();
     if (folder) hover.current = { id: folder, timer: setTimeout(() => onToggle(folder, true), 650) };
@@ -306,19 +322,30 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
   function onDrop(event: DragEvent, row: Row | null) {
     event.preventDefault();
     event.stopPropagation();
-    const target = dropTarget(row);
-    if (dragging && target !== undefined) move(dragging, target);
+    const at = dropAt(event, row);
+    if (dragging && at) { place(dragging, at.parentId, at.index); requestAnimationFrame(() => focusRow(dragging)); }
     endDrag();
   }
-  function endDrag() { clearHover(); setDragging(null); setDrop(undefined); }
+  function endDrag() { clearHover(); setDragging(null); setDrop(null); }
 
   function onKeyDown(event: KeyboardEvent<HTMLUListElement>) {
-    if ((event.target as HTMLElement).tagName === "INPUT" || event.altKey || event.ctrlKey || event.metaKey) return;
+    if ((event.target as HTMLElement).tagName === "INPUT" || event.ctrlKey || event.metaKey) return;
     // 초점이 있는 행을 기준으로 움직인다(클릭 없이 초점만 옮겨 온 경우 포함).
     const focused = (event.target as HTMLElement).closest<HTMLElement>("[role=treeitem]")?.dataset.id ?? tabbable;
     const index = rows.findIndex((row) => row.item.id === focused);
     const row = rows[index];
     const go = (next: Row | undefined) => { event.preventDefault(); if (next) { select(next.item.id); requestAnimationFrame(() => focusRow(next.item.id)); } };
+    // Alt+↑/↓: 같은 폴더 안에서 한 칸 위·아래로 옮긴다.
+    if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key === "ArrowUp" || event.key === "ArrowDown") && row) {
+      event.preventDefault();
+      const target = row.index + (event.key === "ArrowUp" ? -1 : 1);
+      if (target < 0 || target >= row.size) return;
+      select(row.item.id);
+      place(row.item.id, row.item.parentId, target);
+      requestAnimationFrame(() => focusRow(row.item.id));
+      return;
+    }
+    if (event.altKey) return;
     switch (event.key) {
       case "ArrowDown": return go(rows[index + 1]);
       case "ArrowUp": return go(rows[Math.max(0, index - 1)]);
@@ -368,9 +395,9 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
 
   if (!rows.length) return <div className="notes-tree-empty">폴더나 메모가 없습니다.<br />위의 단추로 만들어 보세요.</div>;
   return <ul ref={treeRef} role="tree" aria-label="메모 폴더" className="notes-tree" onKeyDown={onKeyDown}
-    data-drop-root={drop === null ? "" : undefined}
+    data-drop-root={drop?.row === null ? "" : undefined}
     onDragOver={(event) => onDragOver(event, null)} onDrop={(event) => onDrop(event, null)}
-    onDragLeave={(event) => { if (!treeRef.current?.contains(event.relatedTarget as Node | null)) { setDrop(undefined); clearHover(); } }}>
+    onDragLeave={(event) => { if (!treeRef.current?.contains(event.relatedTarget as Node | null)) { setDrop(null); clearHover(); } }}>
     {rows.map((row) => {
       const { item, depth, hasChildren } = row;
       const open = item.kind === "folder" && Boolean(expanded[item.id]);
@@ -378,7 +405,8 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
         aria-level={depth + 1} aria-setsize={row.size} aria-posinset={row.index + 1}
         aria-selected={item.id === selected} aria-expanded={item.kind === "folder" && hasChildren ? open : undefined}
         tabIndex={item.id === tabbable ? 0 : -1} draggable={renaming !== item.id}
-        data-dragging={dragging === item.id ? "" : undefined} data-drop={drop !== undefined && drop === item.id ? "" : undefined}
+        data-dragging={dragging === item.id ? "" : undefined} data-drop={drop?.row === item.id && drop.zone === "inside" ? "" : undefined}
+        data-drop-line={drop?.row === item.id && drop.zone !== "inside" ? drop.zone : undefined}
         onClick={(event) => {
           if (renaming === item.id) return;
           // 폴더는 고르면서 펼치고, 이미 고른 폴더를 다시 누르면 접는다. 더블클릭(이름 바꾸기)의 둘째 클릭은 접지 않는다.
@@ -394,7 +422,7 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
           setDragging(item.id);
         }}
         onDragEnd={endDrag} onDragOver={(event) => onDragOver(event, row)} onDrop={(event) => onDrop(event, row)}
-        style={{ "--depth": depth } as CSSProperties}>
+        style={{ "--depth": depth, ...(drop?.row === item.id ? { "--drop-depth": drop.depth } : {}) } as CSSProperties}>
         <div className="tree-row">
           <span className="tree-chevron" aria-hidden="true" data-hidden={item.kind === "folder" && hasChildren ? undefined : ""}
             onClick={(event) => { event.stopPropagation(); if (hasChildren) onToggle(item.id, !open); }}><ChevronRight /></span>

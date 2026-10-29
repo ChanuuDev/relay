@@ -84,7 +84,7 @@ test("메모 창: 폴더를 만들고 그 안에 메모를 여러 개 써서 저
   await notes.getByLabel("폴더 이름").fill("2026");
   await notes.getByLabel("폴더 이름").press("Enter");
   await expect(item(page, "2026")).toHaveAttribute("aria-level", "2");
-  // 폴더가 먼저, 같은 종류끼리는 이름 순.
+  // 새 메모·폴더는 그 폴더의 맨 위에 생긴다(나중에 만든 것이 위).
   await expect(notes.getByRole("treeitem")).toHaveText(["업무2", "2026", "할 일", "회의록"].map((text) => new RegExp(`^${text}$`)));
   await expect(notes.locator(".notes-footer")).toContainText("메모 2개 · 폴더 2개");
 
@@ -113,6 +113,57 @@ test("메모 창: 폴더를 만들고 그 안에 메모를 여러 개 써서 저
   expect(errors).toEqual([]);
 });
 
+test("메모 창: 끌어서·Alt+화살표로 순서를 바꾸면 다시 열어도 남고, 새 메모는 그 폴더 맨 위에 생긴다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"] });
+  const notes = page.locator(win("notes"));
+  const order = () => notes.getByRole("treeitem").evaluateAll((rows) => rows.map((row) => row.getAttribute("aria-label")));
+  // 순서를 정하기 전에는 예전처럼 폴더가 먼저, 같은 종류끼리는 이름 순이다.
+  await expect.poll(order).toEqual(["아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "주간 회의", "회고", "분기 계획", "장보기"]);
+  const edge = async (name: string, where: "top" | "bottom") => {
+    const box = (await item(page, name).boundingBox())!;
+    return { x: 60, y: where === "top" ? 2 : box.height - 2 };
+  };
+  // 행의 위쪽 가장자리에 놓으면 그 앞에, 아래쪽 가장자리에 놓으면 그 뒤에 끼운다. 끄는 동안 놓일 자리에 선이 보인다.
+  const source = item(page, "장보기");
+  await source.hover();
+  await page.mouse.down();
+  await item(page, "아이디어").hover({ position: await edge("아이디어", "top") });
+  await item(page, "아이디어").hover({ position: { x: 61, y: 2 } });
+  await expect(item(page, "아이디어")).toHaveAttribute("data-drop-line", "before");
+  await page.mouse.up();
+  await expect.poll(order).toEqual(["장보기", "아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "주간 회의", "회고", "분기 계획"]);
+  await item(page, "회고").dragTo(item(page, "주간 회의"), { targetPosition: await edge("주간 회의", "top") });
+  await expect.poll(order).toEqual(["장보기", "아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "회고", "주간 회의", "분기 계획"]);
+  // 다른 폴더의 행 경계에 놓으면 그 폴더로 옮겨 그 자리에 들어간다.
+  await item(page, "분기 계획").dragTo(item(page, "장보기"), { targetPosition: await edge("장보기", "bottom") });
+  await expect.poll(order).toEqual(["장보기", "분기 계획", "아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "회고", "주간 회의"]);
+  await expect(item(page, "분기 계획")).toHaveAttribute("aria-level", "1");
+  // 폴더 가운데에 놓으면 그 폴더의 맨 위로 들어간다.
+  await item(page, "장보기").dragTo(item(page, "회의"));
+  await expect.poll(order).toEqual(["분기 계획", "아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "장보기", "회고", "주간 회의"]);
+  // Alt+↑/↓는 같은 폴더 안에서 한 칸씩 옮긴다.
+  await item(page, "주간 회의").click();
+  await page.keyboard.press("Alt+ArrowUp");
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect.poll(order).toEqual(["분기 계획", "아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "주간 회의", "장보기", "회고"]);
+  await expect(item(page, "주간 회의")).toBeFocused();
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect.poll(order).toEqual(["분기 계획", "아이디어", "메모 앱 아이콘 아이디어", "업무", "회의", "주간 회의", "장보기", "회고"]);
+  // 고른 폴더 안의 새 메모는 그 폴더 맨 위에 생긴다.
+  await item(page, "업무").click();
+  await notes.getByRole("button", { name: "새 메모" }).first().click();
+  await expect(page.getByLabel("제목", { exact: true })).toBeFocused();
+  await page.keyboard.type("새 계획");
+  await expect.poll(order).toEqual(["분기 계획", "아이디어", "메모 앱 아이콘 아이디어", "업무", "새 계획", "회의", "주간 회의", "장보기", "회고"]);
+  // 순서는 DB에 남아 다시 열어도 그대로다.
+  await expect.poll(async () => ((await saved(page)).items as Array<{ title: string; position: number | null }>).find((entry) => entry.title === "새 계획")?.position ?? null).not.toBeNull();
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await expect.poll(order).toEqual(["분기 계획", "아이디어", "메모 앱 아이콘 아이디어", "업무", "새 계획", "회의", "주간 회의", "장보기", "회고"]);
+  expect(errors).toEqual([]);
+});
+
 test("메모 창: 끌어서·메뉴로 다른 폴더로 옮기고, 지운 폴더를 되살린다", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"] });
@@ -124,7 +175,7 @@ test("메모 창: 끌어서·메뉴로 다른 폴더로 옮기고, 지운 폴더
   // 끌어서 폴더에 놓는다.
   await item(page, "장보기").dragTo(item(page, "아이디어"));
   await expect(item(page, "장보기")).toHaveAttribute("aria-level", "2");
-  // 폴더 안의 메모 위에 놓으면 그 메모가 있는 폴더로 들어간다.
+  // 폴더 안의 메모 위에 놓으면 그 메모 옆(그 메모가 있는 폴더)으로 들어간다.
   await item(page, "분기 계획").dragTo(item(page, "회고"));
   await expect(item(page, "분기 계획")).toHaveAttribute("aria-level", "3");
   // 폴더를 제 하위 폴더로는 옮길 수 없다.
