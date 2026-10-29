@@ -8,7 +8,7 @@ import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.st
 import { deleteItems, fileResponse, listDirectory, openPath, pasteItems, places, statPath, systemLauncher, systemRemover, type Launcher, type Remover } from "../files/files.service";
 import { api, parseAction } from "./api";
 import { assets } from "./assets";
-import { PID_HEADER } from "./control";
+import { PID_HEADER, portFailure } from "./control";
 import { checkRequest, checkWrite, MAX_IMPORT_BYTES, playerHeaders, securityHeaders } from "./security";
 import { playerHtml, playerTarget } from "./youtube-player";
 import { PLAYER_PATH } from "./youtube-shared";
@@ -198,7 +198,7 @@ export function startServer(config: Config) {
       maxRequestBodySize: MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
     db.close(); writeDb.close();
-    if ((error as { code?: string }).code === "EADDRINUSE") throw new RelayError("PORT_IN_USE", "포트가 사용 중입니다. 기존 서버를 확인하거나 --port를 지정하세요.", 6, 500);
+    if ((error as { code?: string }).code === "EADDRINUSE") throw portFailure(config.webPort, "PORT_IN_USE", "포트가 사용 중입니다. 기존 서버를 확인하거나 --port를 지정하세요.");
     throw new RelayError("SERVER_START_FAILED", "로컬 서버를 시작할 수 없습니다. 포트와 권한을 확인하세요.", 6, 500);
   }
   let stopped = false;

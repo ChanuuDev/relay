@@ -21,7 +21,7 @@ import { installSkills } from "./skills/install";
 import { directory } from "./validation";
 import { handoffMarkdown } from "./web/lib/handoff";
 import { sessionCommand } from "./web/lib/session-context";
-import { parseLaunchUrl, runningDataDirectory, startDetached, stopServer } from "./web/control";
+import { freePort, parseLaunchUrl, reservedPortRange, runningDataDirectory, startDetached, stopServer } from "./web/control";
 import { startServer } from "./web/server";
 import { version } from "../package.json";
 
@@ -280,11 +280,22 @@ program.command("web").description("127.0.0.1 조회 서버 실행 (Ctrl+C 또�
   .option("--headless", "터미널과 분리해 백그라운드로 실행 (터미널을 닫아도 유지)")
   .option("--close", "실행 중인 서버 종료")
   .option("--reload", "실행 중인 서버를 닫고 이 relay로 백그라운드에서 다시 띄움 (포트·저장소 유지, 열린 화면은 새 버전으로 새로 고침)")
+  .option("--free-port", "Windows(Hyper-V·WSL)가 동적으로 예약한 포트를 관리자 권한(UAC)으로 풀고 Relay용으로 고정")
   .action(async (o, c: Command) => {
     if (c.optsWithGlobals().json) invalid("web은 --json을 지원하지 않습니다.");
     if (o.close && (o.headless || o.open || o.reload)) invalid("--close는 --headless, --open, --reload와 함께 쓸 수 없습니다.");
+    if (o.freePort && (o.close || o.headless || o.open || o.reload)) invalid("--free-port는 다른 옵션과 함께 쓸 수 없습니다.");
     const config = loadConfig(c.optsWithGlobals().dataDir, o.port);
     const url = `http://${config.webHost}:${config.webPort}`;
+    if (o.freePort) {
+      const before = reservedPortRange(config.webPort);
+      process.stderr.write(before ? `포트 ${config.webPort}는 Windows 예약 범위(${before.start}–${before.end})에 들어 있습니다. 관리자 권한 요청 창에서 예를 누르세요.\n`
+        : `포트 ${config.webPort}는 지금 예약 범위에 없습니다. 다시 예약되지 않도록 고정합니다. 관리자 권한 요청 창에서 예를 누르세요.\n`);
+      const { range } = freePort(config.webPort);
+      process.stderr.write(range ? `아직 예약 범위(${range.start}–${range.end})에 들어 있습니다. 재부팅 뒤 다시 시도하세요.\n`
+        : `포트 ${config.webPort}를 Relay용으로 고정했습니다. 이제 relay web --headless로 서버를 켜세요.\n`);
+      return;
+    }
     if (o.reload) {
       // 저장소를 따로 주지 않았으면 실행 중인 서버의 저장소를 이어받는다. 다시 띄우는 실행 파일은 지금 부른 relay다.
       const running = c.optsWithGlobals().dataDir === undefined ? await runningDataDirectory(url) : null;

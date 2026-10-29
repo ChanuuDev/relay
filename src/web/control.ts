@@ -37,6 +37,45 @@ export async function runningDataDirectory(url: string, timeoutMs = 1500): Promi
   } catch { return null; }
 }
 
+export type ExcludedRange = { start: number; end: number; administered: boolean };
+
+/** `netsh interface ipv4 show excludedportrange protocol=tcp` 출력의 범위 표. `*`가 붙은 줄은 관리자가 고정한 제외라 직접 바인드는 된다. */
+export function parseExcludedRanges(text: string): ExcludedRange[] {
+  const ranges: ExcludedRange[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s*(\*?)\s*$/.exec(line);
+    if (match) ranges.push({ start: Number(match[1]), end: Number(match[2]), administered: match[3] === "*" });
+  }
+  return ranges;
+}
+
+/** Windows(Hyper-V·WSL의 WinNAT)가 동적으로 예약해 버린 범위에 포트가 들었으면 그 범위. 아니면 null. */
+export function reservedPortRange(port: number): ExcludedRange | null {
+  if (process.platform !== "win32") return null;
+  try {
+    const result = Bun.spawnSync(["netsh", "interface", "ipv4", "show", "excludedportrange", "protocol=tcp"], { stdout: "pipe", stderr: "ignore" });
+    return parseExcludedRanges(result.stdout.toString()).find((range) => !range.administered && port >= range.start && port <= range.end) ?? null;
+  } catch { return null; }
+}
+
+/** 포트를 못 잡은 까닭을 가려 알린다. 예약 범위에 든 포트는 코드가 아니라 OS 설정 문제라 푸는 명령을 함께 적는다. */
+export function portFailure(port: number, code: string, message: string): RelayError {
+  const range = reservedPortRange(port);
+  if (!range) return new RelayError(code, message, 6, 500);
+  return new RelayError("PORT_RESERVED", `포트 ${port}는 Windows가 예약한 범위(${range.start}–${range.end}, Hyper-V·WSL의 동적 예약)에 들어 있어 쓸 수 없습니다. ` +
+    `relay web --free-port --port ${port}를 실행하면 관리자 권한(UAC)으로 예약을 풀고 이 포트를 Relay용으로 고정합니다.`, 6, 500, { port, range: [range.start, range.end] });
+}
+
+/** 관리자 권한(UAC 창)으로 WinNAT를 다시 시작해 동적 예약을 풀고, 이 포트를 관리 제외로 고정해 다시 예약되지 않게 한다. */
+export function freePort(port: number): { range: ExcludedRange | null } {
+  if (process.platform !== "win32") throw new RelayError("INVALID_ARGUMENT", "--free-port는 Windows에서만 쓸 수 있습니다.");
+  const script = `net stop winnat; netsh int ipv4 add excludedportrange protocol=tcp startport=${port} numberofports=1; net start winnat`;
+  const launch = `$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-Command','${script}' -Verb RunAs -Wait -PassThru; exit $p.ExitCode`;
+  const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", launch], { stdout: "ignore", stderr: "ignore" });
+  if (result.exitCode !== 0) throw new RelayError("ELEVATION_DENIED", "관리자 권한 요청이 거부되거나 실패해 포트 예약을 풀지 못했습니다.", 6, 500);
+  return { range: reservedPortRange(port) };
+}
+
 /** 컴파일된 실행 파일 안의 진입점 경로. Bun은 이 가상 경로를 fs에서도 있는 것처럼 보여 주므로 존재 여부로는 가릴 수 없다. */
 const EMBEDDED = /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/;
 
@@ -80,7 +119,7 @@ export async function startDetached(url: string, args: string[], timeoutMs = 100
     await Bun.sleep(100);
   }
   if (!ended) { try { child.kill(); } catch { /* 이미 끝났다 */ } }
-  throw new RelayError("SERVER_START_FAILED", "백그라운드 서버를 시작할 수 없습니다. 포트와 권한을 확인하세요.", 6, 500);
+  throw portFailure(new URL(url).port ? Number(new URL(url).port) : 80, "SERVER_START_FAILED", "백그라운드 서버를 시작할 수 없습니다. 포트와 권한을 확인하세요.");
 }
 
 /** PID 헤더가 없는 이전 버전 Relay는 Windows에서 포트를 가진 프로세스를 찾되, 프로세스 이름이 relay일 때만 돌려준다. */
