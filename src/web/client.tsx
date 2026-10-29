@@ -16,6 +16,7 @@ import { SettingsWindow } from "./components/apps/settings-window";
 import { YouTubeWindow } from "./components/apps/youtube-window";
 import { NotesWindow } from "./components/apps/notes-window";
 import { FilesWindow } from "./components/apps/files-window";
+import { ViewerWindow } from "./components/apps/viewer-window";
 import { CalculatorWindow } from "./components/apps/calculator-window";
 import { resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { listLocation, navigate, useUI } from "./lib/store";
@@ -212,6 +213,7 @@ function App() {
       <YouTubeWindow />
       <NotesWindow />
       <FilesWindow />
+      <ViewerWindow />
       <CalculatorWindow copy={copy} />
     </main>
     <Dock />

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { handler } from "../src/web/server";
-import { byteRange, crumbsOf } from "../src/files/files.service";
+import { byteRange, copyName, crumbsOf } from "../src/files/files.service";
 import { fixture } from "./helpers";
 
 describe("File explorer API", () => {
@@ -102,6 +102,89 @@ describe("File explorer API", () => {
     const get = await request("/api/v1/files/open");
     expect(get.status).toBe(405); expect(get.headers.get("Allow")).toBe("POST");
     expect(launched).toHaveLength(3);
+  });
+
+  const post = (url: string, body: unknown, headers: Record<string, string> = {}) => request(url, { method: "POST", body: JSON.stringify(body),
+    headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers } });
+
+  test("stat reports properties of files and folders, including folder contents", async () => {
+    const file = await (await request(`/api/v1/files/stat?path=${q(path.join(disk, "메모.txt"))}`)).json();
+    expect(file).toMatchObject({ schemaVersion: 1, name: "메모.txt", kind: "file", size: Buffer.byteLength(memo), hidden: false, readonly: false, link: false, target: null, contents: null });
+    expect(typeof file.modified).toBe("string"); expect(typeof file.accessed).toBe("string");
+    writeFileSync(path.join(disk, "폴더 하나", "안.txt"), "12345");
+    mkdirSync(path.join(disk, "폴더 하나", "깊이"));
+    const folder = await (await request(`/api/v1/files/stat?path=${q(path.join(disk, "폴더 하나"))}`)).json();
+    expect(folder).toMatchObject({ name: "폴더 하나", kind: "directory", size: null, contents: { folders: 1, files: 1, bytes: 5, partial: false } });
+    expect((await request(`/api/v1/files/stat?path=${q(path.join(disk, "없음"))}`)).status).toBe(404);
+    expect((await request(`/api/v1/files/stat?path=${q(disk)}&x=1`)).status).toBe(400);
+  });
+
+  test("paste copies with Explorer-style names, moves without overwriting and reports each failure", async () => {
+    const target = path.join(disk, "폴더 하나");
+    // 같은 폴더에 복사하면 `- 복사본`, 또 하면 `- 복사본 (2)`
+    const first = await (await post("/api/v1/files/paste", { sources: [path.join(disk, "메모.txt")], destination: disk, mode: "copy" })).json();
+    expect(first).toEqual({ schemaVersion: 1, mode: "copy", done: [{ from: path.join(disk, "메모.txt"), to: path.join(disk, "메모 - 복사본.txt") }], failed: [] });
+    const second = await (await post("/api/v1/files/paste", { sources: [path.join(disk, "메모.txt")], destination: disk, mode: "copy" })).json();
+    expect(second.done[0].to).toBe(path.join(disk, "메모 - 복사본 (2).txt"));
+    expect(readFileSync(path.join(disk, "메모 - 복사본 (2).txt"), "utf8")).toBe(memo);
+    // 폴더 복사는 안까지 복사하고, 자기 자신 안으로는 못 넣는다.
+    writeFileSync(path.join(target, "안.txt"), "x");
+    const folder = await (await post("/api/v1/files/paste", { sources: [target, target], destination: disk, mode: "copy" })).json();
+    expect(folder.done).toEqual([{ from: target, to: path.join(disk, "폴더 하나 - 복사본") }]);
+    expect(existsSync(path.join(disk, "폴더 하나 - 복사본", "안.txt"))).toBe(true);
+    const self = await (await post("/api/v1/files/paste", { sources: [target], destination: target, mode: "copy" })).json();
+    expect(self.failed[0].message).toContain("자기 자신");
+    // 잘라내기: 옮기고, 같은 폴더면 건너뛰고, 이름이 겹치면 덮어쓰지 않는다.
+    const moved = await (await post("/api/v1/files/paste", { sources: [path.join(disk, "메모 - 복사본.txt"), path.join(disk, "page.html")], destination: target, mode: "cut" })).json();
+    expect(moved.done.map((item: { to: string }) => item.to)).toEqual([path.join(target, "메모 - 복사본.txt"), path.join(target, "page.html")]);
+    expect(existsSync(path.join(disk, "page.html"))).toBe(false);
+    writeFileSync(path.join(disk, "page.html"), "again");
+    const clash = await (await post("/api/v1/files/paste", { sources: [path.join(disk, "page.html"), path.join(disk, "setup.exe")], destination: target, mode: "cut" })).json();
+    expect(clash.done).toEqual([{ from: path.join(disk, "setup.exe"), to: path.join(target, "setup.exe") }]);
+    expect(clash.failed).toEqual([{ path: path.join(disk, "page.html"), message: "같은 이름의 항목이 이미 있습니다." }]);
+    expect(readFileSync(path.join(target, "page.html"), "utf8")).toBe("<script>alert(1)</script>");
+    const same = await (await post("/api/v1/files/paste", { sources: [path.join(disk, "page.html")], destination: disk, mode: "cut" })).json();
+    expect(same.failed[0].message).toBe("이미 이 폴더에 있습니다.");
+    // 검사: 폴더가 아닌 곳, 없는 원본, 잘못된 본문, 다른 사이트
+    expect((await post("/api/v1/files/paste", { sources: [path.join(disk, "메모.txt")], destination: path.join(disk, "메모.txt"), mode: "copy" })).status).toBe(400);
+    const missing = await (await post("/api/v1/files/paste", { sources: [path.join(disk, "없음")], destination: disk, mode: "copy" })).json();
+    expect(missing.failed[0].message).toBe("파일이나 폴더가 없습니다.");
+    for (const bad of [{ sources: [], destination: disk, mode: "copy" }, { sources: [disk], destination: disk, mode: "move" }, { sources: [disk], destination: disk, mode: "copy", x: 1 }, []]) {
+      expect((await post("/api/v1/files/paste", bad)).status).toBe(400);
+    }
+    expect((await post("/api/v1/files/paste", { sources: [disk], destination: disk, mode: "copy" }, { "sec-fetch-site": "cross-site" })).status).toBe(403);
+    expect((await request("/api/v1/files/paste")).status).toBe(405);
+  });
+
+  test("delete hands items to the remover and refuses roots, the home folder and missing items", async () => {
+    const removed: string[][] = [];
+    const handle = handler(f.service, f.config, { files: { launch: () => {}, remove: (targets) => { removed.push(targets); return { recycled: true, failed: targets.filter((target) => target.endsWith(".exe")).map((target) => ({ path: target, message: "잠김" })) }; } } });
+    const send = async (body: unknown) => (await handle(new Request(`${origin}/api/v1/files/delete`, { method: "POST", body: JSON.stringify(body),
+      headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json", "sec-fetch-site": "same-origin" } }))).json();
+    const root = path.parse(disk).root;
+    const result = await send({ paths: [path.join(disk, "메모.txt"), path.join(disk, "setup.exe"), root, path.join(disk, "없음")] });
+    expect(removed).toEqual([[path.join(disk, "메모.txt"), path.join(disk, "setup.exe")]]);
+    expect(result).toEqual({ schemaVersion: 1, recycled: true, done: [path.join(disk, "메모.txt")], failed: [
+      { path: root, message: "드라이브 전체나 사용자 폴더는 지울 수 없습니다." }, { path: path.join(disk, "없음"), message: "파일이나 폴더가 없습니다." },
+      { path: path.join(disk, "setup.exe"), message: "잠김" }] });
+    // 실제 제거기: 파일과 폴더가 사라진다(Windows는 휴지통으로).
+    mkdirSync(path.join(disk, "지울 폴더")); writeFileSync(path.join(disk, "지울 폴더", "안.txt"), "x");
+    const real = await (await post("/api/v1/files/delete", { paths: [path.join(disk, "지울 폴더"), path.join(disk, ".숨김")] })).json();
+    expect(real.failed).toEqual([]);
+    expect(real.done).toEqual([path.join(disk, "지울 폴더"), path.join(disk, ".숨김")]);
+    expect(real.recycled).toBe(process.platform === "win32");
+    expect(existsSync(path.join(disk, "지울 폴더"))).toBe(false);
+    expect(existsSync(path.join(disk, ".숨김"))).toBe(false);
+    for (const bad of [{ paths: [] }, { paths: "x" }, { paths: [disk], x: 1 }, {}]) expect((await post("/api/v1/files/delete", bad)).status).toBe(400);
+    expect((await request("/api/v1/files/delete")).status).toBe(405);
+  });
+
+  test("copy name helper", () => {
+    expect(copyName(disk, "없음.txt")).toBe("없음.txt");
+    expect(copyName(disk, "메모.txt")).toBe("메모 - 복사본.txt");
+    expect(copyName(disk, "폴더 하나")).toBe("폴더 하나 - 복사본");
+    expect(copyName(disk, ".숨김")).toBe(".숨김 - 복사본");
+    expect(copyName(disk, "a.txt", (name) => ["a.txt", "a - 복사본.txt", "a - 복사본 (2).txt"].includes(name))).toBe("a - 복사본 (3).txt");
   });
 
   test("range and crumb helpers", () => {

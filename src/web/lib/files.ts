@@ -2,9 +2,12 @@ import { create } from "zustand";
 import {
   File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileTerminal, FileText, FileVideo, Folder, Presentation, type LucideIcon,
 } from "lucide-react";
-import type { Drive, FileEntry, Listing, Place, Places } from "../../files/files.service";
+import type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places } from "../../files/files.service";
 
-export type { Drive, FileEntry, Listing, Place, Places };
+export type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places };
+
+/** 복사·잘라내기한 항목. 창 안에서만 쓰는 클립보드라 새로 고치면 비워진다. */
+export type Clipboard = { paths: string[]; mode: PasteMode };
 
 /** 위치. null은 `이 PC`(즐겨찾기·드라이브 시작 화면)다. */
 export type Location = string | null;
@@ -34,9 +37,10 @@ function loadPrefs(): Prefs {
 }
 
 type State = Prefs & {
-  history: Location[]; index: number; selected: string | null;
+  history: Location[]; index: number; selected: string | null; clipboard: Clipboard | null;
   go: (location: Location, select?: string | null) => void; back: () => void; forward: () => void; settle: (path: string) => void;
   select: (path: string | null) => void; setView: (view: View) => void; toggleHidden: () => void; togglePreview: () => void; sortBy: (key: SortKey) => void;
+  setClipboard: (clipboard: Clipboard | null) => void;
   /** current는 지금 보이는 즐겨찾기(기본값이면 사용자 폴더 목록). 처음 고칠 때 기본값을 실제 목록으로 굳힌다. */
   addFavorite: (path: string, current: string[]) => void; removeFavorite: (path: string, current: string[]) => void;
   moveFavorite: (path: string, delta: number, current: string[]) => void; resetFavorites: () => void;
@@ -56,7 +60,8 @@ export const useFiles = create<State>((set, get) => {
   const prefs = loadPrefs();
   const update = (patch: Partial<State>) => { set(patch); save(get()); };
   return {
-    ...prefs, history: [prefs.location], index: 0, selected: null,
+    ...prefs, history: [prefs.location], index: 0, selected: null, clipboard: null,
+    setClipboard: (clipboard) => set({ clipboard }),
     go: (location, select = null) => {
       const { history, index } = get();
       if (history[index] === location) { set({ selected: select }); return; }
@@ -131,8 +136,16 @@ export async function openOnSystem(target: string, action: "open" | "reveal"): P
   return data.action ?? action;
 }
 
-export type Preview = "image" | "video" | "audio" | "text" | null;
+export type Preview = "image" | "video" | "audio" | "text" | "pdf" | null;
 export type FileType = { label: string; icon: LucideIcon; tone: string; preview: Preview };
+/** 두 번 누르면 뷰어 창에서 여는 종류. 그 밖의 파일은 기본 앱으로 연다. */
+export type ViewerKind = "image" | "text";
+export const viewerKind = (entry: Pick<FileEntry, "name" | "kind">): ViewerKind | null => {
+  if (entry.kind === "directory") return null;
+  const ext = extensionOf(entry.name);
+  if (IMAGE_EXT.has(ext)) return "image";
+  return ext === "txt" || ext === "md" || ext === "markdown" || ext === "log" ? "text" : null;
+};
 
 const TEXT = "txt md markdown log csv tsv json jsonc json5 yml yaml toml ini cfg conf env gitignore gitattributes editorconfig xml svg html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php sh bash zsh ps1 psm1 bat cmd sql lua r pl dart gradle properties lock tex srt vtt";
 const CODE = "json jsonc json5 yml yaml toml xml html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php lua r pl dart gradle sql";
@@ -169,7 +182,7 @@ export function fileType(entry: Pick<FileEntry, "name" | "kind">): FileType {
   if (ARCHIVE_EXT.has(ext)) return { label, icon: FileArchive, tone: "archive", preview: null };
   if (SHEET_EXT.has(ext)) return { label, icon: FileSpreadsheet, tone: "sheet", preview: null };
   if (SLIDE_EXT.has(ext)) return { label, icon: Presentation, tone: "slide", preview: null };
-  if (DOC_EXT.has(ext)) return { label, icon: FileText, tone: "doc", preview: null };
+  if (DOC_EXT.has(ext)) return { label, icon: FileText, tone: "doc", preview: ext === "pdf" ? "pdf" : null };
   if (TERMINAL_EXT.has(ext)) return { label, icon: FileTerminal, tone: "code", preview: TEXT_EXT.has(ext) ? "text" : null };
   if (CODE_EXT.has(ext)) return { label, icon: FileCode, tone: "code", preview: "text" };
   if (TEXT_EXT.has(ext)) return { label, icon: FileText, tone: "text", preview: "text" };
@@ -224,6 +237,40 @@ export async function readTextPreview(target: string, signal: AbortSignal): Prom
   if (!response.ok) throw new Error(response.status === 403 ? "이 파일을 읽을 권한이 없습니다." : "파일을 읽지 못했습니다.");
   return decodeText(new Uint8Array(await response.arrayBuffer()));
 }
+
+/** 뷰어 창은 글을 앞 8MB까지 읽는다. 더 큰 파일은 거기까지만 보이고 truncated로 알린다. */
+export const TEXT_VIEWER_BYTES = 8 * 1024 * 1024;
+export async function readTextFile(target: string, signal: AbortSignal): Promise<{ text: string | null; truncated: boolean }> {
+  const response = await fetch(contentUrl(target), { signal, headers: { Range: `bytes=0-${TEXT_VIEWER_BYTES - 1}` }, cache: "no-store" });
+  if (!response.ok) throw new Error(response.status === 403 ? "이 파일을 읽을 권한이 없습니다." : response.status === 404 ? "파일이 없습니다." : "파일을 읽지 못했습니다.");
+  const total = Number(/\/(\d+)$/.exec(response.headers.get("Content-Range") ?? "")?.[1] ?? "0");
+  return { text: decodeText(new Uint8Array(await response.arrayBuffer())), truncated: total > TEXT_VIEWER_BYTES };
+}
+
+/** PDF 미리 보기가 첫 쪽을 그리는 상한. 더 큰 파일은 아이콘만 보인다. */
+export const PDF_PREVIEW_BYTES = 64 * 1024 * 1024;
+export async function readBytes(target: string, signal: AbortSignal): Promise<Uint8Array> {
+  const response = await fetch(contentUrl(target), { signal, cache: "no-store" });
+  if (!response.ok) throw new Error(response.status === 403 ? "이 파일을 읽을 권한이 없습니다." : "파일을 읽지 못했습니다.");
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  let response: Response;
+  try { response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+  catch (error) {
+    if (error instanceof TypeError) throw new Error("Relay 서버에 연결할 수 없습니다.", { cause: error });
+    throw error;
+  }
+  const data = await response.json() as T & { error?: { message?: string } };
+  if (!response.ok) throw new Error(data.error?.message ?? `HTTP ${response.status}`);
+  return data;
+}
+export const statPath = (target: string, signal?: AbortSignal) => getJson<FileInfo>(`/api/v1/files/stat?path=${encodeURIComponent(target)}`, signal);
+/** 클립보드의 항목을 destination 폴더에 붙여 넣는다. 서버는 덮어쓰지 않고, 항목마다 성공·실패를 돌려준다. */
+export const pasteItems = (sources: string[], destination: string, mode: PasteMode) => postJson<PasteResult>("/api/v1/files/paste", { sources, destination, mode });
+/** Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. */
+export const deleteItems = (paths: string[]) => postJson<DeleteResult>("/api/v1/files/delete", { paths });
 
 /** 경로 글자만으로 찾은 상위 폴더. 드라이브 루트(C:\)나 /의 상위는 null(`이 PC`)이다. */
 export function parentOf(target: string): string | null {

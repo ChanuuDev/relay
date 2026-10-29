@@ -18,11 +18,12 @@ function saveWidth(name: string, width: number) {
   catch { /* 저장 공간이 없어도 끌기는 동작한다. */ }
 }
 
-/** 왼쪽 패널(목록·트리)과 오른쪽 내용 사이 경계를 끌어 왼쪽 폭을 바꾼다(shadcn Resizable).
- *  폭은 창마다 px로 기억하고, 창 크기를 바꿔도 왼쪽 폭은 그대로 둔다. 경계를 두 번 누르면 기본 폭으로 돌아간다.
+/** 곁 패널(목록·트리·미리 보기)과 내용 사이 경계를 끌어 곁 패널 폭을 바꾼다(shadcn Resizable). 곁 패널은 기본으로 왼쪽이고 position="end"면 오른쪽이다.
+ *  폭은 창마다 px로 기억하고, 창 크기를 바꿔도 곁 패널 폭은 그대로 둔다. 경계를 두 번 누르면 기본 폭으로 돌아간다.
  *  (라이브러리의 두 번 누르기는 defaultSize, 곧 기억한 폭으로 돌아가므로 끄고 직접 되돌린다.) */
-export function SplitView({ name, label, side, main, defaultWidth, minWidth, maxWidth, minMain = 280, className, ...rest }: {
-  name: string; label: string; side: ReactNode; main: ReactNode; defaultWidth: number; minWidth: number; maxWidth: number; minMain?: number; className?: string;
+export function SplitView({ name, label, side, main, defaultWidth, minWidth, maxWidth, minMain = 280, position = "start", className, ...rest }: {
+  name: string; label: string; side: ReactNode; main: ReactNode; defaultWidth: number; minWidth: number; maxWidth: number; minMain?: number;
+  position?: "start" | "end"; className?: string;
   [data: `data-${string}`]: string | undefined;
 }) {
   const panel = useRef<PanelImperativeHandle>(null);
@@ -30,16 +31,17 @@ export function SplitView({ name, label, side, main, defaultWidth, minWidth, max
     const saved = loadWidths()[name];
     return typeof saved === "number" && Number.isFinite(saved) ? Math.min(maxWidth, Math.max(minWidth, saved)) : defaultWidth;
   }, [name, defaultWidth, minWidth, maxWidth]);
-  return <ResizablePanelGroup orientation="horizontal" className={cn("split-view", className)} {...rest}
+  const sidePanel = <ResizablePanel key="side" id={`${name}-side`} panelRef={panel} defaultSize={initial} minSize={minWidth} maxSize={maxWidth}
+    groupResizeBehavior="preserve-pixel-size" className="split-pane" style={PANE}>{side}</ResizablePanel>;
+  const handle = <ResizableHandle key="handle" className="split-handle" aria-label={`${label} 너비 조절`} title="끌어서 너비 조절 · 두 번 눌러 기본 너비"
+    disableDoubleClick onDoubleClick={() => { panel.current?.resize(defaultWidth); saveWidth(name, defaultWidth); }} />;
+  const mainPanel = <ResizablePanel key="main" id={`${name}-main`} minSize={minMain} className="split-pane" style={PANE}>{main}</ResizablePanel>;
+  return <ResizablePanelGroup orientation="horizontal" className={cn("split-view", className)} data-side={position} {...rest}
     onLayoutChanged={(_, meta) => {
       if (!meta.isUserInteraction) return;
       const width = panel.current?.getSize().inPixels;
       if (width) saveWidth(name, Math.round(width));
     }}>
-    <ResizablePanel id={`${name}-side`} panelRef={panel} defaultSize={initial} minSize={minWidth} maxSize={maxWidth}
-      groupResizeBehavior="preserve-pixel-size" className="split-pane" style={PANE}>{side}</ResizablePanel>
-    <ResizableHandle className="split-handle" aria-label={`${label} 너비 조절`} title="끌어서 너비 조절 · 두 번 눌러 기본 너비"
-      disableDoubleClick onDoubleClick={() => { panel.current?.resize(defaultWidth); saveWidth(name, defaultWidth); }} />
-    <ResizablePanel id={`${name}-main`} minSize={minMain} className="split-pane" style={PANE}>{main}</ResizablePanel>
+    {position === "end" ? [mainPanel, handle, sidePanel] : [sidePanel, handle, mainPanel]}
   </ResizablePanelGroup>;
 }

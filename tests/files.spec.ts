@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env, ready, useRelayServer } from "./web-helpers";
 
@@ -121,7 +121,9 @@ test("파일 탐색기: 탐색기에서 보기·기본 앱으로 열기는 서�
   await row(page, "보고서.txt").click();
   await page.locator(".files-preview").getByRole("button", { name: "탐색기에서 보기" }).click();
   await expect(page.locator(".files-toast")).toContainText("탐색기에서 보여 줍니다.");
-  await row(page, "보고서.txt").dblclick();
+  // 글·그림은 두 번 누르면 뷰어로 열리므로, 기본 앱은 오른쪽 클릭 메뉴로 연다.
+  await row(page, "보고서.txt").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "기본 앱으로 열기" }).click();
   await expect(page.locator(".files-toast")).toContainText("기본 앱으로 엽니다.");
   // 오른쪽 클릭 메뉴
   await row(page, "하위 폴더").click({ button: "right" });
@@ -212,5 +214,169 @@ test("파일 탐색기: 왼쪽 트리가 지금 폴더까지 펼쳐지고, 오�
   await page.getByRole("menuitem", { name: "즐겨찾기에서 제거" }).click();
   await expect(favorites).toHaveCount(before);
   expect(path.basename(disk)).toBe("둘러보기");
+  expect(errors).toEqual([]);
+});
+
+/** 한 쪽짜리 최소 PDF. xref 오프셋을 계산해 pdf.js가 복구 없이 읽는다. */
+function tinyPdf(): Buffer {
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 120] >>"];
+  let body = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((object, index) => { offsets.push(Buffer.byteLength(body)); body += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = Buffer.byteLength(body);
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}`;
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, "latin1");
+}
+
+test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽을 그리며, 그림·글을 두 번 누르면 뷰어가 연다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  writeFileSync(path.join(disk, "문서.pdf"), tinyPdf());
+  writeFileSync(path.join(disk, "안내.md"), "# 안내\n\n**굵게** 쓴 글\n");
+  writeFileSync(path.join(disk, "그림2.png"), PNG);
+  await page.getByRole("button", { name: "새로 고침" }).click();
+  await expect(row(page, "문서.pdf")).toBeVisible();
+
+  // 미리 보기 창 경계를 끌면 폭이 바뀌고, 다시 열어도 남는다.
+  await row(page, "그림.png").click();
+  await expect(page.locator(".files-preview-art img")).toHaveJSProperty("naturalWidth", 1);
+  const preview = page.locator(".files-preview");
+  const before = (await preview.boundingBox())!.width;
+  expect(Math.round(before)).toBe(272);
+  const handle = page.locator(".files-preview-split > .split-handle");
+  await expect(handle).toHaveAttribute("aria-label", "미리 보기 창 너비 조절");
+  const edge = (await handle.boundingBox())!;
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x - 80, edge.y + edge.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.abs((await preview.boundingBox())!.width - 352) <= 3).toBe(true);
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("파일 탐색기")).click();
+  await expect(row(page, "문서.pdf")).toBeVisible();
+  await expect.poll(async () => Math.abs((await preview.boundingBox())!.width - 352) <= 3).toBe(true);
+
+  // PDF는 첫 쪽을 그리고 쪽수를 보인다.
+  await row(page, "문서.pdf").click();
+  await expect(page.locator(".files-preview-pdf")).toHaveAttribute("data-status", "ready");
+  await expect(page.locator(".files-preview-pages")).toHaveText("1쪽");
+  expect(await page.locator(".files-preview-pdf canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).width > 0)).toBe(true);
+  await expect(page.locator(".files-preview")).toContainText("PDF 문서");
+
+  // 그림을 두 번 누르면 뷰어 창이 열리고, 같은 폴더의 그림을 오간다.
+  await row(page, "그림.png").dblclick();
+  const viewer = page.locator(win("viewer"));
+  await expect(viewer).toHaveAttribute("data-focused", "");
+  await expect(viewer.locator(".window-title")).toHaveText("그림.png");
+  await expect(viewer.locator(".viewer-image-box")).toHaveAttribute("data-ready", "");
+  await expect(viewer.locator(".viewer-status")).toContainText("1 × 1");
+  await expect(viewer.locator(".viewer-count")).toHaveText("1 / 2");
+  await expect(viewer.locator(".viewer-zoom")).toHaveText("100%");
+  await viewer.getByRole("button", { name: "확대" }).click();
+  await expect(viewer.locator(".viewer-zoom")).toHaveText("125%");
+  await viewer.getByRole("button", { name: "배율. 누르면 창에 맞춤" }).click();
+  await expect(viewer.locator(".viewer-zoom")).toHaveText("100%");
+  await page.keyboard.press("ArrowRight");
+  await expect(viewer.locator(".window-title")).toHaveText("그림2.png");
+  await expect(viewer.locator(".viewer-count")).toHaveText("2 / 2");
+  await expect(viewer.getByRole("button", { name: "다음 파일" })).toBeDisabled();
+
+  // Markdown은 서식으로 보이고 원문으로 바꿀 수 있다. Esc는 뷰어를 닫는다.
+  await page.locator(dock("파일 탐색기")).click();
+  await row(page, "안내.md").dblclick();
+  await expect(viewer.locator(".window-title")).toHaveText("안내.md");
+  await expect(viewer.locator(".viewer-prose h1")).toHaveText("안내");
+  await expect(viewer.locator(".viewer-prose strong")).toHaveText("굵게");
+  await expect(viewer.locator(".viewer-status")).toContainText("줄 4");
+  await viewer.getByRole("radio", { name: "원문" }).click();
+  await expect(viewer.locator(".viewer-source")).toContainText("# 안내");
+  await viewer.locator(".viewer-stage").focus();
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0);
+  // 미리 보기의 `뷰어로 열기`도 같은 창을 연다.
+  await row(page, "보고서.txt").click();
+  await page.locator(".files-preview").getByRole("button", { name: "뷰어로 열기" }).click();
+  await expect(viewer.locator(".window-title")).toHaveText("보고서.txt");
+  await expect(viewer.locator(".viewer-source")).toContainText("첫 줄 내용");
+  expect(errors).toEqual([]);
+});
+
+test("파일 탐색기: 오른쪽 클릭으로 복사·잘라내기·붙여넣기·삭제·속성을 한다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  // 복사한 파일을 폴더 메뉴의 붙여넣기로 그 폴더에 넣는다.
+  await row(page, "보고서.txt").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "복사", exact: true }).click();
+  await expect(page.locator(".files-toast")).toContainText("복사했습니다");
+  await row(page, "하위 폴더").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "붙여넣기" }).click();
+  await expect(page.locator(".files-toast")).toContainText("1개를 붙여 넣었습니다.");
+  expect(existsSync(path.join(disk, "하위 폴더", "보고서.txt"))).toBe(true);
+  // 같은 폴더에 또 붙여 넣으면 `- 복사본`이 되고 그 항목이 골라진다.
+  await page.locator(".files-list").click({ button: "right", position: { x: 200, y: 300 } });
+  await page.getByRole("menuitem", { name: "붙여넣기" }).click();
+  await expect(row(page, "보고서 - 복사본.txt")).toHaveAttribute("aria-selected", "true");
+  // 잘라내기: 흐려지고, 다른 폴더에 붙여 넣으면 옮겨진다.
+  await row(page, "보고서 - 복사본.txt").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "잘라내기" }).click();
+  await expect(row(page, "보고서 - 복사본.txt")).toHaveAttribute("data-cut", "");
+  await row(page, "하위 폴더").dblclick();
+  await expect(row(page, "안쪽.md")).toBeVisible();
+  await page.locator(".files-list").focus();
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".files-toast")).toContainText("1개를 옮겼습니다.");
+  await expect(row(page, "보고서 - 복사본.txt")).toHaveAttribute("aria-selected", "true");
+  expect(existsSync(path.join(disk, "보고서 - 복사본.txt"))).toBe(false);
+  // 이름이 겹치는 잘라내기는 그 항목만 건너뛰고 알린다.
+  await row(page, "보고서.txt").click();
+  await page.keyboard.press("Control+x");
+  await page.getByRole("button", { name: "뒤로" }).click();
+  await expect(row(page, "그림.png")).toBeVisible();
+  await page.locator(".files-list").focus();
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".files-toast")).toContainText("같은 이름의 항목이 이미 있습니다.");
+  expect(existsSync(path.join(disk, "하위 폴더", "보고서.txt"))).toBe(true);
+  // 키보드 복사·붙여넣기
+  await row(page, "zeta.log").click();
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Control+v");
+  await expect(row(page, "zeta - 복사본.log")).toHaveAttribute("aria-selected", "true");
+  // 삭제는 확인 창을 거친다. 취소하면 그대로다.
+  await row(page, "zeta - 복사본.log").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "삭제" }).click();
+  const confirm = page.locator(".confirm-dialog");
+  await expect(confirm).toContainText("zeta - 복사본.log");
+  await confirm.getByRole("button", { name: "취소" }).click();
+  await expect(confirm).toHaveCount(0);
+  expect(existsSync(path.join(disk, "zeta - 복사본.log"))).toBe(true);
+  await page.locator(".files-list").focus();
+  await page.keyboard.press("Delete");
+  await confirm.locator("[data-variant=destructive]").click();
+  await expect(page.locator(".files-toast")).toContainText(process.platform === "win32" ? "휴지통으로 옮겼습니다." : "삭제했습니다.");
+  await expect(row(page, "zeta - 복사본.log")).toHaveCount(0);
+  expect(existsSync(path.join(disk, "zeta - 복사본.log"))).toBe(false);
+  // 속성 창: 종류·위치·크기·날짜. 폴더는 안에 든 항목을 센다.
+  await row(page, "그림.png").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "속성" }).click();
+  const properties = page.locator(".properties-dialog");
+  await expect(properties.locator(".properties-title")).toHaveText("그림.png");
+  await expect(properties).toContainText("PNG 이미지");
+  await expect(properties).toContainText(disk);
+  await expect(properties).toContainText(`${PNG.length} 바이트`);
+  await expect(properties).toContainText("수정한 날짜");
+  await properties.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(properties).toHaveCount(0);
+  await row(page, "하위 폴더").click();
+  await page.locator(".files-list").focus();
+  await page.keyboard.press("Alt+Enter");
+  await expect(properties.locator(".properties-title")).toHaveText("하위 폴더");
+  await expect(properties).toContainText("파일 3개, 폴더 0개");
+  await page.keyboard.press("Escape");
+  await expect(properties).toHaveCount(0);
+  // 미리 보기 단추로도 속성이 열린다.
+  await page.locator(".files-preview").getByRole("button", { name: "속성" }).click();
+  await expect(properties.locator(".properties-title")).toHaveText("하위 폴더");
   expect(errors).toEqual([]);
 });

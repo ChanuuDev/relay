@@ -17,6 +17,8 @@ import iconSettings from "./public/icons/settings.png" with { type: "file" };
 import iconYouTube from "./public/icons/youtube.png" with { type: "file" };
 import iconNotes from "./public/icons/notes.png" with { type: "file" };
 import iconFiles from "./public/icons/files.png" with { type: "file" };
+import iconViewer from "./public/icons/viewer.png" with { type: "file" };
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs" with { type: "file" };
 import iconCalculator from "./public/icons/calculator.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
 import iconApp512 from "./public/icons/app-512.png" with { type: "file" };
@@ -57,6 +59,9 @@ export const assets = new Map<string, Asset>([
   ["/icons/youtube.png", image(iconYouTube, "image/png")],
   ["/icons/notes.png", image(iconNotes, "image/png")],
   ["/icons/files.png", image(iconFiles, "image/png")],
+  ["/icons/viewer.png", image(iconViewer, "image/png")],
+  // PDF 미리 보기(pdf.js)의 작업 스레드. 화면 스크립트와 같은 출처라 CSP(script-src 'self')가 허용한다.
+  ["/pdf.worker.mjs", { file: pdfWorker, type: "text/javascript; charset=utf-8", cache: "public, max-age=86400" }],
   ["/icons/calculator.png", image(iconCalculator, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],
   ["/icons/app-512.png", image(iconApp512, "image/png")],

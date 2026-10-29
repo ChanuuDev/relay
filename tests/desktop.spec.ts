@@ -67,7 +67,7 @@ test("배경화면·Dock 아이콘·서체가 실행 파일에서 제공된다",
   await page.getByRole("button", { name: "라이트 모드로 전환" }).click();
   await expect(active).toHaveAttribute("src", "/wallpaper-light.jpg");
   const widths = await page.locator(".dock-item img").evaluateAll((images) => images.map((image) => (image as HTMLImageElement).naturalWidth));
-  expect(widths).toHaveLength(8);
+  expect(widths).toHaveLength(9);
   for (const width of widths) expect(width).toBeGreaterThan(0);
 });
 
@@ -125,7 +125,7 @@ test("Dock 위에서 움직이는 동안 라벨은 하나로 끊기지 않고, �
     seen.add(state.tips[0]!.text);
     highest = Math.min(highest, state.top);
   }
-  expect([...seen].sort()).toEqual(["YouTube", "가이드", "계산기", "메모", "명령", "설정", "세션", "파일 탐색기"].sort());
+  expect([...seen].sort()).toEqual(["YouTube", "가이드", "계산기", "메모", "명령", "뷰어", "설정", "세션", "파일 탐색기"].sort());
   expect(highest).toBeGreaterThanOrEqual(windowBottom);
   // 라벨은 아래 창 글자가 비치는 유리가 아니다.
   expect(await page.locator(".dock-tip").evaluate((tip) => getComputedStyle(tip).backdropFilter)).toBe("none");
@@ -149,9 +149,9 @@ test("동작 줄이기 설정을 켜면 확대 중인 Dock도 즉시 고정 크�
   await page.locator(dock("설정")).click();
   await expect(page.locator(win("settings"))).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32]);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48, 48]);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(page.locator(".dock-row")).not.toHaveAttribute("data-static", "");
   const restored = await box(page, dock("가이드"));
@@ -191,11 +191,11 @@ test("서버가 새 빌드로 다시 뜨면 열린 화면이 스스로 새로 �
   await expect(page.locator("#update-status")).toHaveCount(0);
 });
 
-test("데스크톱 기본 배치: Dock 여덟 앱, 세션·가이드 창이 열린다", async ({ page }) => {
+test("데스크톱 기본 배치: Dock 아홉 앱, 세션·가이드 창이 열린다", async ({ page }) => {
   record("layout", "기본 배치");
   await ready(page);
-  await expect(page.locator(".dock-item")).toHaveCount(8);
-  for (const name of ["세션", "가이드", "명령", "메모", "파일 탐색기", "계산기", "설정", "YouTube"]) await expect(page.locator(dock(name))).toBeVisible();
+  await expect(page.locator(".dock-item")).toHaveCount(9);
+  for (const name of ["세션", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정", "YouTube"]) await expect(page.locator(dock(name))).toBeVisible();
   await expect(page.locator(win("sessions"))).toBeVisible();
   await expect(page.locator(win("guide"))).toBeVisible();
   await expect(page.locator(win("sessions"))).toHaveAttribute("data-focused", "");
@@ -375,8 +375,8 @@ test("모바일에서는 창이 하나씩 최대화되고 Dock이 탭바가 된�
   expect(Math.round(sessions.y + sessions.height)).toBe(844 - 64);
   await expect(page.locator(win("guide"))).toHaveCount(0);
   await expect(page.locator("#connection-state")).toContainText("연결됨");
-  await expect(page.locator(".dock-label")).toHaveCount(8);
-  expect(await page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32]);
+  await expect(page.locator(".dock-label")).toHaveCount(9);
+  expect(await page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32]);
   await page.locator(dock("설정")).click();
   await expect(page.locator(win("settings"))).toBeVisible();
   await expect(page.locator(win("sessions"))).toBeHidden();
@@ -386,9 +386,9 @@ test("모바일에서는 창이 하나씩 최대화되고 Dock이 탭바가 된�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   // Resizing an already mounted dock must update its icon size in both directions.
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48, 48]);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32]);
 });
 
 test("감사용 스크린샷: 다크·라이트·상세·모바일", async ({ page }) => {

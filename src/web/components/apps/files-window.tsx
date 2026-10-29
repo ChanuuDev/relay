@@ -2,8 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, EyeOff, FileWarning, Folder, FolderOpen, HardDrive, LayoutGrid, List,
-  LoaderCircle, Monitor, PanelRight, RotateCw, Search, SquareArrowOutUpRight, TriangleAlert, X,
+  Info, LoaderCircle, Monitor, PanelRight, RotateCw, Search, SquareArrowOutUpRight, TriangleAlert, X,
 } from "lucide-react";
+import { ConfirmDialog } from "../desktop/confirm-dialog";
+import { PdfPreview } from "./files-pdf-preview";
+import { PropertiesDialog } from "./files-properties";
+import { useViewer } from "../../lib/viewer";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -13,13 +17,14 @@ import { SplitView } from "../desktop/split-view";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
-  contentUrl, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, readTextPreview, sortEntries, TEXT_PREVIEW_BYTES, useFiles,
-  type Drive, type FileEntry, type Listing, type Location, type Places, type SortKey,
+  contentUrl, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, sortEntries,
+  TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey,
 } from "../../lib/files";
 
 /** 격자 보기에서 섬네일을 그리는 그림 크기 상한. 큰 사진 수천 장이 한꺼번에 내려오지 않게 한다. */
 const THUMB_MAX_BYTES = 24 * 1024 * 1024;
 const optionId = (index: number) => `files-item-${index}`;
+
 const COLUMNS: { key: SortKey; label: string }[] = [{ key: "name", label: "이름" }, { key: "modified", label: "수정한 날짜" }, { key: "kind", label: "종류" }, { key: "size", label: "크기" }];
 
 /** 본문 항목(entry)·빈 곳(둘 다 없음)·왼쪽 트리 항목(tree)의 오른쪽 클릭 메뉴. */
@@ -36,7 +41,8 @@ export function FilesWindow() {
   const showHidden = useFiles((state) => state.hidden);
   const showPreview = useFiles((state) => state.preview);
   const sort = useFiles((state) => state.sort);
-  const { go, back, forward, select, setView, toggleHidden, togglePreview, sortBy } = useFiles.getState();
+  const clipboard = useFiles((state) => state.clipboard);
+  const { go, back, forward, select, setView, toggleHidden, togglePreview, sortBy, setClipboard } = useFiles.getState();
   const isOpen = useDesktop((state) => state.windows.files.open);
   const focused = useDesktop((state) => state.focused === "files");
   const [query, setQuery] = useState("");
@@ -45,6 +51,10 @@ export function FilesWindow() {
   // 닫는 트윈이 끝나기 전에 새 메뉴를 열면, 끝난 트윈이 새 메뉴를 닫지 않도록 실제로 닫는 중인지 따로 기억한다.
   const leavingRef = useRef(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  // 휴지통으로 옮길 항목(확인 창)과 속성 창에 보일 경로. busy는 붙여넣기·삭제가 서버에서 끝나기를 기다리는 중이다.
+  const [removing, setRemoving] = useState<FileEntry | null>(null);
+  const [properties, setProperties] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const typeahead = useRef({ text: "", at: 0 });
 
@@ -71,6 +81,8 @@ export function FilesWindow() {
   const selectedIndex = entries.findIndex((entry) => entry.path === selected);
   const current = selectedIndex >= 0 ? entries[selectedIndex] : null;
   const drives = places.data?.drives ?? [];
+  // 서버가 Windows면 삭제는 휴지통으로 옮기기다. 서버 정보가 아직 없으면 브라우저 플랫폼으로 짐작한다.
+  const RECYCLE = places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform);
   const favoritePaths = useFiles((state) => state.favorites);
   const favorites = favoritesOf(favoritePaths, places.data);
   const favoriteList = favorites.map((favorite) => favorite.path);
@@ -108,7 +120,49 @@ export function FilesWindow() {
   }
   function openEntry(entry: FileEntry) {
     if (entry.kind === "directory") go(entry.path);
+    else if (viewerKind(entry)) useViewer.getState().open(entry, entries);
     else void system(entry.path, "open");
+  }
+  const inClipboard = (target: string, mode?: PasteMode) => Boolean(clipboard && (!mode || clipboard.mode === mode) && clipboard.paths.some((path) => path.toLowerCase() === target.toLowerCase()));
+  function cutOrCopy(entry: FileEntry, mode: PasteMode) {
+    const next: Clipboard = { paths: [entry.path], mode };
+    setClipboard(next);
+    say(mode === "cut" ? `‘${entry.name}’을(를) 잘라냈습니다. 붙여넣을 폴더에서 Ctrl+V를 누르세요.` : `‘${entry.name}’을(를) 복사했습니다.`);
+  }
+  /** 폴더 목록 캐시를 버린다. 붙여넣기·삭제 뒤 바뀐 폴더와 그 상위(트리의 하위 폴더 수)를 다시 읽는다. */
+  const invalidate = (...folders: (string | null)[]) => {
+    for (const folder of folders) if (folder) void queryClient.invalidateQueries({ queryKey: ["files", "list", folder] });
+  };
+  async function paste(destination: string) {
+    if (!clipboard || busy) return;
+    setBusy(true);
+    try {
+      const result = await pasteItems(clipboard.paths, destination, clipboard.mode);
+      const sources = new Set(clipboard.paths.map((path) => parentOf(path)));
+      invalidate(destination, ...sources);
+      if (clipboard.mode === "cut") { setClipboard(null); if (result.done.length) useViewer.getState().forget(result.done.map((item) => item.from)); }
+      if (result.done.length && destination.toLowerCase() === (location ?? "").toLowerCase()) select(result.done[0].to);
+      if (result.failed.length) say(result.done.length ? `${result.done.length}개를 붙여 넣고 ${result.failed.length}개는 건너뛰었습니다: ${result.failed[0].message}` : result.failed[0].message, "error");
+      else say(clipboard.mode === "cut" ? `${result.done.length}개를 옮겼습니다.` : `${result.done.length}개를 붙여 넣었습니다.`);
+    } catch (error) { say(error instanceof Error ? error.message : "붙여 넣지 못했습니다.", "error"); }
+    finally { setBusy(false); }
+  }
+  async function confirmRemove() {
+    const entry = removing;
+    setRemoving(null);
+    if (!entry || busy) return;
+    setBusy(true);
+    try {
+      const result = await deleteItems([entry.path]);
+      invalidate(parentOf(entry.path));
+      if (result.done.length) {
+        useViewer.getState().forget(result.done);
+        if (clipboard?.paths.some((path) => result.done.includes(path))) setClipboard(null);
+        if (selected === entry.path) select(null);
+        say(result.recycled ? `‘${entry.name}’을(를) 휴지통으로 옮겼습니다.` : `‘${entry.name}’을(를) 삭제했습니다.`);
+      } else say(result.failed[0]?.message ?? "삭제하지 못했습니다.", "error");
+    } catch (error) { say(error instanceof Error ? error.message : "삭제하지 못했습니다.", "error"); }
+    finally { setBusy(false); }
   }
   async function copyPath(target: string) {
     try { await navigator.clipboard.writeText(target); say("경로를 복사했습니다."); }
@@ -161,33 +215,54 @@ export function FilesWindow() {
       { kind: "separator", id: "sep2" }, collapse,
     ];
   };
+  const pasteEntry = (destination: string): MenuEntry => ({ kind: "item", id: "paste", label: "붙여넣기", disabled: !clipboard || busy, onSelect: () => void paste(destination) });
   const menuEntries = (target: Menu): MenuEntry[] => {
     if (target.tree) return treeEntries(target.tree);
     const entry = target.entry;
-    if (entry) return [
-      { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
-      ...(entry.kind === "directory" ? [favoriteEntry(entry.path)] : []),
-      { kind: "item", id: "reveal", label: "탐색기에서 보기", onSelect: () => void system(entry.path, "reveal") },
-      ...(entry.kind === "file" ? [{ kind: "item" as const, id: "download", label: "내려받기", onSelect: () => download(entry.path) }] : []),
-      { kind: "separator", id: "sep" },
-      { kind: "item", id: "copy", label: "경로 복사", onSelect: () => void copyPath(entry.path) },
-    ];
+    if (entry) {
+      const viewer = viewerKind(entry);
+      return [
+        { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : viewer ? "뷰어로 열기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
+        ...(viewer ? [{ kind: "item" as const, id: "system", label: "기본 앱으로 열기", onSelect: () => void system(entry.path, "open") }] : []),
+        ...(entry.kind === "directory" ? [favoriteEntry(entry.path)] : []),
+        { kind: "item", id: "reveal", label: "탐색기에서 보기", onSelect: () => void system(entry.path, "reveal") },
+        ...(entry.kind === "file" ? [{ kind: "item" as const, id: "download", label: "내려받기", onSelect: () => download(entry.path) }] : []),
+        { kind: "separator", id: "sep" },
+        { kind: "item", id: "cut", label: "잘라내기", onSelect: () => cutOrCopy(entry, "cut") },
+        { kind: "item", id: "copy", label: "복사", onSelect: () => cutOrCopy(entry, "copy") },
+        ...(entry.kind === "directory" ? [pasteEntry(entry.path)] : []),
+        { kind: "item", id: "delete", label: "삭제", danger: true, disabled: busy, onSelect: () => setRemoving(entry) },
+        { kind: "separator", id: "sep2" },
+        { kind: "item", id: "path", label: "경로 복사", onSelect: () => void copyPath(entry.path) },
+        { kind: "item", id: "properties", label: "속성", onSelect: () => setProperties(entry.path) },
+      ];
+    }
     return [
       { kind: "item", id: "refresh", label: "새로 고침", onSelect: refresh },
-      ...(location !== null ? [{ kind: "item" as const, id: "explorer", label: "탐색기에서 이 폴더 열기", onSelect: () => void system(location, "open") }, favoriteEntry(location)] : []),
+      ...(location !== null ? [pasteEntry(location), { kind: "item" as const, id: "explorer", label: "탐색기에서 이 폴더 열기", onSelect: () => void system(location, "open") }, favoriteEntry(location)] : []),
       { kind: "separator", id: "sep" },
       { kind: "radio", id: "list", label: "목록 보기", checked: view === "list", onSelect: () => setView("list") },
       { kind: "radio", id: "grid", label: "아이콘 보기", checked: view === "grid", onSelect: () => setView("grid") },
       { kind: "separator", id: "sep2" },
       { kind: "item", id: "hidden", label: showHidden ? "숨김 항목 감추기" : "숨김 항목 보기", onSelect: toggleHidden },
+      ...(location !== null ? [{ kind: "separator" as const, id: "sep3" }, { kind: "item" as const, id: "properties", label: "속성", onSelect: () => setProperties(location) }] : []),
     ];
   };
 
-  /** 화살표·Home·End로 고르고, Enter로 열고, Backspace·Alt+↑로 위로, Alt+←/→로 뒤로·앞으로. 글자를 치면 그 이름으로 건너뛴다. */
+  /** 화살표·Home·End로 고르고, Enter로 열고, Backspace·Alt+↑로 위로, Alt+←/→로 뒤로·앞으로. 글자를 치면 그 이름으로 건너뛴다.
+   *  Ctrl+C·X·V는 복사·잘라내기·붙여넣기, Delete는 삭제, Alt+Enter는 속성이다. */
   function onListKey(event: KeyboardEvent<HTMLDivElement>) {
     if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); back(); return; }
     if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); forward(); return; }
     if ((event.altKey && event.key === "ArrowUp") || event.key === "Backspace") { event.preventDefault(); up(); return; }
+    if (event.altKey && event.key === "Enter") { event.preventDefault(); if (current) setProperties(current.path); else if (location !== null) setProperties(location); return; }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+      const key = event.key.toLowerCase();
+      if (key === "c" && current) { event.preventDefault(); cutOrCopy(current, "copy"); return; }
+      if (key === "x" && current) { event.preventDefault(); cutOrCopy(current, "cut"); return; }
+      if (key === "v" && location !== null) { event.preventDefault(); void paste(location); return; }
+    }
+    if (event.key === "Delete" && current && !event.ctrlKey && !event.altKey) { event.preventDefault(); setRemoving(current); return; }
     if (event.key === "F5") { event.preventDefault(); refresh(); return; }
     if (event.shiftKey && event.key === "F10") { event.preventDefault(); openContextAtSelection(); return; }
     if (event.key === "ContextMenu") { event.preventDefault(); openContextAtSelection(); return; }
@@ -268,7 +343,7 @@ export function FilesWindow() {
       <FilesTree places={places.data} favorites={favorites} location={location} showHidden={showHidden} error={places.isError ? places.error.message : null}
         onGo={(target) => go(target)} onMenu={(tree, left, top) => openMenu(null, left, top, tree)} />} main={
     <div className="files-content">
-      <section className="files-main" aria-label="폴더 내용" onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
+      {(() => { const main = <section className="files-main" aria-label="폴더 내용" onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
         {location === null
           ? <ThisPC places={places.data} favorites={favorites} loading={places.isPending} onGo={(target) => go(target)} />
           : errorMessage
@@ -291,18 +366,25 @@ export function FilesWindow() {
                   {entries.length === 0
                     ? <div className="files-list-empty">{query.trim() ? `‘${query.trim()}’과 맞는 항목이 없습니다.` : hiddenCount ? `숨김 항목 ${hiddenCount}개만 있습니다.` : "이 폴더는 비어 있습니다."}</div>
                     : entries.map((entry, index) => view === "list"
-                      ? <ListRow key={entry.path} entry={entry} index={index} selected={index === selectedIndex}
+                      ? <ListRow key={entry.path} entry={entry} index={index} selected={index === selectedIndex} cut={inClipboard(entry.path, "cut")}
                           onSelect={() => select(entry.path)} onOpen={() => openEntry(entry)} onMenu={onItemMenu(entry)} />
-                      : <GridTile key={entry.path} entry={entry} index={index} selected={index === selectedIndex}
+                      : <GridTile key={entry.path} entry={entry} index={index} selected={index === selectedIndex} cut={inClipboard(entry.path, "cut")}
                           onSelect={() => select(entry.path)} onOpen={() => openEntry(entry)} onMenu={onItemMenu(entry)} />)}
                 </div>
               </>}
         <footer className="files-status" aria-live="polite"><span>{status}</span>
           {current && <span className="files-status-selection">{current.name}{current.size !== null ? ` · ${formatSize(current.size)}` : ""}</span>}</footer>
-      </section>
-      {showPreview && location !== null && <PreviewPane entry={current} folder={data} onOpen={openEntry} onSystem={(target, action) => void system(target, action)}
-        onDownload={download} onCopy={(target) => void copyPath(target)} />}
+      </section>;
+      if (!showPreview || location === null) return main;
+      return <SplitView name="files-preview" label="미리 보기 창" className="files-preview-split" position="end" defaultWidth={272} minWidth={200} maxWidth={560} minMain={280}
+        main={main} side={<PreviewPane entry={current} folder={data} onOpen={openEntry} onSystem={(target, action) => void system(target, action)}
+          onDownload={download} onCopy={(target) => void copyPath(target)} onProperties={setProperties} />} />; })()}
     </div>} />
+    <ConfirmDialog open={removing !== null} title={removing ? `‘${removing.name}’을(를) ${RECYCLE ? "휴지통으로 옮길까요?" : "삭제할까요?"}` : ""}
+      description={<p>{RECYCLE ? "휴지통에서 되돌릴 수 있습니다. 휴지통이 없는 드라이브에서는 바로 지워집니다." : "이 작업은 되돌릴 수 없습니다."}</p>}
+      confirmLabel={RECYCLE ? "휴지통으로 이동" : "삭제"} confirmDisabled={busy} onConfirm={() => void confirmRemove()} onClose={() => setRemoving(null)}
+      onCloseFocus={() => listRef.current?.focus({ preventScroll: true })} />
+    <PropertiesDialog path={properties} onClose={() => setProperties(null)} onCopy={(target) => void copyPath(target)} />
     {notice && <div className="files-toast material-toast" role={notice.tone === "error" ? "alert" : "status"} data-tone={notice.tone}><span>{notice.text}</span>
       <Button type="button" variant="ghost" size="icon-xs" aria-label="알림 닫기" onClick={() => setNotice(null)}><X aria-hidden="true" /></Button></div>}
     {menu && <DesktopMenu key={menu.id} items={menuEntries(menu)} position={{ left: menu.left, top: Math.min(menu.top, window.innerHeight - 200) }} leaving={menuLeaving}
@@ -427,12 +509,12 @@ function ThisPC({ places, favorites, loading, onGo }: { places: Places | undefin
   </div>;
 }
 
-type ItemProps = { entry: FileEntry; index: number; selected: boolean; onSelect: () => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
+type ItemProps = { entry: FileEntry; index: number; selected: boolean; cut: boolean; onSelect: () => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
 
-function ListRow({ entry, index, selected, onSelect, onOpen, onMenu }: ItemProps) {
+function ListRow({ entry, index, selected, cut, onSelect, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
-  return <div id={optionId(index)} role="option" aria-selected={selected} className="files-row" data-hidden={entry.hidden ? "" : undefined}
+  return <div id={optionId(index)} role="option" aria-selected={selected} className="files-row" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
     onMouseDown={onSelect} onDoubleClick={onOpen} onContextMenu={onMenu} title={entry.name}>
     <span className="files-cell-name"><Icon aria-hidden="true" className="files-icon" data-tone={type.tone} /><span>{entry.name}</span>
       {entry.link && <SquareArrowOutUpRight aria-label="바로 가기" className="files-link-badge" />}</span>
@@ -442,12 +524,12 @@ function ListRow({ entry, index, selected, onSelect, onOpen, onMenu }: ItemProps
   </div>;
 }
 
-function GridTile({ entry, index, selected, onSelect, onOpen, onMenu }: ItemProps) {
+function GridTile({ entry, index, selected, cut, onSelect, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   const [broken, setBroken] = useState(false);
   const thumb = type.preview === "image" && !broken && (entry.size ?? 0) <= THUMB_MAX_BYTES;
-  return <div id={optionId(index)} role="option" aria-selected={selected} className="files-tile" data-hidden={entry.hidden ? "" : undefined}
+  return <div id={optionId(index)} role="option" aria-selected={selected} className="files-tile" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
     onMouseDown={onSelect} onDoubleClick={onOpen} onContextMenu={onMenu} title={entry.name}>
     <span className="files-tile-art" data-tone={type.tone}>
       {thumb ? <img src={contentUrl(entry.path)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />
@@ -459,14 +541,24 @@ function GridTile({ entry, index, selected, onSelect, onOpen, onMenu }: ItemProp
 
 type TextState = { path: string; status: "loading" | "ready" | "binary" | "error"; text?: string; message?: string };
 
-/** 오른쪽 미리 보기: 그림·영상·소리·글을 보이고, 정보와 열기·탐색기·내려받기·경로 복사 단추를 둔다. */
-function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy }: {
+/** 오른쪽 미리 보기: 그림·영상·소리·글·PDF 첫 쪽을 보이고, 정보와 열기·탐색기·내려받기·경로 복사·속성 단추를 둔다. */
+function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy, onProperties }: {
   entry: FileEntry | null; folder: Listing | undefined; onOpen: (entry: FileEntry) => void; onSystem: (target: string, action: "open" | "reveal") => void;
-  onDownload: (target: string) => void; onCopy: (target: string) => void;
+  onDownload: (target: string) => void; onCopy: (target: string) => void; onProperties: (target: string) => void;
 }) {
   const type = entry ? fileType(entry) : null;
   const [text, setText] = useState<TextState | null>(null);
   const [broken, setBroken] = useState<string | null>(null);
+  // PDF 첫 쪽은 창 안쪽 폭에 맞춰 그린다. 경계를 끌면 다시 그린다.
+  const asideRef = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const aside = asideRef.current;
+    if (!aside) return;
+    const observer = new ResizeObserver(([item]) => setWidth(Math.max(0, Math.round(item.contentRect.width))));
+    observer.observe(aside);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!entry || type?.preview !== "text") return;
     const controller = new AbortController();
@@ -478,18 +570,20 @@ function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy }: {
   }, [entry?.path, entry?.modified, type?.preview]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!entry || !type) {
-    if (!folder) return <aside className="files-preview" aria-label="미리 보기" />;
+    if (!folder) return <aside ref={asideRef} className="files-preview" aria-label="미리 보기" />;
     const folders = folder.entries.filter((item) => item.kind === "directory").length;
-    return <aside className="files-preview" aria-label="미리 보기">
+    return <aside ref={asideRef} className="files-preview" aria-label="미리 보기">
       <div className="files-preview-art" data-tone="folder"><FolderOpen aria-hidden="true" className="files-icon" data-tone="folder" /></div>
       <h3 className="files-preview-name">{folder.name}</h3>
       <p className="files-preview-kind">폴더 · 하위 폴더 {folders.toLocaleString("ko-KR")}개 · 파일 {(folder.total - folders).toLocaleString("ko-KR")}개</p>
       <div className="files-preview-actions">
         <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(folder.path, "open")}><SquareArrowOutUpRight aria-hidden="true" />탐색기에서 열기</Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => onCopy(folder.path)}><Copy aria-hidden="true" />경로 복사</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => onProperties(folder.path)}><Info aria-hidden="true" />속성</Button>
       </div>
     </aside>;
   }
+  const viewer = viewerKind(entry);
   const Icon = type.icon;
   const textState = text?.path === entry.path ? text : null;
   const art = type.preview === "image" && broken !== entry.path
@@ -497,8 +591,9 @@ function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy }: {
     : type.preview === "video" && broken !== entry.path
       ? <video key={entry.path} src={contentUrl(entry.path)} controls preload="metadata" onError={() => setBroken(entry.path)} />
       : <Icon aria-hidden="true" className="files-icon" data-tone={type.tone} />;
-  return <aside className="files-preview" aria-label="미리 보기">
-    {type.preview === "text"
+  return <aside ref={asideRef} className="files-preview" aria-label="미리 보기">
+    {type.preview === "pdf" ? <PdfPreview key={entry.path} entry={entry} width={width} />
+    : type.preview === "text"
       ? <div className="files-preview-text">
         {!textState || textState.status === "loading" ? <span className="files-preview-note">불러오는 중…</span>
           : textState.status === "binary" ? <span className="files-preview-note">글자로 읽을 수 없는 파일입니다.</span>
@@ -515,10 +610,12 @@ function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy }: {
       <dt>위치</dt><dd title={entry.path}>{entry.path}</dd>
     </dl>
     <div className="files-preview-actions">
-      <Button type="button" size="sm" onClick={() => onOpen(entry)}>{entry.kind === "directory" ? <><FolderOpen aria-hidden="true" />열기</> : <><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</>}</Button>
+      <Button type="button" size="sm" onClick={() => onOpen(entry)}>{entry.kind === "directory" ? <><FolderOpen aria-hidden="true" />열기</> : viewer ? <><Eye aria-hidden="true" />뷰어로 열기</> : <><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</>}</Button>
+      {viewer && <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(entry.path, "open")}><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</Button>}
       <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(entry.path, "reveal")}><FolderOpen aria-hidden="true" />탐색기에서 보기</Button>
       {entry.kind === "file" && <Button type="button" size="sm" variant="ghost" onClick={() => onDownload(entry.path)}><Download aria-hidden="true" />내려받기</Button>}
       <Button type="button" size="sm" variant="ghost" onClick={() => onCopy(entry.path)}><Copy aria-hidden="true" />경로 복사</Button>
+      <Button type="button" size="sm" variant="ghost" onClick={() => onProperties(entry.path)}><Info aria-hidden="true" />속성</Button>
     </div>
   </aside>;
 }

@@ -27,7 +27,7 @@ const BLOCKS: Array<{ value: Block; label: string; icon: LucideIcon }> = [
 ];
 
 /** 본문은 Markdown으로 읽고 쓴다. 한 줄 바꿈도 줄바꿈으로 읽어(breaks) 예전 평문 메모의 줄이 합쳐지지 않는다. */
-const extensions = [
+export const extensions = [
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
     // 밑줄은 Markdown 표준 문법이 없어 뺀다.

@@ -1,10 +1,10 @@
-import { spawn } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, statfsSync, statSync, type Stats } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { constants, copyFileSync, cpSync, existsSync, lstatSync, readdirSync, realpathSync, renameSync, rmSync, statfsSync, statSync, type Dirent, type Stats } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { RelayError } from "../errors";
 
-/** 파일 탐색기 창의 서버 쪽. 로컬 디스크를 읽기만 하고, 바꾸는 일은 운영체제의 탐색기·기본 앱에 넘긴다. */
+/** 파일 탐색기 창의 서버 쪽. 로컬 디스크를 읽고, 화면이 시킨 복사·이동·휴지통 이동만 한다. 열기는 운영체제의 탐색기·기본 앱에 넘긴다. */
 
 export type FileKind = "directory" | "file";
 export interface FileEntry { name: string; path: string; kind: FileKind; size: number | null; modified: string | null; hidden: boolean; link: boolean }
@@ -18,6 +18,17 @@ export interface Places { schemaVersion: 1; platform: NodeJS.Platform; separator
 export type OpenAction = "open" | "reveal";
 /** 탐색기·기본 앱을 띄우는 부분. 테스트는 가짜를 넣는다. */
 export type Launcher = (target: string, action: OpenAction, directory: boolean) => void;
+/** 항목을 치우는 부분. Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. 테스트는 가짜를 넣는다. */
+export type Remover = (targets: string[]) => { recycled: boolean; failed: Failure[] };
+export interface Failure { path: string; message: string }
+/** 속성 창에 보이는 한 항목의 정보. contents는 폴더일 때 안에 든 항목 수와 크기다(너무 크면 partial). */
+export interface FileInfo {
+  schemaVersion: 1; name: string; path: string; kind: FileKind; size: number | null; created: string | null; modified: string | null; accessed: string | null;
+  hidden: boolean; readonly: boolean; link: boolean; target: string | null; contents: { folders: number; files: number; bytes: number; partial: boolean } | null;
+}
+export type PasteMode = "copy" | "cut";
+export interface PasteResult { schemaVersion: 1; mode: PasteMode; done: { from: string; to: string }[]; failed: Failure[] }
+export interface DeleteResult { schemaVersion: 1; recycled: boolean; done: string[]; failed: Failure[] }
 
 /** 한 폴더에서 돌려주는 최대 항목 수. 넘치면 이름 순 앞부분만 주고 truncated로 알린다. */
 export const MAX_ENTRIES = 5000;
@@ -50,7 +61,12 @@ export function localPath(raw: unknown): string {
 }
 
 // Windows의 숨김·시스템 속성은 Node가 알려 주지 않으므로 kernel32를 직접 부른다. 쓸 수 없으면 이름으로 짐작한다.
-type Win32 = { attributes: (target: string) => number | null; drives: () => number; driveType: (root: string) => number; volumeLabel: (root: string) => string; knownFolder: (id: string) => string | null };
+type Win32 = {
+  attributes: (target: string) => number | null; drives: () => number; driveType: (root: string) => number; volumeLabel: (root: string) => string;
+  knownFolder: (id: string) => string | null;
+  /** SHFileOperationW(FO_DELETE, FOF_ALLOWUNDO): 탐색기처럼 휴지통으로 옮긴다. 0이면 성공. */
+  recycle: (targets: string[]) => number;
+};
 let win32: Win32 | null | undefined;
 function loadWin32(): Win32 | null {
   if (win32 !== undefined) return win32;
@@ -65,7 +81,10 @@ function loadWin32(): Win32 | null {
       GetDriveTypeW: { args: [FFIType.ptr], returns: FFIType.u32 },
       GetVolumeInformationW: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
     });
-    const shell = dlopen("shell32.dll", { SHGetKnownFolderPath: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } });
+    const shell = dlopen("shell32.dll", {
+      SHGetKnownFolderPath: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      SHFileOperationW: { args: [FFIType.ptr], returns: FFIType.i32 },
+    });
     const ole = dlopen("ole32.dll", { CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void } });
     const wide = (value: string) => Buffer.from(`${value}\0`, "utf16le");
     win32 = {
@@ -90,10 +109,28 @@ function loadWin32(): Win32 | null {
         if (address) ole.symbols.CoTaskMemFree(address);
         return result === 0 && value ? value : null;
       },
+      recycle: (targets) => {
+        // SHFILEOPSTRUCTW(x64, 56바이트): hwnd 0 · wFunc 8 · pFrom 16 · pTo 24 · fFlags 32 · fAnyOperationsAborted 36 · hNameMappings 40 · lpszProgressTitle 48
+        const from = Buffer.from(`${targets.join("\0")}\0\0`, "utf16le");
+        const op = Buffer.alloc(56);
+        op.writeUInt32LE(FO_DELETE, 8);
+        op.writeBigUInt64LE(BigInt(ptr(from)), 16);
+        op.writeUInt16LE(FOF_ALLOWUNDO | FOF_NO_UI, 32);
+        const result = shell.symbols.SHFileOperationW(ptr(op));
+        return result === 0 && op.readInt32LE(36) ? FO_ABORTED : result;
+      },
     };
   } catch { win32 = null; }
   return win32;
 }
+
+const FO_DELETE = 3;
+const FOF_ALLOWUNDO = 0x40;
+/** FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR: 창을 띄우지 않는다. */
+const FOF_NO_UI = 0x614;
+/** 사용자가 취소했을 때 쓰는 자체 코드(SHFileOperation은 0을 돌려준다). */
+const FO_ABORTED = -1;
+const FILE_ATTRIBUTE_READONLY = 0x1;
 
 const HIDDEN_NAMES = new Set(["desktop.ini", "thumbs.db", "$recycle.bin", "system volume information", "pagefile.sys", "hiberfil.sys", "swapfile.sys", "dumpstack.log", "dumpstack.log.tmp", "config.msi", "recovery"]);
 const FILE_ATTRIBUTE_HIDDEN = 0x2;
@@ -260,4 +297,165 @@ export function openPath(body: unknown, launch: Launcher) {
   const effective: OpenAction = action === "open" && !directory && isExecutable(target) ? "reveal" : action;
   launch(target, effective, directory);
   return { schemaVersion: 1 as const, path: target, action: effective };
+}
+
+const isRoot = (target: string) => path.dirname(target) === target;
+const samePath = (a: string, b: string) => (windows ? a.toLowerCase() === b.toLowerCase() : a === b);
+/** child가 parent 자신이거나 그 안에 있는가 */
+function isInside(child: string, parent: string) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+function isReadonly(target: string, stats: Stats): boolean {
+  if (windows) { const attributes = loadWin32()?.attributes(target); if (attributes !== undefined && attributes !== null) return (attributes & FILE_ATTRIBUTE_READONLY) !== 0; }
+  return (stats.mode & 0o200) === 0;
+}
+
+/** 폴더 안 항목 수와 크기. 너무 크거나 오래 걸리면 거기까지만 세고 partial로 알린다. */
+const CONTENTS_MAX_ENTRIES = 200_000;
+const CONTENTS_MAX_MS = 2000;
+export function folderContents(root: string): NonNullable<FileInfo["contents"]> {
+  const result = { folders: 0, files: 0, bytes: 0, partial: false };
+  const started = Date.now();
+  const stack = [root];
+  let seen = 0;
+  while (stack.length) {
+    const directory = stack.pop()!;
+    let entries: Dirent[];
+    try { entries = readdirSync(directory, { withFileTypes: true }); } catch { result.partial = true; continue; }
+    for (const entry of entries) {
+      if (++seen > CONTENTS_MAX_ENTRIES || Date.now() - started > CONTENTS_MAX_MS) { result.partial = true; return result; }
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) { result.folders += 1; stack.push(target); }
+      else { result.files += 1; if (entry.isFile()) { try { result.bytes += statSync(target).size; } catch { result.partial = true; } } }
+    }
+  }
+  return result;
+}
+
+/** GET /api/v1/files/stat?path=: 속성 창에 보이는 정보. */
+export function statPath(raw: unknown): FileInfo {
+  const target = localPath(raw);
+  try {
+    const own = lstatSync(target);
+    const link = own.isSymbolicLink();
+    let stats = own; let linkTarget: string | null = null;
+    if (link) { try { stats = statSync(target); linkTarget = realpathSync(target); } catch { /* 끊어진 링크는 링크 자체의 정보만 보인다. */ } }
+    const directory = stats.isDirectory();
+    const name = isRoot(target) ? target.replace(/[\\/]$/, "") || target : path.basename(target);
+    return { schemaVersion: 1, name, path: target, kind: directory ? "directory" : "file", size: directory ? null : stats.size,
+      created: stats.birthtime.getTime() > 0 ? stats.birthtime.toISOString() : null, modified: stats.mtime.toISOString(), accessed: stats.atime.toISOString(),
+      hidden: isHidden(name, target), readonly: isReadonly(target, stats), link, target: linkTarget,
+      contents: directory ? folderContents(target) : null };
+  } catch (error) { throw fsError(error); }
+}
+
+const MAX_BATCH = 200;
+function pathList(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || !value.length) throw new RelayError("INVALID_ARGUMENT", `${label}는 경로 배열입니다.`);
+  if (value.length > MAX_BATCH) throw new RelayError("INVALID_ARGUMENT", `한 번에 ${MAX_BATCH}개까지만 다룹니다.`);
+  const list = value.map(localPath);
+  // 같은 경로를 두 번 주면 한 번만 다룬다.
+  return list.filter((item, index) => list.findIndex((other) => samePath(other, item)) === index);
+}
+const failureOf = (error: unknown): string => (error instanceof RelayError ? error.message : fsError(error).message);
+
+/** 붙여넣을 이름. 같은 폴더에 복사하거나 같은 이름이 있으면 탐색기처럼 `이름 - 복사본`, `이름 - 복사본 (2)`를 쓴다. */
+export function copyName(directory: string, name: string, taken = (candidate: string) => existsSync(path.join(directory, candidate))): string {
+  if (!taken(name)) return name;
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let index = 1; index < 1000; index += 1) {
+    const candidate = `${stem} - 복사본${index > 1 ? ` (${index})` : ""}${ext}`;
+    if (!taken(candidate)) return candidate;
+  }
+  throw new RelayError("FILE_ERROR", "붙여넣을 이름을 정하지 못했습니다.", 5, 500);
+}
+
+/** POST /api/v1/files/paste 본문 {sources, destination, mode}. 덮어쓰지 않으며, 잘라내기에서 이름이 겹치면 그 항목만 건너뛴다. */
+export function pasteItems(body: unknown): PasteResult {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RelayError("INVALID_ARGUMENT", "{ sources, destination, mode } JSON을 보내세요.");
+  const { sources: rawSources, destination: rawDestination, mode, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).length) throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 키: ${Object.keys(rest).join(", ")}`);
+  if (mode !== "copy" && mode !== "cut") throw new RelayError("INVALID_ARGUMENT", "mode는 copy 또는 cut입니다.");
+  const sources = pathList(rawSources, "sources");
+  const destination = localPath(rawDestination);
+  try { if (!statSync(destination).isDirectory()) throw new RelayError("NOT_A_DIRECTORY", "붙여넣을 곳은 폴더여야 합니다.", 2, 400); }
+  catch (error) { throw fsError(error); }
+  const result: PasteResult = { schemaVersion: 1, mode, done: [], failed: [] };
+  for (const source of sources) {
+    try {
+      if (isRoot(source)) throw new RelayError("INVALID_ARGUMENT", "드라이브 전체는 복사하거나 옮길 수 없습니다.");
+      const stats = lstatSync(source);
+      const directory = stats.isDirectory();
+      const sameFolder = samePath(path.dirname(source), destination);
+      if (directory && isInside(destination, source)) throw new RelayError("INVALID_ARGUMENT", "폴더를 자기 자신이나 그 하위 폴더에 넣을 수 없습니다.");
+      if (mode === "cut" && sameFolder) throw new RelayError("INVALID_ARGUMENT", "이미 이 폴더에 있습니다.");
+      const name = path.basename(source);
+      let targetName = name;
+      if (mode === "copy") targetName = copyName(destination, name);
+      else if (existsSync(path.join(destination, name))) throw new RelayError("FILE_EXISTS", "같은 이름의 항목이 이미 있습니다.");
+      const target = path.join(destination, targetName);
+      if (mode === "copy") {
+        if (directory) cpSync(source, target, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+        else copyFileSync(source, target, constants.COPYFILE_EXCL);
+      } else {
+        try { renameSync(source, target); }
+        catch (error) {
+          // 다른 드라이브로는 이름을 바꿀 수 없으니 복사한 뒤 원본을 지운다.
+          if ((error as { code?: string }).code !== "EXDEV") throw error;
+          if (directory) cpSync(source, target, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+          else copyFileSync(source, target, constants.COPYFILE_EXCL);
+          rmSync(source, { recursive: true, force: false });
+        }
+      }
+      result.done.push({ from: source, to: target });
+    } catch (error) { result.failed.push({ path: source, message: failureOf(error) }); }
+  }
+  return result;
+}
+
+/** Windows에서는 휴지통으로 옮긴다(bun:ffi가 없으면 PowerShell). 그 밖의 운영체제는 바로 지운다. */
+export const systemRemover: Remover = (targets) => {
+  const failed: Failure[] = [];
+  if (!windows) {
+    for (const target of targets) { try { rmSync(target, { recursive: true, force: false }); } catch (error) { failed.push({ path: target, message: failureOf(error) }); } }
+    return { recycled: false, failed };
+  }
+  const api = loadWin32();
+  for (const target of targets) {
+    if (api) {
+      const code = api.recycle([target]);
+      if (code === 0) continue;
+      failed.push({ path: target, message: code === FO_ABORTED ? "휴지통으로 옮기기를 취소했습니다." : code === 2 || code === 3 ? "파일이나 폴더가 없습니다."
+        : code === 5 || code === 0x78 ? "이 항목을 옮길 권한이 없습니다." : code === 32 ? "다른 프로그램이 사용 중이라 옮길 수 없습니다." : `휴지통으로 옮기지 못했습니다(코드 ${code}).` });
+      continue;
+    }
+    const directory = isDirectory(target);
+    const script = `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${directory ? "DeleteDirectory" : "DeleteFile"}($env:RELAY_REMOVE_TARGET, 'OnlyErrorDialogs', 'SendToRecycleBin')`;
+    const run = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { env: { ...process.env, RELAY_REMOVE_TARGET: target }, windowsHide: true, timeout: 30_000, encoding: "utf8" });
+    if (run.status !== 0) failed.push({ path: target, message: "휴지통으로 옮기지 못했습니다." });
+  }
+  return { recycled: true, failed };
+};
+
+/** POST /api/v1/files/delete 본문 {paths}. 드라이브 루트와 사용자 홈은 지우지 않는다. */
+export function deleteItems(body: unknown, remove: Remover): DeleteResult {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RelayError("INVALID_ARGUMENT", "{ paths } JSON을 보내세요.");
+  const { paths: rawPaths, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).length) throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 키: ${Object.keys(rest).join(", ")}`);
+  const result: DeleteResult = { schemaVersion: 1, recycled: false, done: [], failed: [] };
+  const home = os.homedir();
+  const targets: string[] = [];
+  for (const target of pathList(rawPaths, "paths")) {
+    if (isRoot(target) || samePath(target, home)) { result.failed.push({ path: target, message: "드라이브 전체나 사용자 폴더는 지울 수 없습니다." }); continue; }
+    try { lstatSync(target); targets.push(target); } catch (error) { result.failed.push({ path: target, message: failureOf(error) }); }
+  }
+  if (targets.length) {
+    const outcome = remove(targets);
+    result.recycled = outcome.recycled;
+    result.failed.push(...outcome.failed);
+    result.done = targets.filter((target) => !outcome.failed.some((failure) => samePath(failure.path, target)));
+  }
+  return result;
 }
