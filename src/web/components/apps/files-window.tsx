@@ -346,14 +346,15 @@ export function FilesWindow() {
     const [start, end] = from <= index ? [from, index] : [index, from];
     selectRange(entries.slice(start, end + 1).map((entry) => entry.path), entries[index].path, add);
   }
-  /** 누르면 하나를 고른다. Ctrl(⌘)+클릭·체크 상자는 넣고 빼기, Shift+클릭은 범위(Ctrl+Shift는 더하기)다.
+  /** 누르면 하나를 고른다. Ctrl(⌘)+클릭은 넣고 빼기, Shift+클릭은 범위(Ctrl+Shift는 더하기)다.
+   *  체크 모드에서는 그냥 눌러도 그 항목만 넣고 빼며 Shift 범위도 더하기라, 다른 체크가 풀리지 않는다. 모두 빼면 체크 모드가 끝난다.
    *  오른쪽 클릭은 고른 묶음 안이면 묶음을 그대로 둔다. */
   function pick(entry: FileEntry, index: number, event: ReactMouseEvent) {
     if (event.button === 2) { if (!pickedSet.has(entry.path)) select(entry.path); return; }
     if (event.button !== 0) return;
-    const toggleKey = event.ctrlKey || event.metaKey;
-    if (event.shiftKey) extendTo(index, toggleKey);
-    else if (toggleKey || (event.target as Element).closest(".files-check")) toggle(entry.path);
+    const add = checking || event.ctrlKey || event.metaKey;
+    if (event.shiftKey) extendTo(index, add);
+    else if (add) toggle(entry.path);
     else select(entry.path);
   }
   const allPicked = entries.length > 0 && picked.length === entries.length;
@@ -416,10 +417,10 @@ export function FilesWindow() {
               : <>
                 {data.truncated && <div className="browser-notice" role="status"><TriangleAlert aria-hidden="true" /><span>항목이 너무 많아 이름 순으로 앞 {data.entries.length.toLocaleString("ko-KR")}개만 보입니다(전체 {data.total.toLocaleString("ko-KR")}개).</span></div>}
                 {view === "list" && <div className="files-columns" role="row">
-                  {checking && <span className="files-cell-check" role="columnheader">
+                  <span className="files-cell-check" role="columnheader">
                     <button type="button" className="files-check" role="checkbox" aria-checked={allPicked ? true : "mixed"} aria-label="모두 선택" title={allPicked ? "선택 해제" : "모두 선택 (Ctrl+A)"}
                       onClick={pickAll}>{allPicked ? <Check aria-hidden="true" /> : <Minus aria-hidden="true" />}</button>
-                  </span>}
+                  </span>
                   {COLUMNS.map((column) => <button key={column.key} type="button" role="columnheader" data-column={column.key}
                     aria-sort={sort.key === column.key ? (sort.desc ? "descending" : "ascending") : undefined} onClick={() => sortBy(column.key)}>
                     <span>{column.label}</span>{sort.key === column.key && <ChevronUp aria-hidden="true" data-desc={sort.desc ? "" : undefined} />}
@@ -434,7 +435,7 @@ export function FilesWindow() {
                   {entries.length === 0
                     ? <div className="files-list-empty">{query.trim() ? `‘${query.trim()}’과 맞는 항목이 없습니다.` : hiddenCount ? `숨김 항목 ${hiddenCount}개만 있습니다.` : "이 폴더는 비어 있습니다."}</div>
                     : entries.map((entry, index) => {
-                      const props: ItemProps = { entry, index, selected: pickedSet.has(entry.path), lead: checking && index === selectedIndex, checking, cut: inClipboard(entry.path, "cut"),
+                      const props: ItemProps = { entry, index, selected: pickedSet.has(entry.path), cut: inClipboard(entry.path, "cut"),
                         onPick: (event) => pick(entry, index, event), onOpen: () => openEntry(entry), onMenu: onItemMenu(entry) };
                       return view === "list" ? <ListRow key={entry.path} {...props} /> : <GridTile key={entry.path} {...props} />;
                     })}
@@ -579,8 +580,8 @@ function ThisPC({ places, favorites, loading, onGo }: { places: Places | undefin
   </div>;
 }
 
-/** lead는 여럿을 고른 동안 키보드 기준 항목, checking은 체크 상자 열을 보이는 다중 선택 상태다. */
-type ItemProps = { entry: FileEntry; index: number; selected: boolean; lead: boolean; checking: boolean; cut: boolean;
+/** 체크 상자는 늘 그려 두고 체크 모드(.files-main[data-checking])에서만 CSS로 연다. */
+type ItemProps = { entry: FileEntry; index: number; selected: boolean; cut: boolean;
   onPick: (event: ReactMouseEvent) => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
 
 /** 고른 파일 크기의 합. 파일이 하나도 없으면(폴더만) null이다. */
@@ -635,12 +636,12 @@ function resizeColumn(event: ReactPointerEvent<HTMLSpanElement>, key: ColumnKey)
   handle.addEventListener("pointercancel", end);
 }
 
-function ListRow({ entry, index, selected, lead, checking, cut, onPick, onOpen, onMenu }: ItemProps) {
+function ListRow({ entry, index, selected, cut, onPick, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   return <div id={optionId(index)} role="option" aria-selected={selected} className="files-row" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
-    data-lead={lead ? "" : undefined} onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
-    {checking && <span className="files-cell-check"><CheckBox checked={selected} /></span>}
+    onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
+    <span className="files-cell-check"><CheckBox checked={selected} /></span>
     <span className="files-cell-name"><Icon aria-hidden="true" className="files-icon" data-tone={type.tone} /><span>{entry.name}</span>
       {entry.link && <SquareArrowOutUpRight aria-label="바로 가기" className="files-link-badge" />}</span>
     <span className="files-cell" data-column="modified">{formatDate(entry.modified)}</span>
@@ -649,15 +650,15 @@ function ListRow({ entry, index, selected, lead, checking, cut, onPick, onOpen, 
   </div>;
 }
 
-function GridTile({ entry, index, selected, lead, checking, cut, onPick, onOpen, onMenu }: ItemProps) {
+function GridTile({ entry, index, selected, cut, onPick, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   const [broken, setBroken] = useState(false);
   const thumb = type.preview === "image" && !broken && (entry.size ?? 0) <= THUMB_MAX_BYTES;
   return <div id={optionId(index)} role="option" aria-selected={selected} className="files-tile" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
-    data-lead={lead ? "" : undefined} onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
+    onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
     <span className="files-tile-art" data-tone={type.tone}>
-      {checking && <CheckBox checked={selected} />}
+      <CheckBox checked={selected} />
       {thumb ? <img src={contentUrl(entry.path)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />
         : <Icon aria-hidden="true" className="files-icon" data-tone={type.tone} />}
     </span>

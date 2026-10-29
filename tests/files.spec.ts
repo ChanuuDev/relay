@@ -296,7 +296,8 @@ test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽�
   const narrow = await proseWidth();
   await viewer.locator(".window-title").dblclick();
   await expect.poll(proseWidth).toBeGreaterThan(narrow + 100);
-  expect(Math.abs((await proseWidth()) - (await viewer.locator(".viewer-document").evaluate((node) => node.clientWidth)))).toBeLessThanOrEqual(1);
+  // 최대화 애니메이션 중에는 두 폭을 잰 사이에도 창이 커지므로, 애니메이션이 멎어 맞아질 때까지 다시 잰다.
+  await expect.poll(async () => Math.abs((await proseWidth()) - (await viewer.locator(".viewer-document").evaluate((node) => node.clientWidth)))).toBeLessThanOrEqual(1);
   await viewer.locator(".window-title").dblclick();
   await viewer.getByRole("radio", { name: "원문" }).click();
   await expect(viewer.locator(".viewer-source")).toContainText("# 안내");
@@ -523,74 +524,89 @@ test("파일 탐색기: 오른쪽 클릭으로 복사·잘라내기·붙여넣�
   expect(errors).toEqual([]);
 });
 
-test("파일 탐색기: Ctrl·Shift+클릭으로 여럿을 고르면 맨 왼쪽에 체크 상자 열이 나오고, 고른 묶음을 복사·삭제한다", async ({ page }) => {
+test("파일 탐색기: 여럿을 고르면 체크 모드가 되어 맨 왼쪽 체크 상자 열이 열리고, 그냥 눌러도 넣고 빼며, 고른 묶음을 복사·삭제한다", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   const disk = await openFolder(page);
   const main = page.locator(`${win("files")} .files-main`);
-  const checks = page.locator(`${win("files")} .files-row .files-check`);
   const picked = page.locator(`${win("files")} [role=option][aria-selected=true]`);
   const checkOf = (name: string) => row(page, name).locator(".files-check");
+  const headerCheck = page.locator(`${win("files")} .files-columns .files-check`);
+  const nameX = async () => Math.round((await row(page, "보고서.txt").locator(".files-cell-name").boundingBox())!.x);
   await expect(page.locator(".files-list")).toHaveAttribute("aria-multiselectable", "true");
-  // 하나만 고르면 체크 상자 열이 없다.
+  // 하나만 고르면 체크 상자 열이 닫혀 있다.
   await row(page, "하위 폴더").click();
   await expect(picked).toHaveCount(1);
-  await expect(checks).toHaveCount(0);
-  await expect(page.locator(`${win("files")} .files-columns .files-check`)).toHaveCount(0);
-  // Ctrl+클릭으로 더하면 맨 왼쪽에 체크 상자 열이 나오고 고른 행만 체크된다.
+  await expect(main).not.toHaveAttribute("data-checking", /.*/);
+  await expect(checkOf("하위 폴더")).toBeHidden();
+  await expect(headerCheck).toBeHidden();
+  const closed = await nameX();
+  // Ctrl+클릭으로 더하면 체크 모드: 열이 벌어지며 칸들이 오른쪽으로 26px 밀리고, 고른 행만 체크된다.
   await row(page, "그림.png").click({ modifiers: ["Control"] });
   await expect(picked).toHaveCount(2);
   await expect(main).toHaveAttribute("data-checking", "");
-  await expect(checks).toHaveCount(4);
+  await expect(checkOf("보고서.txt")).toBeVisible();
+  await expect(headerCheck).toBeVisible();
+  await expect.poll(nameX).toBe(closed + 26);
   await expect(checkOf("그림.png")).toHaveAttribute("data-checked", "");
   await expect(checkOf("보고서.txt")).not.toHaveAttribute("data-checked", /.*/);
   const box = (await checkOf("보고서.txt").boundingBox())!;
-  const name = (await row(page, "보고서.txt").locator(".files-cell-name").boundingBox())!;
-  expect(box.x + box.width).toBeLessThanOrEqual(name.x);
+  expect(box.x + box.width).toBeLessThanOrEqual(await nameX());
   // 머리글 열도 체크 상자 열만큼 밀려 행 칸과 맞는다.
   const header = (await page.locator(`${win("files")} .files-columns [data-column="name"]`).boundingBox())!;
-  expect(Math.round(header.x)).toBe(Math.round(name.x));
+  expect(Math.round(header.x)).toBe(await nameX());
   await expect(page.locator(".files-status")).toContainText("2개 선택됨");
   await expect(page.locator(".files-preview")).toContainText("항목 2개");
   await expect(page.locator(".files-preview")).toContainText("폴더 1개 · 파일 1개");
-  // 체크 상자를 누르면 넣고 뺀다. 하나로 줄어도 체크 상자 열은 남는다.
-  await checkOf("보고서.txt").click();
+  // 체크 모드에서는 그냥 눌러도 그 항목만 넣고 뺀다. 고른 항목을 다시 누르면 체크만 풀리고 모드는 남는다.
+  await row(page, "보고서.txt").click();
   await expect(picked).toHaveCount(3);
+  await row(page, "그림.png").click();
+  await expect(picked).toHaveCount(2);
+  await expect(row(page, "그림.png")).toHaveAttribute("aria-selected", "false");
   await checkOf("하위 폴더").click();
-  await checkOf("그림.png").click();
   await expect(picked).toHaveCount(1);
-  await expect(row(page, "보고서.txt")).toHaveAttribute("aria-selected", "true");
-  await expect(checks).toHaveCount(4);
-  // 체크 상자를 두 번 눌러도 열리지 않는다.
+  await expect(main).toHaveAttribute("data-checking", "");
+  // 체크 상자를 두 번 눌러도 열리지 않고 체크도 그대로다.
   await checkOf("하위 폴더").dblclick();
   await expect(row(page, "그림.png")).toBeVisible();
   await expect(row(page, "하위 폴더")).toHaveAttribute("aria-selected", "false");
-  // 그냥 누르면 하나만 고르고 체크 상자 열이 사라진다.
-  await row(page, "zeta.log").click();
-  await expect(picked).toHaveCount(1);
-  await expect(checks).toHaveCount(0);
+  // 남은 체크를 풀면 체크 모드가 끝나고 열이 닫힌다.
+  await row(page, "보고서.txt").click();
+  await expect(picked).toHaveCount(0);
+  await expect(main).not.toHaveAttribute("data-checking", /.*/);
+  await expect(checkOf("보고서.txt")).toBeHidden();
+  await expect.poll(nameX).toBe(closed);
+  // 빈 곳을 누르면 모두 풀리고 체크 모드가 끝난다.
+  await row(page, "하위 폴더").click();
+  await row(page, "zeta.log").click({ modifiers: ["Control"] });
+  await expect(main).toHaveAttribute("data-checking", "");
+  await page.locator(".files-list").click({ position: { x: 200, y: 300 } });
+  await expect(picked).toHaveCount(0);
+  await expect(main).not.toHaveAttribute("data-checking", /.*/);
 
-  // Shift+클릭은 기준 항목부터 범위, 기준은 그대로 남는다. Ctrl+Shift+클릭은 범위를 더한다.
+  // Shift+클릭은 기준 항목부터 범위다. 체크 모드에서는 Shift 범위도 더해 기존 체크를 풀지 않는다.
   await row(page, "하위 폴더").click();
   await row(page, "보고서.txt").click({ modifiers: ["Shift"] });
   await expect(picked).toHaveCount(3);
   await expect(row(page, "zeta.log")).toHaveAttribute("aria-selected", "false");
-  await row(page, "그림.png").click({ modifiers: ["Shift"] });
+  await row(page, "하위 폴더").click();
   await expect(picked).toHaveCount(2);
-  await expect(row(page, "보고서.txt")).toHaveAttribute("aria-selected", "false");
-  await row(page, "zeta.log").click({ modifiers: ["Control"] });
-  await row(page, "보고서.txt").click({ modifiers: ["Control", "Shift"] });
-  await expect(picked).toHaveCount(4);
+  await row(page, "그림.png").click({ modifiers: ["Shift"] });
+  await expect(picked).toHaveCount(3);
+  await expect(row(page, "보고서.txt")).toHaveAttribute("aria-selected", "true");
   // 키보드: Shift+화살표·End로 범위, Esc로 모두 풀기, Ctrl+A로 모두 선택
+  await page.keyboard.press("Escape");
+  await expect(main).not.toHaveAttribute("data-checking", /.*/);
   await row(page, "그림.png").click();
   await page.keyboard.press("Shift+ArrowDown");
   await expect(picked).toHaveCount(2);
   await page.keyboard.press("Shift+End");
   await expect(picked).toHaveCount(3);
   await expect(row(page, "하위 폴더")).toHaveAttribute("aria-selected", "false");
-  await expect(row(page, "zeta.log")).toHaveAttribute("data-lead", "");
+  await expect(page.locator(".files-list")).toHaveAttribute("aria-activedescendant", (await row(page, "zeta.log").getAttribute("id"))!);
   await page.keyboard.press("Escape");
   await expect(picked).toHaveCount(0);
-  await expect(checks).toHaveCount(0);
+  await expect(checkOf("zeta.log")).toBeHidden();
   await page.keyboard.press("Control+a");
   await expect(picked).toHaveCount(4);
   // 머리글의 체크 상자는 모두 고르면 체크, 일부면 가로줄이다. 누르면 모두 풀고, 일부일 때 누르면 모두 고른다.
@@ -635,9 +651,9 @@ test("파일 탐색기: Ctrl·Shift+클릭으로 여럿을 고르면 맨 왼쪽�
   await page.getByRole("radio", { name: "아이콘 보기" }).click();
   const tile = (name: string) => page.locator(".files-tile", { hasText: name });
   await tile("그림.png").click();
-  await expect(page.locator(".files-tile .files-check")).toHaveCount(0);
+  await expect(tile("zeta.log").locator(".files-check")).toBeHidden();
   await tile("보고서.txt").click({ modifiers: ["Control"] });
-  await expect(page.locator(".files-tile .files-check")).toHaveCount(4);
+  await expect(tile("zeta.log").locator(".files-check")).toBeVisible();
   await expect(tile("보고서.txt").locator(".files-check")).toHaveAttribute("data-checked", "");
   expect(errors).toEqual([]);
 });
