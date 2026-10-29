@@ -3,8 +3,8 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowUp, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, EyeOff, FileWarning, Folder, FolderOpen, HardDrive, LayoutGrid, List,
-  Info, LoaderCircle, Monitor, PanelRight, RotateCw, Search, SquareArrowOutUpRight, TriangleAlert, X,
+  ArrowUp, Check, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, EyeOff, FileWarning, Folder, FolderOpen, HardDrive, LayoutGrid, List,
+  Info, LoaderCircle, Minus, Monitor, PanelRight, RotateCw, Search, SquareArrowOutUpRight, TriangleAlert, X,
 } from "lucide-react";
 import { ConfirmDialog } from "../desktop/confirm-dialog";
 import { PdfPreview } from "./files-pdf-preview";
@@ -19,7 +19,7 @@ import { SplitView } from "../desktop/split-view";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
-  COLUMN_MIN, contentUrl, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, sortEntries,
+  BATCH_MAX, COLUMN_MIN, contentUrl, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, sortEntries,
   TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey, type ColumnKey, type ColumnWidths,
 } from "../../lib/files";
 
@@ -39,13 +39,16 @@ export function FilesWindow() {
   const canBack = useFiles((state) => state.index > 0);
   const canForward = useFiles((state) => state.index < state.history.length - 1);
   const selected = useFiles((state) => state.selected);
+  const pickedPaths = useFiles((state) => state.picked);
+  const anchor = useFiles((state) => state.anchor);
+  const checkMode = useFiles((state) => state.checking);
   const view = useFiles((state) => state.view);
   const showHidden = useFiles((state) => state.hidden);
   const showPreview = useFiles((state) => state.preview);
   const sort = useFiles((state) => state.sort);
   const columns = useFiles((state) => state.columns);
   const clipboard = useFiles((state) => state.clipboard);
-  const { go, back, forward, select, setView, toggleHidden, togglePreview, sortBy, setClipboard } = useFiles.getState();
+  const { go, back, forward, select, toggle, selectRange, selectMany, setView, toggleHidden, togglePreview, sortBy, setClipboard } = useFiles.getState();
   const isOpen = useDesktop((state) => state.windows.files.open);
   const focused = useDesktop((state) => state.focused === "files");
   const [query, setQuery] = useState("");
@@ -55,7 +58,7 @@ export function FilesWindow() {
   const leavingRef = useRef(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   // 휴지통으로 옮길 항목(확인 창)과 속성 창에 보일 경로. busy는 붙여넣기·삭제가 서버에서 끝나기를 기다리는 중이다.
-  const [removing, setRemoving] = useState<FileEntry | null>(null);
+  const [removing, setRemoving] = useState<FileEntry[] | null>(null);
   const [properties, setProperties] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -83,6 +86,10 @@ export function FilesWindow() {
   }, [all, showHidden, query, sort]);
   const selectedIndex = entries.findIndex((entry) => entry.path === selected);
   const current = selectedIndex >= 0 ? entries[selectedIndex] : null;
+  // 거르기·숨김으로 안 보이는 항목은 고른 묶음에 남아 있어도 다루지 않는다. 체크 상자 열은 여럿을 고른 동안만 보인다.
+  const pickedSet = useMemo(() => new Set(pickedPaths), [pickedPaths]);
+  const picked = useMemo(() => entries.filter((entry) => pickedSet.has(entry.path)), [entries, pickedSet]);
+  const checking = picked.length > 1 || (checkMode && picked.length > 0);
   const drives = places.data?.drives ?? [];
   // 서버가 Windows면 삭제는 휴지통으로 옮기기다. 서버 정보가 아직 없으면 브라우저 플랫폼으로 짐작한다.
   const RECYCLE = places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform);
@@ -127,10 +134,19 @@ export function FilesWindow() {
     else void system(entry.path, "open");
   }
   const inClipboard = (target: string, mode?: PasteMode) => Boolean(clipboard && (!mode || clipboard.mode === mode) && clipboard.paths.some((path) => path.toLowerCase() === target.toLowerCase()));
-  function cutOrCopy(entry: FileEntry, mode: PasteMode) {
-    const next: Clipboard = { paths: [entry.path], mode };
+  /** 여럿을 다룰 때 알림에 쓰는 말: 하나면 이름, 여럿이면 개수. */
+  const nameOf = (items: FileEntry[]) => (items.length === 1 ? `‘${items[0].name}’을(를)` : `항목 ${items.length.toLocaleString("ko-KR")}개를`);
+  function cutOrCopy(items: FileEntry[], mode: PasteMode) {
+    if (!items.length) return;
+    if (items.length > BATCH_MAX) { say(`한 번에 ${BATCH_MAX}개까지만 ${mode === "cut" ? "잘라낼" : "복사할"} 수 있습니다.`, "error"); return; }
+    const next: Clipboard = { paths: items.map((item) => item.path), mode };
     setClipboard(next);
-    say(mode === "cut" ? `‘${entry.name}’을(를) 잘라냈습니다. 붙여넣을 폴더에서 Ctrl+V를 누르세요.` : `‘${entry.name}’을(를) 복사했습니다.`);
+    say(mode === "cut" ? `${nameOf(items)} 잘라냈습니다. 붙여넣을 폴더에서 Ctrl+V를 누르세요.` : `${nameOf(items)} 복사했습니다.`);
+  }
+  function requestRemove(items: FileEntry[]) {
+    if (!items.length) return;
+    if (items.length > BATCH_MAX) { say(`한 번에 ${BATCH_MAX}개까지만 삭제할 수 있습니다.`, "error"); return; }
+    setRemoving(items);
   }
   /** 폴더 목록 캐시를 버린다. 붙여넣기·삭제 뒤 바뀐 폴더와 그 상위(트리의 하위 폴더 수)를 다시 읽는다. */
   const invalidate = (...folders: (string | null)[]) => {
@@ -144,25 +160,29 @@ export function FilesWindow() {
       const sources = new Set(clipboard.paths.map((path) => parentOf(path)));
       invalidate(destination, ...sources);
       if (clipboard.mode === "cut") { setClipboard(null); if (result.done.length) useViewer.getState().forget(result.done.map((item) => item.from)); }
-      if (result.done.length && destination.toLowerCase() === (location ?? "").toLowerCase()) select(result.done[0].to);
+      if (result.done.length && destination.toLowerCase() === (location ?? "").toLowerCase()) selectMany(result.done.map((item) => item.to));
       if (result.failed.length) say(result.done.length ? `${result.done.length}개를 붙여 넣고 ${result.failed.length}개는 건너뛰었습니다: ${result.failed[0].message}` : result.failed[0].message, "error");
       else say(clipboard.mode === "cut" ? `${result.done.length}개를 옮겼습니다.` : `${result.done.length}개를 붙여 넣었습니다.`);
     } catch (error) { say(error instanceof Error ? error.message : "붙여 넣지 못했습니다.", "error"); }
     finally { setBusy(false); }
   }
   async function confirmRemove() {
-    const entry = removing;
+    const items = removing;
     setRemoving(null);
-    if (!entry || busy) return;
+    if (!items?.length || busy) return;
     setBusy(true);
     try {
-      const result = await deleteItems([entry.path]);
-      invalidate(parentOf(entry.path));
+      const result = await deleteItems(items.map((item) => item.path));
+      invalidate(...new Set(items.map((item) => parentOf(item.path))));
       if (result.done.length) {
+        const done = new Set(result.done);
         useViewer.getState().forget(result.done);
-        if (clipboard?.paths.some((path) => result.done.includes(path))) setClipboard(null);
-        if (selected === entry.path) select(null);
-        say(result.recycled ? `‘${entry.name}’을(를) 휴지통으로 옮겼습니다.` : `‘${entry.name}’을(를) 삭제했습니다.`);
+        if (clipboard?.paths.some((path) => done.has(path))) setClipboard(null);
+        if (useFiles.getState().picked.some((path) => done.has(path))) select(null);
+        const what = items.length === 1 ? nameOf(items) : `항목 ${result.done.length.toLocaleString("ko-KR")}개를`;
+        const text = `${what} ${result.recycled ? "휴지통으로 옮겼습니다." : "삭제했습니다."}`;
+        if (result.failed.length) say(`${text} ${result.failed.length.toLocaleString("ko-KR")}개는 지우지 못했습니다: ${result.failed[0].message}`, "error");
+        else say(text);
       } else say(result.failed[0]?.message ?? "삭제하지 못했습니다.", "error");
     } catch (error) { say(error instanceof Error ? error.message : "삭제하지 못했습니다.", "error"); }
     finally { setBusy(false); }
@@ -178,7 +198,8 @@ export function FilesWindow() {
   }
 
   function openMenu(entry: FileEntry | null, left: number, top: number, tree?: TreeTarget) {
-    if (entry) select(entry.path);
+    // 고른 묶음 안의 항목에서 열면 묶음을 그대로 두고 묶음 메뉴를 연다.
+    if (entry && !pickedSet.has(entry.path)) select(entry.path);
     leavingRef.current = false;
     setMenuLeaving(false);
     // 열 때마다 새로 마운트해(key) 닫히는 중인 이전 메뉴를 이어 쓰지 않는다. 그래야 첫 항목이 초점을 받고 Esc가 먹는다.
@@ -222,6 +243,15 @@ export function FilesWindow() {
   const menuEntries = (target: Menu): MenuEntry[] => {
     if (target.tree) return treeEntries(target.tree);
     const entry = target.entry;
+    if (entry && picked.length > 1 && pickedSet.has(entry.path)) return [
+      { kind: "label", id: "count", label: `항목 ${picked.length.toLocaleString("ko-KR")}개` },
+      { kind: "item", id: "cut", label: "잘라내기", onSelect: () => cutOrCopy(picked, "cut") },
+      { kind: "item", id: "copy", label: "복사", onSelect: () => cutOrCopy(picked, "copy") },
+      { kind: "item", id: "delete", label: "삭제", danger: true, disabled: busy, onSelect: () => requestRemove(picked) },
+      { kind: "separator", id: "sep" },
+      { kind: "item", id: "path", label: "경로 복사", onSelect: () => void copyPath(picked.map((item) => item.path).join("\n")) },
+      { kind: "item", id: "clear", label: "선택 해제", onSelect: () => select(null) },
+    ];
     if (entry) {
       const viewer = viewerKind(entry);
       return [
@@ -231,10 +261,10 @@ export function FilesWindow() {
         { kind: "item", id: "reveal", label: "탐색기에서 보기", onSelect: () => void system(entry.path, "reveal") },
         ...(entry.kind === "file" ? [{ kind: "item" as const, id: "download", label: "내려받기", onSelect: () => download(entry.path) }] : []),
         { kind: "separator", id: "sep" },
-        { kind: "item", id: "cut", label: "잘라내기", onSelect: () => cutOrCopy(entry, "cut") },
-        { kind: "item", id: "copy", label: "복사", onSelect: () => cutOrCopy(entry, "copy") },
+        { kind: "item", id: "cut", label: "잘라내기", onSelect: () => cutOrCopy([entry], "cut") },
+        { kind: "item", id: "copy", label: "복사", onSelect: () => cutOrCopy([entry], "copy") },
         ...(entry.kind === "directory" ? [pasteEntry(entry.path)] : []),
-        { kind: "item", id: "delete", label: "삭제", danger: true, disabled: busy, onSelect: () => setRemoving(entry) },
+        { kind: "item", id: "delete", label: "삭제", danger: true, disabled: busy, onSelect: () => requestRemove([entry]) },
         { kind: "separator", id: "sep2" },
         { kind: "item", id: "path", label: "경로 복사", onSelect: () => void copyPath(entry.path) },
         { kind: "item", id: "properties", label: "속성", onSelect: () => setProperties(entry.path) },
@@ -252,8 +282,8 @@ export function FilesWindow() {
     ];
   };
 
-  /** 화살표·Home·End로 고르고, Enter로 열고, Backspace·Alt+↑로 위로, Alt+←/→로 뒤로·앞으로. 글자를 치면 그 이름으로 건너뛴다.
-   *  Ctrl+C·X·V는 복사·잘라내기·붙여넣기, Delete는 삭제, Alt+Enter는 속성이다. */
+  /** 화살표·Home·End로 고르고(Shift를 누르면 범위), Enter로 열고, Backspace·Alt+↑로 위로, Alt+←/→로 뒤로·앞으로. 글자를 치면 그 이름으로 건너뛴다.
+   *  Ctrl+A는 모두 선택, Ctrl+C·X·V는 고른 항목 복사·잘라내기·붙여넣기, Delete는 삭제, Alt+Enter는 속성이다. */
   function onListKey(event: KeyboardEvent<HTMLDivElement>) {
     if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); back(); return; }
     if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); forward(); return; }
@@ -261,18 +291,23 @@ export function FilesWindow() {
     if (event.altKey && event.key === "Enter") { event.preventDefault(); if (current) setProperties(current.path); else if (location !== null) setProperties(location); return; }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
       const key = event.key.toLowerCase();
-      if (key === "c" && current) { event.preventDefault(); cutOrCopy(current, "copy"); return; }
-      if (key === "x" && current) { event.preventDefault(); cutOrCopy(current, "cut"); return; }
+      if (key === "a" && entries.length) { event.preventDefault(); selectMany(entries.map((entry) => entry.path), current?.path); return; }
+      if (key === "c" && picked.length) { event.preventDefault(); cutOrCopy(picked, "copy"); return; }
+      if (key === "x" && picked.length) { event.preventDefault(); cutOrCopy(picked, "cut"); return; }
       if (key === "v" && location !== null) { event.preventDefault(); void paste(location); return; }
     }
-    if (event.key === "Delete" && current && !event.ctrlKey && !event.altKey) { event.preventDefault(); setRemoving(current); return; }
+    if (event.key === "Delete" && picked.length && !event.ctrlKey && !event.altKey) { event.preventDefault(); requestRemove(picked); return; }
     if (event.key === "F5") { event.preventDefault(); refresh(); return; }
     if (event.shiftKey && event.key === "F10") { event.preventDefault(); openContextAtSelection(); return; }
     if (event.key === "ContextMenu") { event.preventDefault(); openContextAtSelection(); return; }
     if (!entries.length) return;
     const columns = view === "grid" ? gridColumns(listRef.current) : 1;
     const at = selectedIndex;
-    const move = (next: number) => { event.preventDefault(); select(entries[Math.max(0, Math.min(entries.length - 1, next))].path); };
+    const move = (next: number) => {
+      event.preventDefault();
+      const to = Math.max(0, Math.min(entries.length - 1, next));
+      if (event.shiftKey) extendTo(to, false); else select(entries[to].path);
+    };
     switch (event.key) {
       case "ArrowDown": move(at < 0 ? 0 : at + columns); return;
       case "ArrowUp": move(at < 0 ? 0 : at - columns); return;
@@ -284,7 +319,7 @@ export function FilesWindow() {
       case "PageUp": move(at - columns * 10); return;
       case "Enter": if (current) { event.preventDefault(); openEntry(current); } return;
       case " ": if (current) { event.preventDefault(); if (!showPreview) togglePreview(); } return;
-      case "Escape": if (selected) { event.stopPropagation(); select(null); } return;
+      case "Escape": if (selected || picked.length) { event.stopPropagation(); select(null); } return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const now = Date.now();
@@ -304,9 +339,32 @@ export function FilesWindow() {
     if (box) openMenu(current, box.left + 24, box.top + Math.min(box.height, 28));
   }
   const onItemMenu = (entry: FileEntry) => (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation(); openMenu(entry, event.clientX, event.clientY); };
+  /** Shift 범위: 기준 항목(anchor)부터 index까지 고른다. add면 이미 고른 항목에 더한다. 기준이 안 보이면 그 항목만 고른다. */
+  function extendTo(index: number, add: boolean) {
+    const from = entries.findIndex((entry) => entry.path === anchor);
+    if (from < 0) { select(entries[index].path); return; }
+    const [start, end] = from <= index ? [from, index] : [index, from];
+    selectRange(entries.slice(start, end + 1).map((entry) => entry.path), entries[index].path, add);
+  }
+  /** 누르면 하나를 고른다. Ctrl(⌘)+클릭·체크 상자는 넣고 빼기, Shift+클릭은 범위(Ctrl+Shift는 더하기)다.
+   *  오른쪽 클릭은 고른 묶음 안이면 묶음을 그대로 둔다. */
+  function pick(entry: FileEntry, index: number, event: ReactMouseEvent) {
+    if (event.button === 2) { if (!pickedSet.has(entry.path)) select(entry.path); return; }
+    if (event.button !== 0) return;
+    const toggleKey = event.ctrlKey || event.metaKey;
+    if (event.shiftKey) extendTo(index, toggleKey);
+    else if (toggleKey || (event.target as Element).closest(".files-check")) toggle(entry.path);
+    else select(entry.path);
+  }
+  const allPicked = entries.length > 0 && picked.length === entries.length;
+  function pickAll() {
+    if (allPicked) select(null); else selectMany(entries.map((entry) => entry.path), current?.path);
+    listRef.current?.focus({ preventScroll: true });
+  }
 
   const status = location === null ? `드라이브 ${drives.length}개`
     : data ? `항목 ${entries.length.toLocaleString("ko-KR")}개${hiddenCount ? ` · 숨김 ${hiddenCount.toLocaleString("ko-KR")}개` : ""}${query.trim() ? ` · ‘${query.trim()}’ 거름` : ""}` : "";
+  const pickedSize = sizeOf(picked);
   const errorMessage = location !== null && listing.isError && !data ? listing.error.message : null;
 
   return <Window id="files" bodyClassName="files-body" header={
@@ -346,7 +404,7 @@ export function FilesWindow() {
       <FilesTree places={places.data} favorites={favorites} location={location} showHidden={showHidden} error={places.isError ? places.error.message : null}
         onGo={(target) => go(target)} onMenu={(tree, left, top) => openMenu(null, left, top, tree)} />} main={
     <div className="files-content">
-      {(() => { const main = <section className="files-main" aria-label="폴더 내용" style={columnStyle(columns)} onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
+      {(() => { const main = <section className="files-main" aria-label="폴더 내용" style={columnStyle(columns)} data-checking={checking ? "" : undefined} onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
         {location === null
           ? <ThisPC places={places.data} favorites={favorites} loading={places.isPending} onGo={(target) => go(target)} />
           : errorMessage
@@ -358,6 +416,10 @@ export function FilesWindow() {
               : <>
                 {data.truncated && <div className="browser-notice" role="status"><TriangleAlert aria-hidden="true" /><span>항목이 너무 많아 이름 순으로 앞 {data.entries.length.toLocaleString("ko-KR")}개만 보입니다(전체 {data.total.toLocaleString("ko-KR")}개).</span></div>}
                 {view === "list" && <div className="files-columns" role="row">
+                  {checking && <span className="files-cell-check" role="columnheader">
+                    <button type="button" className="files-check" role="checkbox" aria-checked={allPicked ? true : "mixed"} aria-label="모두 선택" title={allPicked ? "선택 해제" : "모두 선택 (Ctrl+A)"}
+                      onClick={pickAll}>{allPicked ? <Check aria-hidden="true" /> : <Minus aria-hidden="true" />}</button>
+                  </span>}
                   {COLUMNS.map((column) => <button key={column.key} type="button" role="columnheader" data-column={column.key}
                     aria-sort={sort.key === column.key ? (sort.desc ? "descending" : "ascending") : undefined} onClick={() => sortBy(column.key)}>
                     <span>{column.label}</span>{sort.key === column.key && <ChevronUp aria-hidden="true" data-desc={sort.desc ? "" : undefined} />}
@@ -366,27 +428,29 @@ export function FilesWindow() {
                       onDoubleClick={(event) => { event.stopPropagation(); useFiles.getState().setColumns({}); }} />}
                   </button>)}
                 </div>}
-                <div ref={listRef} className="files-list" data-view={view} role="listbox" tabIndex={0} aria-label={`${data.name} 내용`}
+                <div ref={listRef} className="files-list" data-view={view} role="listbox" tabIndex={0} aria-label={`${data.name} 내용`} aria-multiselectable="true"
                   aria-activedescendant={selectedIndex >= 0 ? optionId(selectedIndex) : undefined} onKeyDown={onListKey}
                   onClick={(event) => { if (event.target === event.currentTarget) select(null); }}>
                   {entries.length === 0
                     ? <div className="files-list-empty">{query.trim() ? `‘${query.trim()}’과 맞는 항목이 없습니다.` : hiddenCount ? `숨김 항목 ${hiddenCount}개만 있습니다.` : "이 폴더는 비어 있습니다."}</div>
-                    : entries.map((entry, index) => view === "list"
-                      ? <ListRow key={entry.path} entry={entry} index={index} selected={index === selectedIndex} cut={inClipboard(entry.path, "cut")}
-                          onSelect={() => select(entry.path)} onOpen={() => openEntry(entry)} onMenu={onItemMenu(entry)} />
-                      : <GridTile key={entry.path} entry={entry} index={index} selected={index === selectedIndex} cut={inClipboard(entry.path, "cut")}
-                          onSelect={() => select(entry.path)} onOpen={() => openEntry(entry)} onMenu={onItemMenu(entry)} />)}
+                    : entries.map((entry, index) => {
+                      const props: ItemProps = { entry, index, selected: pickedSet.has(entry.path), lead: checking && index === selectedIndex, checking, cut: inClipboard(entry.path, "cut"),
+                        onPick: (event) => pick(entry, index, event), onOpen: () => openEntry(entry), onMenu: onItemMenu(entry) };
+                      return view === "list" ? <ListRow key={entry.path} {...props} /> : <GridTile key={entry.path} {...props} />;
+                    })}
                 </div>
               </>}
         <footer className="files-status" aria-live="polite"><span>{status}</span>
-          {current && <span className="files-status-selection">{current.name}{current.size !== null ? ` · ${formatSize(current.size)}` : ""}</span>}</footer>
+          {picked.length > 1
+            ? <span className="files-status-selection">{`${picked.length.toLocaleString("ko-KR")}개 선택됨`}{pickedSize !== null ? ` · ${formatSize(pickedSize)}` : ""}</span>
+            : current && <span className="files-status-selection">{current.name}{current.size !== null ? ` · ${formatSize(current.size)}` : ""}</span>}</footer>
       </section>;
       if (!showPreview || location === null) return main;
       return <SplitView name="files-preview" label="미리 보기 창" className="files-preview-split" position="end" defaultWidth={272} minWidth={200} maxWidth={560} minMain={280}
-        main={main} side={<PreviewPane entry={current} folder={data} onOpen={openEntry} onSystem={(target, action) => void system(target, action)}
+        main={main} side={<PreviewPane entry={picked.length > 1 ? null : current} many={picked} folder={data} onOpen={openEntry} onClear={() => select(null)} onSystem={(target, action) => void system(target, action)}
           onDownload={download} onCopy={(target) => void copyPath(target)} onProperties={setProperties} />} />; })()}
     </div>} />
-    <ConfirmDialog open={removing !== null} title={removing ? `‘${removing.name}’을(를) ${RECYCLE ? "휴지통으로 옮길까요?" : "삭제할까요?"}` : ""}
+    <ConfirmDialog open={removing !== null} title={removing ? `${nameOf(removing)} ${RECYCLE ? "휴지통으로 옮길까요?" : "삭제할까요?"}` : ""}
       description={<p>{RECYCLE ? "휴지통에서 되돌릴 수 있습니다. 휴지통이 없는 드라이브에서는 바로 지워집니다." : "이 작업은 되돌릴 수 없습니다."}</p>}
       confirmLabel={RECYCLE ? "휴지통으로 이동" : "삭제"} confirmDisabled={busy} onConfirm={() => void confirmRemove()} onClose={() => setRemoving(null)}
       onCloseFocus={() => listRef.current?.focus({ preventScroll: true })} />
@@ -515,7 +579,19 @@ function ThisPC({ places, favorites, loading, onGo }: { places: Places | undefin
   </div>;
 }
 
-type ItemProps = { entry: FileEntry; index: number; selected: boolean; cut: boolean; onSelect: () => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
+/** lead는 여럿을 고른 동안 키보드 기준 항목, checking은 체크 상자 열을 보이는 다중 선택 상태다. */
+type ItemProps = { entry: FileEntry; index: number; selected: boolean; lead: boolean; checking: boolean; cut: boolean;
+  onPick: (event: ReactMouseEvent) => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
+
+/** 고른 파일 크기의 합. 파일이 하나도 없으면(폴더만) null이다. */
+function sizeOf(items: FileEntry[]): number | null {
+  let total: number | null = null;
+  for (const item of items) if (item.kind === "file" && item.size !== null) total = (total ?? 0) + item.size;
+  return total;
+}
+/** 체크 상자를 두 번 눌러도 항목이 열리지 않게 한다. */
+const openUnlessCheck = (onOpen: () => void) => (event: ReactMouseEvent) => { if (!(event.target as Element).closest(".files-check")) onOpen(); };
+const CheckBox = ({ checked }: { checked: boolean }) => <span className="files-check" aria-hidden="true" data-checked={checked ? "" : undefined}>{checked && <Check />}</span>;
 
 const columnStyle = (columns: ColumnWidths) => Object.fromEntries(Object.entries(columns).map(([key, width]) => [`--files-${key}`, `${width}px`])) as CSSProperties;
 /** 이름 열이 끝까지 지키는 폭 */
@@ -559,11 +635,12 @@ function resizeColumn(event: ReactPointerEvent<HTMLSpanElement>, key: ColumnKey)
   handle.addEventListener("pointercancel", end);
 }
 
-function ListRow({ entry, index, selected, cut, onSelect, onOpen, onMenu }: ItemProps) {
+function ListRow({ entry, index, selected, lead, checking, cut, onPick, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   return <div id={optionId(index)} role="option" aria-selected={selected} className="files-row" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
-    onMouseDown={onSelect} onDoubleClick={onOpen} onContextMenu={onMenu} title={entry.name}>
+    data-lead={lead ? "" : undefined} onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
+    {checking && <span className="files-cell-check"><CheckBox checked={selected} /></span>}
     <span className="files-cell-name"><Icon aria-hidden="true" className="files-icon" data-tone={type.tone} /><span>{entry.name}</span>
       {entry.link && <SquareArrowOutUpRight aria-label="바로 가기" className="files-link-badge" />}</span>
     <span className="files-cell" data-column="modified">{formatDate(entry.modified)}</span>
@@ -572,14 +649,15 @@ function ListRow({ entry, index, selected, cut, onSelect, onOpen, onMenu }: Item
   </div>;
 }
 
-function GridTile({ entry, index, selected, cut, onSelect, onOpen, onMenu }: ItemProps) {
+function GridTile({ entry, index, selected, lead, checking, cut, onPick, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   const [broken, setBroken] = useState(false);
   const thumb = type.preview === "image" && !broken && (entry.size ?? 0) <= THUMB_MAX_BYTES;
   return <div id={optionId(index)} role="option" aria-selected={selected} className="files-tile" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
-    onMouseDown={onSelect} onDoubleClick={onOpen} onContextMenu={onMenu} title={entry.name}>
+    data-lead={lead ? "" : undefined} onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
     <span className="files-tile-art" data-tone={type.tone}>
+      {checking && <CheckBox checked={selected} />}
       {thumb ? <img src={contentUrl(entry.path)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />
         : <Icon aria-hidden="true" className="files-icon" data-tone={type.tone} />}
     </span>
@@ -589,9 +667,10 @@ function GridTile({ entry, index, selected, cut, onSelect, onOpen, onMenu }: Ite
 
 type TextState = { path: string; status: "loading" | "ready" | "binary" | "error"; text?: string; message?: string };
 
-/** 오른쪽 미리 보기: 그림·영상·소리·글·PDF 첫 쪽을 보이고, 정보와 열기·탐색기·내려받기·경로 복사·속성 단추를 둔다. */
-function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy, onProperties }: {
-  entry: FileEntry | null; folder: Listing | undefined; onOpen: (entry: FileEntry) => void; onSystem: (target: string, action: "open" | "reveal") => void;
+/** 오른쪽 미리 보기: 그림·영상·소리·글·PDF 첫 쪽을 보이고, 정보와 열기·탐색기·내려받기·경로 복사·속성 단추를 둔다.
+ *  여럿을 고르면 앞 세 항목의 아이콘을 겹쳐 보이고 개수·크기 합과 경로 복사·선택 해제를 둔다. */
+function PreviewPane({ entry, many, folder, onOpen, onClear, onSystem, onDownload, onCopy, onProperties }: {
+  entry: FileEntry | null; many: FileEntry[]; folder: Listing | undefined; onOpen: (entry: FileEntry) => void; onClear: () => void; onSystem: (target: string, action: "open" | "reveal") => void;
   onDownload: (target: string) => void; onCopy: (target: string) => void; onProperties: (target: string) => void;
 }) {
   const type = entry ? fileType(entry) : null;
@@ -617,6 +696,23 @@ function PreviewPane({ entry, folder, onOpen, onSystem, onDownload, onCopy, onPr
     return () => controller.abort();
   }, [entry?.path, entry?.modified, type?.preview]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (many.length > 1) {
+    const folders = many.filter((item) => item.kind === "directory").length;
+    const size = sizeOf(many);
+    const parts = [folders && `폴더 ${folders.toLocaleString("ko-KR")}개`, many.length - folders && `파일 ${(many.length - folders).toLocaleString("ko-KR")}개`, size !== null && formatSize(size)];
+    return <aside ref={asideRef} className="files-preview" aria-label="미리 보기">
+      <div className="files-preview-art files-preview-stack" data-count={Math.min(3, many.length)}>
+        {many.slice(0, 3).map((item) => { const itemType = fileType(item); const Icon = itemType.icon;
+          return <span key={item.path} className="files-preview-card"><Icon aria-hidden="true" className="files-icon" data-tone={itemType.tone} /></span>; })}
+      </div>
+      <h3 className="files-preview-name">항목 {many.length.toLocaleString("ko-KR")}개</h3>
+      <p className="files-preview-kind">{parts.filter(Boolean).join(" · ")}</p>
+      <div className="files-preview-actions">
+        <Button type="button" size="sm" variant="secondary" onClick={() => onCopy(many.map((item) => item.path).join("\n"))}><Copy aria-hidden="true" />경로 복사</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onClear}><X aria-hidden="true" />선택 해제</Button>
+      </div>
+    </aside>;
+  }
   if (!entry || !type) {
     if (!folder) return <aside ref={asideRef} className="files-preview" aria-label="미리 보기" />;
     const folders = folder.entries.filter((item) => item.kind === "directory").length;

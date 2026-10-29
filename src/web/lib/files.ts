@@ -51,10 +51,25 @@ function loadPrefs(): Prefs {
   } catch { return DEFAULT_PREFS; }
 }
 
-type State = Prefs & {
-  history: Location[]; index: number; selected: string | null; clipboard: Clipboard | null;
+/**
+ * 고른 항목. selected는 키보드가 움직이는 기준 항목(미리 보기·Enter 대상), picked는 함께 고른 항목 전부, anchor는 Shift 범위의 시작이다.
+ * checking은 체크 상자 열을 보이는 다중 선택 상태로, 둘 이상 고르면 켜지고 하나만 다시 고르거나 다 풀면 꺼진다.
+ */
+type Selection = { selected: string | null; picked: string[]; anchor: string | null; checking: boolean };
+const only = (path: string | null): Selection => ({ selected: path, picked: path === null ? [] : [path], anchor: path, checking: false });
+
+type State = Prefs & Selection & {
+  history: Location[]; index: number; clipboard: Clipboard | null;
   go: (location: Location, select?: string | null) => void; back: () => void; forward: () => void; settle: (path: string) => void;
-  select: (path: string | null) => void; setView: (view: View) => void; toggleHidden: () => void; togglePreview: () => void; sortBy: (key: SortKey) => void;
+  /** 하나만 고른다(null이면 모두 푼다). */
+  select: (path: string | null) => void;
+  /** Ctrl+클릭·체크 상자: 고른 묶음에 넣거나 뺀다. */
+  toggle: (path: string) => void;
+  /** Shift+클릭·Shift+화살표: anchor부터 lead까지(paths)를 고른다. add면 이미 고른 항목에 더한다. */
+  selectRange: (paths: string[], lead: string, add: boolean) => void;
+  /** 여러 항목을 한꺼번에 고른다(모두 선택·붙여 넣은 항목). */
+  selectMany: (paths: string[], lead?: string) => void;
+  setView: (view: View) => void; toggleHidden: () => void; togglePreview: () => void; sortBy: (key: SortKey) => void;
   setClipboard: (clipboard: Clipboard | null) => void;
   /** current는 지금 보이는 즐겨찾기(기본값이면 사용자 폴더 목록). 처음 고칠 때 기본값을 실제 목록으로 굳힌다. */
   addFavorite: (path: string, current: string[]) => void; removeFavorite: (path: string, current: string[]) => void;
@@ -77,21 +92,21 @@ export const useFiles = create<State>((set, get) => {
   const prefs = loadPrefs();
   const update = (patch: Partial<State>) => { set(patch); save(get()); };
   return {
-    ...prefs, history: [prefs.location], index: 0, selected: null, clipboard: null,
+    ...prefs, history: [prefs.location], index: 0, ...only(null), clipboard: null,
     setClipboard: (clipboard) => set({ clipboard }),
     go: (location, select = null) => {
       const { history, index } = get();
-      if (history[index] === location) { set({ selected: select }); return; }
+      if (history[index] === location) { set(only(select)); return; }
       const next = [...history.slice(0, index + 1), location].slice(-MAX_HISTORY);
-      update({ history: next, index: next.length - 1, location, selected: select });
+      update({ history: next, index: next.length - 1, location, ...only(select) });
     },
     back: () => {
       const { history, index } = get();
-      if (index > 0) update({ index: index - 1, location: history[index - 1], selected: history[index] });
+      if (index > 0) update({ index: index - 1, location: history[index - 1], ...only(history[index]) });
     },
     forward: () => {
       const { history, index } = get();
-      if (index < history.length - 1) update({ index: index + 1, location: history[index + 1], selected: null });
+      if (index < history.length - 1) update({ index: index + 1, location: history[index + 1], ...only(null) });
     },
     // 사용자가 친 경로(c:/users 같은 꼴)를 서버가 정리한 경로로 바꿔 끼운다. 이력은 늘지 않는다.
     settle: (path) => {
@@ -99,7 +114,21 @@ export const useFiles = create<State>((set, get) => {
       if (history[index] === path) return;
       update({ history: history.map((entry, at) => (at === index ? path : entry)), location: path });
     },
-    select: (selected) => set({ selected }),
+    select: (path) => set(only(path)),
+    toggle: (path) => {
+      const { picked, checking } = get();
+      const had = picked.includes(path);
+      const next = had ? picked.filter((item) => item !== path) : [...picked, path];
+      // 뺀 항목 대신 마지막으로 고른 항목이 기준이 된다.
+      set({ picked: next, selected: had ? next.at(-1) ?? null : path, anchor: path, checking: next.length > 1 || (checking && next.length > 0) });
+    },
+    selectRange: (paths, lead, add) => {
+      const { picked, checking } = get();
+      const had = new Set(picked);
+      const next = add ? [...picked, ...paths.filter((path) => !had.has(path))] : paths;
+      set({ picked: next, selected: lead, checking: next.length > 1 || (checking && next.length > 0) });
+    },
+    selectMany: (paths, lead) => set({ picked: paths, selected: lead ?? paths[0] ?? null, anchor: lead ?? paths[0] ?? null, checking: paths.length > 1 }),
     setView: (view) => update({ view }),
     toggleHidden: () => update({ hidden: !get().hidden }),
     togglePreview: () => update({ preview: !get().preview }),
@@ -383,6 +412,8 @@ export const statPath = (target: string, signal?: AbortSignal) => getJson<FileIn
 /** 클립보드의 항목을 destination 폴더에 붙여 넣는다. 서버는 덮어쓰지 않고, 항목마다 성공·실패를 돌려준다. */
 export const pasteItems = (sources: string[], destination: string, mode: PasteMode) => postJson<PasteResult>("/api/v1/files/paste", { sources, destination, mode });
 /** Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. */
+/** 붙여넣기·삭제 한 번에 다루는 항목 수 상한. 서버(files.service의 MAX_BATCH)와 같다. */
+export const BATCH_MAX = 200;
 export const deleteItems = (paths: string[]) => postJson<DeleteResult>("/api/v1/files/delete", { paths });
 
 /** 경로 글자만으로 찾은 상위 폴더. 드라이브 루트(C:\)나 /의 상위는 null(`이 PC`)이다. */

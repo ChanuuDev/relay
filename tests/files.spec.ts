@@ -522,3 +522,122 @@ test("파일 탐색기: 오른쪽 클릭으로 복사·잘라내기·붙여넣�
   await expect(properties.locator(".properties-title")).toHaveText("하위 폴더");
   expect(errors).toEqual([]);
 });
+
+test("파일 탐색기: Ctrl·Shift+클릭으로 여럿을 고르면 맨 왼쪽에 체크 상자 열이 나오고, 고른 묶음을 복사·삭제한다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  const main = page.locator(`${win("files")} .files-main`);
+  const checks = page.locator(`${win("files")} .files-row .files-check`);
+  const picked = page.locator(`${win("files")} [role=option][aria-selected=true]`);
+  const checkOf = (name: string) => row(page, name).locator(".files-check");
+  await expect(page.locator(".files-list")).toHaveAttribute("aria-multiselectable", "true");
+  // 하나만 고르면 체크 상자 열이 없다.
+  await row(page, "하위 폴더").click();
+  await expect(picked).toHaveCount(1);
+  await expect(checks).toHaveCount(0);
+  await expect(page.locator(`${win("files")} .files-columns .files-check`)).toHaveCount(0);
+  // Ctrl+클릭으로 더하면 맨 왼쪽에 체크 상자 열이 나오고 고른 행만 체크된다.
+  await row(page, "그림.png").click({ modifiers: ["Control"] });
+  await expect(picked).toHaveCount(2);
+  await expect(main).toHaveAttribute("data-checking", "");
+  await expect(checks).toHaveCount(4);
+  await expect(checkOf("그림.png")).toHaveAttribute("data-checked", "");
+  await expect(checkOf("보고서.txt")).not.toHaveAttribute("data-checked", /.*/);
+  const box = (await checkOf("보고서.txt").boundingBox())!;
+  const name = (await row(page, "보고서.txt").locator(".files-cell-name").boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(name.x);
+  // 머리글 열도 체크 상자 열만큼 밀려 행 칸과 맞는다.
+  const header = (await page.locator(`${win("files")} .files-columns [data-column="name"]`).boundingBox())!;
+  expect(Math.round(header.x)).toBe(Math.round(name.x));
+  await expect(page.locator(".files-status")).toContainText("2개 선택됨");
+  await expect(page.locator(".files-preview")).toContainText("항목 2개");
+  await expect(page.locator(".files-preview")).toContainText("폴더 1개 · 파일 1개");
+  // 체크 상자를 누르면 넣고 뺀다. 하나로 줄어도 체크 상자 열은 남는다.
+  await checkOf("보고서.txt").click();
+  await expect(picked).toHaveCount(3);
+  await checkOf("하위 폴더").click();
+  await checkOf("그림.png").click();
+  await expect(picked).toHaveCount(1);
+  await expect(row(page, "보고서.txt")).toHaveAttribute("aria-selected", "true");
+  await expect(checks).toHaveCount(4);
+  // 체크 상자를 두 번 눌러도 열리지 않는다.
+  await checkOf("하위 폴더").dblclick();
+  await expect(row(page, "그림.png")).toBeVisible();
+  await expect(row(page, "하위 폴더")).toHaveAttribute("aria-selected", "false");
+  // 그냥 누르면 하나만 고르고 체크 상자 열이 사라진다.
+  await row(page, "zeta.log").click();
+  await expect(picked).toHaveCount(1);
+  await expect(checks).toHaveCount(0);
+
+  // Shift+클릭은 기준 항목부터 범위, 기준은 그대로 남는다. Ctrl+Shift+클릭은 범위를 더한다.
+  await row(page, "하위 폴더").click();
+  await row(page, "보고서.txt").click({ modifiers: ["Shift"] });
+  await expect(picked).toHaveCount(3);
+  await expect(row(page, "zeta.log")).toHaveAttribute("aria-selected", "false");
+  await row(page, "그림.png").click({ modifiers: ["Shift"] });
+  await expect(picked).toHaveCount(2);
+  await expect(row(page, "보고서.txt")).toHaveAttribute("aria-selected", "false");
+  await row(page, "zeta.log").click({ modifiers: ["Control"] });
+  await row(page, "보고서.txt").click({ modifiers: ["Control", "Shift"] });
+  await expect(picked).toHaveCount(4);
+  // 키보드: Shift+화살표·End로 범위, Esc로 모두 풀기, Ctrl+A로 모두 선택
+  await row(page, "그림.png").click();
+  await page.keyboard.press("Shift+ArrowDown");
+  await expect(picked).toHaveCount(2);
+  await page.keyboard.press("Shift+End");
+  await expect(picked).toHaveCount(3);
+  await expect(row(page, "하위 폴더")).toHaveAttribute("aria-selected", "false");
+  await expect(row(page, "zeta.log")).toHaveAttribute("data-lead", "");
+  await page.keyboard.press("Escape");
+  await expect(picked).toHaveCount(0);
+  await expect(checks).toHaveCount(0);
+  await page.keyboard.press("Control+a");
+  await expect(picked).toHaveCount(4);
+  // 머리글의 체크 상자는 모두 고르면 체크, 일부면 가로줄이다. 누르면 모두 풀고, 일부일 때 누르면 모두 고른다.
+  const all = page.getByRole("checkbox", { name: "모두 선택" });
+  await expect(all).toHaveAttribute("aria-checked", "true");
+  await all.click();
+  await expect(picked).toHaveCount(0);
+  await row(page, "그림.png").click();
+  await row(page, "zeta.log").click({ modifiers: ["Control"] });
+  await expect(all).toHaveAttribute("aria-checked", "mixed");
+
+  // 고른 둘을 복사해 폴더 메뉴로 붙여 넣는다.
+  await page.keyboard.press("Control+c");
+  await expect(page.locator(".files-toast")).toContainText("항목 2개를 복사했습니다.");
+  await row(page, "하위 폴더").click({ button: "right" });
+  await expect(picked).toHaveCount(1);
+  await page.getByRole("menuitem", { name: "붙여넣기" }).click();
+  await expect(page.locator(".files-toast")).toContainText("2개를 붙여 넣었습니다.");
+  expect(existsSync(path.join(disk, "하위 폴더", "그림.png"))).toBe(true);
+  expect(existsSync(path.join(disk, "하위 폴더", "zeta.log"))).toBe(true);
+  // 지금 폴더에 붙여 넣으면 붙여 넣은 항목이 모두 골라진다.
+  await page.locator(".files-list").focus();
+  await page.keyboard.press("Control+v");
+  await expect(row(page, "그림 - 복사본.png")).toHaveAttribute("aria-selected", "true");
+  await expect(row(page, "zeta - 복사본.log")).toHaveAttribute("aria-selected", "true");
+  await expect(picked).toHaveCount(2);
+  // 고른 묶음 안에서 오른쪽 클릭하면 묶음을 그대로 두고 묶음 메뉴가 열린다.
+  await row(page, "zeta - 복사본.log").click({ button: "right" });
+  await expect(picked).toHaveCount(2);
+  await expect(page.getByRole("menu")).toContainText("항목 2개");
+  await page.getByRole("menuitem", { name: "삭제" }).click();
+  const confirm = page.locator(".confirm-dialog");
+  await expect(confirm).toContainText("항목 2개를");
+  await confirm.locator("[data-variant=destructive]").click();
+  await expect(page.locator(".files-toast")).toContainText(process.platform === "win32" ? "항목 2개를 휴지통으로 옮겼습니다." : "항목 2개를 삭제했습니다.");
+  await expect(row(page, "그림 - 복사본.png")).toHaveCount(0);
+  await expect(row(page, "zeta - 복사본.log")).toHaveCount(0);
+  expect(existsSync(path.join(disk, "그림 - 복사본.png"))).toBe(false);
+  expect(existsSync(path.join(disk, "zeta - 복사본.log"))).toBe(false);
+
+  // 아이콘 보기에서도 여럿을 고르면 그림 왼쪽 위에 체크 상자가 나온다.
+  await page.getByRole("radio", { name: "아이콘 보기" }).click();
+  const tile = (name: string) => page.locator(".files-tile", { hasText: name });
+  await tile("그림.png").click();
+  await expect(page.locator(".files-tile .files-check")).toHaveCount(0);
+  await tile("보고서.txt").click({ modifiers: ["Control"] });
+  await expect(page.locator(".files-tile .files-check")).toHaveCount(4);
+  await expect(tile("보고서.txt").locator(".files-check")).toHaveAttribute("data-checked", "");
+  expect(errors).toEqual([]);
+});
