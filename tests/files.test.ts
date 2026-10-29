@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { handler } from "../src/web/server";
 import { byteRange, copyName, crumbsOf } from "../src/files/files.service";
+import { decodeTextAs, encodeText } from "../src/web/lib/files";
 import { fixture } from "./helpers";
 
 describe("File explorer API", () => {
@@ -177,6 +178,54 @@ describe("File explorer API", () => {
     expect(existsSync(path.join(disk, ".숨김"))).toBe(false);
     for (const bad of [{ paths: [] }, { paths: "x" }, { paths: [disk], x: 1 }, {}]) expect((await post("/api/v1/files/delete", bad)).status).toBe(400);
     expect((await request("/api/v1/files/delete")).status).toBe(405);
+  });
+
+  test("save rewrites an existing file, refusing stale reads unless told to overwrite", async () => {
+    const target = path.join(disk, "메모.txt");
+    const read = await request(`/api/v1/files/content?path=${q(target)}`);
+    const modified = read.headers.get("X-File-Modified");
+    expect(modified).toBe(statSync(target).mtime.toISOString());
+    const b64 = (text: string) => Buffer.from(text).toString("base64");
+    const saved = await post("/api/v1/files/save", { path: target, data: b64("고친 줄\r\n"), modified });
+    expect(saved.status).toBe(200);
+    const result = await saved.json();
+    expect(result).toEqual({ schemaVersion: 1, path: target, size: Buffer.byteLength("고친 줄\r\n"), modified: statSync(target).mtime.toISOString() });
+    expect(readFileSync(target, "utf8")).toBe("고친 줄\r\n");
+    // 읽은 뒤 다른 곳에서 바뀌었으면(옛 수정 시각) 덮어쓰지 않고, null이면 그대로 덮어쓴다.
+    utimesSync(target, new Date(), new Date(Date.parse(result.modified) + 5000));
+    const stale = await post("/api/v1/files/save", { path: target, data: b64("늦은 저장"), modified: result.modified });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe("FILE_CHANGED");
+    expect(readFileSync(target, "utf8")).toBe("고친 줄\r\n");
+    expect((await post("/api/v1/files/save", { path: target, data: b64("덮어쓰기"), modified: null })).status).toBe(200);
+    expect(readFileSync(target, "utf8")).toBe("덮어쓰기");
+    // 새 파일은 만들지 않고, 폴더·잘못된 본문·다른 사이트는 받지 않는다.
+    expect((await post("/api/v1/files/save", { path: path.join(disk, "없음.txt"), data: b64("x"), modified: null })).status).toBe(404);
+    expect(existsSync(path.join(disk, "없음.txt"))).toBe(false);
+    expect((await post("/api/v1/files/save", { path: path.join(disk, "폴더 하나"), data: b64("x"), modified: null })).status).toBe(400);
+    for (const bad of [{ path: target, data: "!!", modified: null }, { path: target, data: b64("x") }, { path: target, data: b64("x"), modified: 1 }, { path: target, data: b64("x"), modified: null, x: 1 }, []]) {
+      expect((await post("/api/v1/files/save", bad)).status).toBe(400);
+    }
+    expect((await post("/api/v1/files/save", { path: target, data: b64("x"), modified: null }, { "sec-fetch-site": "same-site" })).status).toBe(403);
+    const get = await request("/api/v1/files/save");
+    expect(get.status).toBe(405); expect(get.headers.get("Allow")).toBe("POST");
+    expect(readFileSync(target, "utf8")).toBe("덮어쓰기");
+  });
+
+  test("text is decoded with its encoding and written back byte for byte", () => {
+    const roundTrip = (bytes: Uint8Array) => {
+      const decoded = decodeTextAs(bytes)!;
+      expect(decoded.exact).toBe(true);
+      expect(Buffer.from(encodeText(decoded.text, decoded.encoding)).equals(Buffer.from(bytes))).toBe(true);
+      return decoded.encoding;
+    };
+    expect(roundTrip(Buffer.from("한글 abc\n"))).toBe("utf-8");
+    expect(roundTrip(Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("BOM 한글")]))).toBe("utf-8-bom");
+    expect(roundTrip(Buffer.from([0xff, 0xfe, ...Buffer.from("UTF-16 한글", "utf16le")]))).toBe("utf-16le");
+    // CP949: `한글`(C7D1 B1DB)과 확장 완성형 `똠`(8C63)
+    expect(roundTrip(Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0x8c, 0x63, 0x0d, 0x0a]))).toBe("euc-kr");
+    expect(() => encodeText("한글 😀", "euc-kr")).toThrow("CP949");
+    expect(decodeTextAs(Buffer.from([0x41, 0x00, 0x42]))).toBeNull();
   });
 
   test("copy name helper", () => {

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { constants, copyFileSync, cpSync, existsSync, lstatSync, readdirSync, realpathSync, renameSync, rmSync, statfsSync, statSync, type Dirent, type Stats } from "node:fs";
+import { constants, copyFileSync, cpSync, existsSync, lstatSync, readdirSync, realpathSync, renameSync, rmSync, statfsSync, statSync, writeFileSync, type Dirent, type Stats } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { RelayError } from "../errors";
@@ -29,6 +29,7 @@ export interface FileInfo {
 export type PasteMode = "copy" | "cut";
 export interface PasteResult { schemaVersion: 1; mode: PasteMode; done: { from: string; to: string }[]; failed: Failure[] }
 export interface DeleteResult { schemaVersion: 1; recycled: boolean; done: string[]; failed: Failure[] }
+export interface SaveResult { schemaVersion: 1; path: string; size: number; modified: string }
 
 /** 한 폴더에서 돌려주는 최대 항목 수. 넘치면 이름 순 앞부분만 주고 truncated로 알린다. */
 export const MAX_ENTRIES = 5000;
@@ -249,15 +250,17 @@ export function fileResponse(request: Request, url: URL, headers: Record<string,
   for (const key of url.searchParams.keys()) if (key !== "path" && key !== "download") throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 query key: ${key}`);
   if (url.searchParams.getAll("path").length !== 1 || url.searchParams.getAll("download").length > 1) throw new RelayError("INVALID_ARGUMENT", "path는 한 번만 줍니다.");
   const target = localPath(url.searchParams.get("path"));
-  let size: number;
-  try { const stats = statSync(target); if (stats.isDirectory()) throw new RelayError("NOT_A_FILE", "폴더는 내용을 읽을 수 없습니다.", 2, 400); size = stats.size; }
+  let size: number, modified: string;
+  try { const stats = statSync(target); if (stats.isDirectory()) throw new RelayError("NOT_A_FILE", "폴더는 내용을 읽을 수 없습니다.", 2, 400); size = stats.size; modified = stats.mtime.toISOString(); }
   catch (error) { throw fsError(error); }
   const download = url.searchParams.get("download") === "1";
   const base = { ...headers,
     // 내용은 이 서버 화면의 미리 보기 안에서만 쓴다. 바로 열어도 스크립트가 돌지 않게 sandbox로 감싼다.
     "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox",
     "Content-Type": download ? "application/octet-stream" : contentType(target), "Accept-Ranges": "bytes",
-    "Content-Disposition": download ? attachmentName(path.basename(target)) : "inline" };
+    "Content-Disposition": download ? attachmentName(path.basename(target)) : "inline",
+    // 뷰어가 고친 글을 저장할 때 이 값으로 그 사이 다른 곳에서 바뀌었는지 본다.
+    "X-File-Modified": modified };
   const range = byteRange(request.headers.get("range"), size);
   if (range === "invalid") return new Response(null, { status: 416, headers: { ...base, "Content-Range": `bytes */${size}` } });
   const file = Bun.file(target);
@@ -458,4 +461,39 @@ export function deleteItems(body: unknown, remove: Remover): DeleteResult {
     result.done = targets.filter((target) => !outcome.failed.some((failure) => samePath(failure.path, target)));
   }
   return result;
+}
+
+/** 뷰어가 저장하는 글의 상한. 뷰어가 읽는 8MB에 인코딩 차이를 더한 여유다. */
+export const MAX_SAVE_BYTES = 16 * 1024 * 1024;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+function writeError(error: unknown): RelayError {
+  const code = (error as { code?: string })?.code;
+  if (code === "EACCES" || code === "EPERM") return new RelayError("ACCESS_DENIED", "이 파일에 쓸 권한이 없습니다. 읽기 전용인지 확인하세요.", 2, 403);
+  if (code === "EBUSY") return new RelayError("FILE_BUSY", "다른 프로그램이 사용 중이라 저장할 수 없습니다.", 5, 409);
+  return fsError(error);
+}
+
+/**
+ * POST /api/v1/files/save 본문 {path, data, modified}. 뷰어에서 고친 글을 이미 있는 파일에 다시 쓴다(새 파일은 만들지 않는다).
+ * data는 화면이 원래 인코딩으로 바꾼 바이트의 base64다. modified는 읽었을 때의 수정 시각이며,
+ * 그 뒤 다른 곳에서 바뀌었으면 덮어쓰지 않고 FILE_CHANGED(409)로 알린다. null이면 확인 없이 덮어쓴다.
+ */
+export function saveFile(body: unknown): SaveResult {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RelayError("INVALID_ARGUMENT", "{ path, data, modified } JSON을 보내세요.");
+  const { path: raw, data, modified, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).length) throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 키: ${Object.keys(rest).join(", ")}`);
+  if (typeof data !== "string" || data.length % 4 !== 0 || !BASE64.test(data)) throw new RelayError("INVALID_ARGUMENT", "data는 base64 문자열입니다.");
+  if (modified !== null && typeof modified !== "string") throw new RelayError("INVALID_ARGUMENT", "modified는 읽었을 때의 수정 시각(ISO 문자열)이나 null입니다.");
+  const target = localPath(raw);
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.length > MAX_SAVE_BYTES) throw new RelayError("PAYLOAD_TOO_LARGE", `저장할 내용이 너무 큽니다(최대 ${MAX_SAVE_BYTES / 1024 / 1024}MB).`, 2, 413);
+  let stats: Stats;
+  try { stats = statSync(target); } catch (error) { throw fsError(error); }
+  if (stats.isDirectory()) throw new RelayError("NOT_A_FILE", "폴더에는 저장할 수 없습니다.", 2, 400);
+  if (modified !== null && stats.mtime.toISOString() !== modified) {
+    throw new RelayError("FILE_CHANGED", "연 뒤에 다른 곳에서 파일이 바뀌었습니다.", 2, 409, { modified: stats.mtime.toISOString() });
+  }
+  try { writeFileSync(target, bytes); } catch (error) { throw writeError(error); }
+  const after = statSync(target);
+  return { schemaVersion: 1, path: target, size: after.size, modified: after.mtime.toISOString() };
 }

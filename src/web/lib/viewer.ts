@@ -16,6 +16,14 @@ type State = {
   forget: (paths: string[]) => void;
 };
 
+/** 다른 문서로 넘어가기 전에 물어볼 곳(고친 글을 저장하지 않은 편집기). true면 지금은 넘어가지 않고, 동의하면 proceed를 부른다. */
+let leaveGuard: ((proceed: () => void) => boolean) | null = null;
+export function guardLeave(guard: (proceed: () => void) => boolean) {
+  leaveGuard = guard;
+  return () => { if (leaveGuard === guard) leaveGuard = null; };
+}
+const leave = (go: () => void) => { if (!leaveGuard?.(go)) go(); };
+
 const docOf = (entry: FileEntry, kind: ViewerKind): ViewerDoc => ({ path: entry.path, name: entry.name, kind, size: entry.size, modified: entry.modified });
 
 export const useViewer = create<State>((set, get) => ({
@@ -26,15 +34,17 @@ export const useViewer = create<State>((set, get) => ({
     if (!kind) return;
     const siblings = around.filter((item) => viewerKind(item) === kind).map((item) => docOf(item, kind));
     const doc = siblings.find((item) => item.path === entry.path) ?? docOf(entry, kind);
-    set({ doc, siblings: siblings.length ? siblings : [doc] });
-    useDesktop.getState().open("viewer");
+    const current = get().doc;
+    const go = () => { set({ doc, siblings: siblings.length ? siblings : [doc] }); useDesktop.getState().open("viewer"); };
+    // 같은 문서를 다시 열면 고치던 글이 그대로 남는다. 바뀐 파일을 다시 읽을 때만 묻는다.
+    if (current?.path === doc.path && current.modified === doc.modified) go(); else leave(go);
   },
   step: (delta) => {
     const { doc, siblings } = get();
     if (!doc) return;
     const at = siblings.findIndex((item) => item.path === doc.path);
     const next = siblings[at + delta];
-    if (next) set({ doc: next });
+    if (next) leave(() => set({ doc: next }));
   },
   forget: (paths) => {
     const { doc, siblings } = get();

@@ -5,7 +5,7 @@ import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
 import { exportFileName, NoteStore, parseBatch, parseExport } from "../notes/notes.store";
 import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.store";
-import { deleteItems, fileResponse, listDirectory, openPath, pasteItems, places, statPath, systemLauncher, systemRemover, type Launcher, type Remover } from "../files/files.service";
+import { deleteItems, fileResponse, listDirectory, openPath, pasteItems, places, saveFile, statPath, systemLauncher, systemRemover, type Launcher, type Remover } from "../files/files.service";
 import { api, parseAction } from "./api";
 import { assets } from "./assets";
 import { PID_HEADER, portFailure } from "./control";
@@ -21,8 +21,9 @@ export const FILES_OPEN_PATH = "/api/v1/files/open";
 export const FILES_PASTE_PATH = "/api/v1/files/paste";
 export const FILES_DELETE_PATH = "/api/v1/files/delete";
 export const FILES_STAT_PATH = "/api/v1/files/stat";
+export const FILES_SAVE_PATH = "/api/v1/files/save";
 /** 파일 탐색기의 쓰기 경로. 모두 같은 출처 JSON POST만 받는다. */
-const FILES_WRITE_PATHS = new Set([FILES_OPEN_PATH, FILES_PASTE_PATH, FILES_DELETE_PATH]);
+const FILES_WRITE_PATHS = new Set([FILES_OPEN_PATH, FILES_PASTE_PATH, FILES_DELETE_PATH, FILES_SAVE_PATH]);
 export const CALCULATOR_PATH = "/api/v1/calculator/history";
 /** 목록에서 하는 세션 정리. `:id`는 Relay 내부 ID다. */
 export const SESSION_ACTIONS = /^\/api\/v1\/sessions\/([^/]+)\/actions$/;
@@ -31,7 +32,7 @@ export const SESSION_ACTIONS = /^\/api\/v1\/sessions\/([^/]+)\/actions$/;
 export interface Features {
   /** 메모 저장(POST /api/v1/notes)·내보내기·가져오기(POST /api/v1/notes/import) */
   notes?: NoteStore;
-  /** 로컬 디스크를 읽는 GET /api/v1/files*, 탐색기·기본 앱으로 넘기는 POST /api/v1/files/open, 복사·이동 POST /api/v1/files/paste, 휴지통 이동 POST /api/v1/files/delete.
+  /** 로컬 디스크를 읽는 GET /api/v1/files*, 탐색기·기본 앱으로 넘기는 POST /api/v1/files/open, 복사·이동 POST /api/v1/files/paste, 휴지통 이동 POST /api/v1/files/delete, 뷰어 저장 POST /api/v1/files/save.
    *  remove를 주지 않으면 운영체제의 휴지통(Windows)이나 바로 삭제를 쓴다. */
   files?: { launch: Launcher; remove?: Remover };
   /** 쓰기 연결의 세션 서비스. 목록에서 하는 세션 정리(POST /api/v1/sessions/:id/actions) */
@@ -106,6 +107,14 @@ export function handler(service: SessionService, config: Config, { notes, files,
       return Response.json(pathname === FILES_PASTE_PATH ? pasteItems(body) : deleteItems(body, files!.remove ?? systemRemover), { headers });
     } catch (error) { return failed(error, "POST"); }
   };
+  /** 뷰어에서 고친 글 저장. 쓰기 검사는 같고, 파일 하나를 base64로 받으므로 크기 상한만 크다. */
+  const saveText = async (request: Request) => {
+    try {
+      checkWrite(request, config.webPort, MAX_IMPORT_BYTES);
+      if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "저장 요청은 query를 받지 않습니다.");
+      return Response.json(saveFile(await readBody(request)), { headers });
+    } catch (error) { return failed(error, "POST"); }
+  };
   /** 작업 상태·고정·종료·종료 취소·삭제. 메모 저장과 같은 쓰기 검사(같은 출처 JSON)를 거친다. */
   const actOnSession = async (request: Request, encoded: string) => {
     try {
@@ -153,7 +162,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
       if (importPath || actionPath || (filesPath && FILES_WRITE_PATHS.has(url.pathname))) allow = "POST";
       const player = url.pathname === PLAYER_PATH;
       checkRequest(request, config.webPort, { allowCrossSite: player });
-      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : actionPath ? "세션 정리" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
+      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : actionPath ? "세션 정리" : filesPath && url.pathname === FILES_SAVE_PATH ? "저장" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
       if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? `${calculatorPath ? "계산 이력" : "메모"}는 GET 조회와 POST 저장만 허용합니다.` : "GET 조회만 허용합니다.", 2, 405);
       if (notesPath) return listNotes(request, url);
       if (calculatorPath) {
@@ -177,6 +186,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
       if (notes && pathname === NOTES_IMPORT_PATH) return importNotes(request);
       if (files && pathname === FILES_OPEN_PATH) return openFile(request);
       if (files && (pathname === FILES_PASTE_PATH || pathname === FILES_DELETE_PATH)) return writeFiles(request, pathname);
+      if (files && pathname === FILES_SAVE_PATH) return saveText(request);
       if (calculator && pathname === CALCULATOR_PATH) return saveCalculation(request);
       const action = writer ? SESSION_ACTIONS.exec(pathname) : null;
       if (action) return actOnSession(request, action[1]);

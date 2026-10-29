@@ -1,17 +1,21 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import {
-  AArrowDown, AArrowUp, ChevronLeft, ChevronRight, Copy, FileWarning, FolderOpen, Images, LoaderCircle, Maximize, RotateCw, SquareArrowOutUpRight, WrapText, X, ZoomIn, ZoomOut,
+  AArrowDown, AArrowUp, ChevronLeft, ChevronRight, Copy, FilePen, FileWarning, FolderOpen, Images, LoaderCircle, Maximize, Pencil, RotateCw, Save, SquareArrowOutUpRight, WrapText, X,
+  ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../desktop/confirm-dialog";
 import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { extensions } from "./note-editor";
-import { useDesktop } from "../../lib/desktop-store";
-import { codeLanguage, contentUrl, extensionOf, formatDate, formatSize, openOnSystem, readTextFile } from "../../lib/files";
+import { guardClose, useDesktop } from "../../lib/desktop-store";
+import {
+  codeLanguage, contentUrl, encodeText, ENCODING_LABELS, extensionOf, formatDate, formatSize, openOnSystem, readTextFile, SaveError, saveTextFile, type TextEncoding,
+} from "../../lib/files";
 import { renderCode } from "../../lib/highlight";
-import { useViewer, type ViewerDoc } from "../../lib/viewer";
+import { guardLeave, useViewer, type ViewerDoc } from "../../lib/viewer";
 
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 32;
@@ -39,7 +43,7 @@ export function ViewerWindow() {
   // 앞에 있는 창이면 본문에 초점을 둬 화살표·확대 키가 바로 먹는다.
   useEffect(() => {
     if (!focused || !isOpen) return;
-    const frame = requestAnimationFrame(() => { if (!document.activeElement?.closest(".window[data-window=viewer] input, .window[data-window=viewer] button")) bodyRef.current?.focus({ preventScroll: true }); });
+    const frame = requestAnimationFrame(() => { if (!document.activeElement?.closest(".window[data-window=viewer] input, .window[data-window=viewer] button, .window[data-window=viewer] textarea")) bodyRef.current?.focus({ preventScroll: true }); });
     return () => cancelAnimationFrame(frame);
   }, [focused, isOpen, doc?.path]);
 
@@ -199,8 +203,12 @@ function ImageView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say:
   </>;
 }
 
-type TextState = { status: "loading" | "ready" | "binary" | "error"; text?: string; truncated?: boolean; message?: string };
+type TextState = {
+  status: "loading" | "ready" | "binary" | "error"; text?: string; truncated?: boolean; message?: string;
+  encoding?: TextEncoding; exact?: boolean; modified?: string | null; size?: number;
+};
 type TextMode = "rich" | "source";
+type Ask = { kind: "discard"; proceed: () => void } | { kind: "conflict" } | null;
 
 function TextView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say: (text: string, tone?: "info" | "error") => void }) {
   const markdown = extensionOf(doc.name) === "md" || extensionOf(doc.name) === "markdown";
@@ -209,26 +217,77 @@ function TextView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say: 
   const [mode, setMode] = useState<TextMode>(markdown ? "rich" : "source");
   const [wrap, setWrap] = useState(true);
   const [fontAt, setFontAt] = useState(2);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [ask, setAsk] = useState<Ask>(null);
   useEffect(() => {
     const controller = new AbortController();
     setState({ status: "loading" });
     readTextFile(doc.path, controller.signal)
-      .then(({ text, truncated }) => setState(text === null ? { status: "binary" } : { status: "ready", text, truncated }))
+      .then(({ decoded, truncated, modified }) => setState(decoded === null ? { status: "binary" }
+        : { status: "ready", text: decoded.text, truncated, encoding: decoded.encoding, exact: decoded.exact, modified }))
       .catch((error: unknown) => { if (!controller.signal.aborted) setState({ status: "error", message: error instanceof Error ? error.message : "읽지 못했습니다." }); });
     return () => controller.abort();
   }, [doc.path, doc.modified]);
   const text = state.status === "ready" ? state.text ?? "" : "";
-  const richAllowed = markdown && text.length <= RICH_MAX_CHARS;
+  // 입력칸(textarea)은 줄 끝을 LF로만 다루므로, 원래 CRLF였던 파일은 저장할 때 CRLF로 되돌린다.
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const original = useMemo(() => text.replace(/\r\n?/g, "\n"), [text]);
+  const dirty = editing && draft !== original;
+  const editable = state.status === "ready" && !state.truncated && Boolean(state.exact);
+  const counted = useDeferredValue(editing ? draft : text);
+  const richAllowed = markdown && text.length <= RICH_MAX_CHARS && !editing;
   const effective: TextMode = richAllowed && mode === "rich" ? "rich" : "source";
-  const stats = useMemo(() => (state.status === "ready" ? { lines: text.length ? text.split("\n").length : 0, chars: text.length } : null), [state.status, text]);
+  const stats = useMemo(() => (state.status === "ready" ? { lines: counted.length ? counted.split("\n").length : 0, chars: counted.length } : null), [state.status, counted]);
+
+  // 고친 글을 저장하지 않았으면 다른 파일로 넘어가거나 창을 닫기 전에 묻는다.
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    const guard = (proceed: () => void) => { if (!dirtyRef.current) return false; setAsk({ kind: "discard", proceed }); return true; };
+    const unload = (event: BeforeUnloadEvent) => { if (dirtyRef.current) event.preventDefault(); };
+    const offLeave = guardLeave(guard), offClose = guardClose("viewer", guard);
+    window.addEventListener("beforeunload", unload);
+    return () => { offLeave(); offClose(); window.removeEventListener("beforeunload", unload); };
+  }, []);
+
   async function copyAll() {
-    try { await navigator.clipboard.writeText(text); say("내용을 복사했습니다."); }
+    try { await navigator.clipboard.writeText(editing ? draft : text); say("내용을 복사했습니다."); }
     catch { say("클립보드에 복사하지 못했습니다.", "error"); }
   }
+  function startEditing() { setDraft(original); setEditing(true); }
+  function stopEditing() {
+    if (dirty) setAsk({ kind: "discard", proceed: () => setEditing(false) });
+    else setEditing(false);
+  }
+  async function save(overwrite = false) {
+    if (!editing || saving || state.status !== "ready" || !state.encoding) return;
+    const written = eol === "\r\n" ? draft.replace(/\n/g, "\r\n") : draft;
+    let bytes: Uint8Array;
+    try { bytes = encodeText(written, state.encoding); }
+    catch (error) { say(error instanceof Error ? error.message : "저장할 수 없는 글자가 있습니다.", "error"); return; }
+    setSaving(true);
+    try {
+      const result = await saveTextFile(doc.path, bytes, overwrite ? null : state.modified ?? null);
+      setState((now) => ({ ...now, text: written, modified: result.modified, size: result.size }));
+      say("저장했습니다.");
+    } catch (error) {
+      if (error instanceof SaveError && error.code === "FILE_CHANGED") setAsk({ kind: "conflict" });
+      else say(error instanceof Error ? error.message : "저장하지 못했습니다.", "error");
+    } finally { setSaving(false); }
+  }
+  function onKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (editing && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); }
+  }
+  const editTitle = editable ? (editing ? "편집 끝내기" : "편집") : state.truncated ? "파일이 커서(8MB 넘음) 편집할 수 없습니다" : "인코딩을 정확히 읽지 못해 편집할 수 없습니다";
+  // 저장한 뒤에는 서버가 돌려준 크기·수정 시각을 보인다.
+  const size = state.size ?? doc.size;
+  const modified = state.size !== undefined ? state.modified ?? null : doc.modified;
   return <>
     <Tools>
       {markdown && <div className="files-segment" role="radiogroup" aria-label="보기 방식">
-        <button type="button" role="radio" aria-checked={effective === "rich"} disabled={!richAllowed} title={richAllowed ? "서식 보기" : "파일이 너무 커서 원문으로만 봅니다"} onClick={() => setMode("rich")}>서식</button>
+        <button type="button" role="radio" aria-checked={effective === "rich"} disabled={!richAllowed} title={editing ? "편집 중에는 원문으로 봅니다" : richAllowed ? "서식 보기" : "파일이 너무 커서 원문으로만 봅니다"} onClick={() => setMode("rich")}>서식</button>
         <button type="button" role="radio" aria-checked={effective === "source"} title="원문 보기" onClick={() => setMode("source")}>원문</button>
       </div>}
       <Button type="button" variant="ghost" size="icon-sm" aria-label="줄 바꿈" title="줄 바꿈" aria-pressed={wrap} disabled={effective === "rich"} onClick={() => setWrap((now) => !now)}><WrapText aria-hidden="true" /></Button>
@@ -236,22 +295,60 @@ function TextView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say: 
       <Button type="button" variant="ghost" size="icon-sm" aria-label="글자 크게" title="글자 크게" disabled={fontAt >= FONT_STEPS.length - 1} onClick={() => setFontAt((now) => Math.min(FONT_STEPS.length - 1, now + 1))}><AArrowUp aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="내용 복사" title="내용 복사" disabled={state.status !== "ready"} onClick={() => void copyAll()}><Copy aria-hidden="true" /></Button>
       <span className="viewer-tools-gap" aria-hidden="true" />
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="편집" title={editTitle} aria-pressed={editing} disabled={!editable} onClick={() => (editing ? stopEditing() : startEditing())}><Pencil aria-hidden="true" /></Button>
+      {editing && <Button type="button" variant="ghost" size="icon-sm" className="viewer-save" aria-label="저장" title="저장 (Ctrl+S)" disabled={!dirty || saving} data-dirty={dirty ? "" : undefined}
+        onClick={() => void save()}>{saving ? <LoaderCircle aria-hidden="true" className="viewer-spin" /> : <Save aria-hidden="true" />}</Button>}
       {tools}
     </Tools>
-    <div className="viewer-document" data-mode={effective} style={{ ["--viewer-font" as string]: `${FONT_STEPS[fontAt]}px` }}>
+    <div className="viewer-document" data-mode={effective} data-editing={editing ? "" : undefined} style={{ ["--viewer-font" as string]: `${FONT_STEPS[fontAt]}px` }} onKeyDown={onKey}>
       {state.status === "loading" ? <div className="viewer-empty" role="status"><LoaderCircle aria-hidden="true" className="viewer-spin" /><span>불러오는 중…</span></div>
         : state.status === "binary" ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>글자로 읽을 수 없는 파일입니다</strong><span>이진 파일이거나 알 수 없는 인코딩입니다.</span></div>
           : state.status === "error" ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>파일을 열 수 없습니다</strong><span>{state.message}</span></div>
-            : effective === "rich" ? <MarkdownView text={text} />
-              : language ? <CodeView text={text} language={language.language} wrap={wrap} />
-                : <pre className="viewer-source" data-wrap={wrap ? "" : undefined}>{text}</pre>}
+            : editing ? <EditView value={draft} onChange={setDraft} language={language?.language ?? "plaintext"} wrap={wrap} />
+              : effective === "rich" ? <MarkdownView text={text} />
+                : language ? <CodeView text={text} language={language.language} wrap={wrap} />
+                  : <pre className="viewer-source" data-wrap={wrap ? "" : undefined}>{text}</pre>}
       {state.status === "ready" && state.truncated && <p className="viewer-truncated" role="status">파일이 커서 앞 8MB까지만 보입니다.</p>}
     </div>
     <footer className="viewer-status" aria-live="polite">
-      <span>{language ? `${language.label} · ` : ""}{stats ? `줄 ${stats.lines.toLocaleString("ko-KR")} · 글자 ${stats.chars.toLocaleString("ko-KR")}` : state.status === "loading" ? "불러오는 중…" : "읽을 수 없음"}{doc.size !== null ? ` · ${formatSize(doc.size)}` : ""}{doc.modified ? ` · ${formatDate(doc.modified)}` : ""}</span>
+      <span>{editing && <span className="viewer-editing" data-dirty={dirty ? "" : undefined}>{dirty ? "수정됨" : "편집 중"}</span>}{language ? `${language.label} · ` : ""}{stats ? `줄 ${stats.lines.toLocaleString("ko-KR")} · 글자 ${stats.chars.toLocaleString("ko-KR")}` : state.status === "loading" ? "불러오는 중…" : "읽을 수 없음"}{editing && state.encoding ? ` · ${ENCODING_LABELS[state.encoding]} · ${eol === "\r\n" ? "CRLF" : "LF"}` : ""}{size !== null ? ` · ${formatSize(size)}` : ""}{modified ? ` · ${formatDate(modified)}` : ""}</span>
       <span className="viewer-status-side" title={doc.path}>{doc.path}</span>
     </footer>
+    <ConfirmDialog open={ask !== null} icon={<FilePen />}
+      title={ask?.kind === "conflict" ? "다른 곳에서 파일이 바뀌었습니다" : "저장하지 않은 변경 사항이 있습니다"}
+      description={ask?.kind === "conflict" ? `‘${doc.name}’을(를) 연 뒤에 다른 프로그램이 고쳤습니다. 덮어쓰면 그 변경은 사라집니다.` : `‘${doc.name}’에서 고친 내용을 버리면 되돌릴 수 없습니다.`}
+      confirmLabel={ask?.kind === "conflict" ? "덮어쓰기" : "버리기"}
+      onConfirm={() => { if (ask?.kind === "conflict") void save(true); else if (ask) { setEditing(false); ask.proceed(); } }}
+      onClose={() => setAsk(null)}
+      onCloseFocus={() => (document.querySelector<HTMLElement>(".window[data-window=viewer] .viewer-input") ?? document.querySelector<HTMLElement>(".window[data-window=viewer] .viewer-stage"))?.focus({ preventScroll: true })} />
   </>;
+}
+
+/** 편집: 구문 색을 입힌 코드(아래) 위에 글자가 투명한 입력칸(위)을 같은 글꼴·여백으로 겹친다. 둘은 같은 grid 칸에 놓여 높이를 함께 정한다. */
+function EditView({ value, onChange, language, wrap }: { value: string; onChange: (value: string) => void; language: string; wrap: boolean }) {
+  const deferred = useDeferredValue(value);
+  const rendered = useMemo(() => renderCode(deferred, language), [deferred, language]);
+  function onKey(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      // 탭 문자를 넣는다. execCommand로 넣어야 되돌리기(Ctrl+Z)에 남는다.
+      event.preventDefault();
+      if (!document.execCommand("insertText", false, "\t")) {
+        const area = event.currentTarget, at = area.selectionStart;
+        onChange(`${area.value.slice(0, at)}\t${area.value.slice(area.selectionEnd)}`);
+        requestAnimationFrame(() => area.setSelectionRange(at + 1, at + 1));
+      }
+    } else if (event.key === "Escape") {
+      // 입력칸에서 빠져나온다. 한 번 더 누르면 뷰어의 Esc(닫기)가 된다.
+      event.preventDefault();
+      event.currentTarget.closest<HTMLElement>(".viewer-stage")?.focus({ preventScroll: true });
+    }
+  }
+  return <div className="viewer-edit" data-wrap={wrap ? "" : undefined} style={{ ["--gutter" as string]: `${Math.max(2, String(rendered.lines).length)}ch` }}>
+    <pre className="viewer-source viewer-code" aria-hidden="true" data-language={language} data-wrap={wrap ? "" : undefined} data-plain={rendered.highlighted ? undefined : ""}
+      dangerouslySetInnerHTML={{ __html: rendered.html }} />
+    <textarea className="viewer-input" aria-label="내용 편집" value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={onKey} wrap={wrap ? "soft" : "off"}
+      spellCheck={false} autoCapitalize="off" autoComplete="off" autoCorrect="off" autoFocus />
+  </div>;
 }
 
 /** 소스 코드: 줄 번호와 구문 강조. 줄마다 `.viewer-line` 하나이고 번호 자리는 줄 수의 자릿수만큼이다. */

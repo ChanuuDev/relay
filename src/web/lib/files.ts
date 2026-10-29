@@ -2,9 +2,9 @@ import { create } from "zustand";
 import {
   File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileTerminal, FileText, FileVideo, Folder, Presentation, type LucideIcon,
 } from "lucide-react";
-import type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places } from "../../files/files.service";
+import type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places, SaveResult } from "../../files/files.service";
 
-export type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places };
+export type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places, SaveResult };
 
 /** 복사·잘라내기한 항목. 창 안에서만 쓰는 클립보드라 새로 고치면 비워진다. */
 export type Clipboard = { paths: string[]; mode: PasteMode };
@@ -14,15 +14,30 @@ export type Location = string | null;
 export type View = "list" | "grid";
 export type SortKey = "name" | "modified" | "kind" | "size";
 export type Sort = { key: SortKey; desc: boolean };
+/** 목록 보기에서 사용자가 끌어 정한 열 너비(px). 없는 열은 기본 너비이고, 이름 열은 늘 남는 폭을 다 쓴다. */
+export type ColumnKey = "modified" | "kind" | "size";
+export type ColumnWidths = Partial<Record<ColumnKey, number>>;
+export const COLUMN_MIN: Record<ColumnKey, number> = { modified: 72, kind: 56, size: 48 };
+const COLUMN_MAX = 640;
 /** favorites가 null이면 사용자 폴더(places) 기본 즐겨찾기를 쓴다. expanded는 펼친 트리 항목 키(`fav:경로`, `pc:경로`, `pc:`)다. */
-type Prefs = { view: View; hidden: boolean; preview: boolean; sort: Sort; location: Location; favorites: string[] | null; expanded: string[] };
+type Prefs = { view: View; hidden: boolean; preview: boolean; sort: Sort; location: Location; favorites: string[] | null; expanded: string[]; columns: ColumnWidths };
 
 const PREFS_KEY = "relay-files-v1";
 const MAX_HISTORY = 100;
-const DEFAULT_PREFS: Prefs = { view: "list", hidden: false, preview: true, sort: { key: "name", desc: false }, location: null, favorites: null, expanded: ["fav:", "pc:"] };
+const DEFAULT_PREFS: Prefs = { view: "list", hidden: false, preview: true, sort: { key: "name", desc: false }, location: null, favorites: null, expanded: ["fav:", "pc:"], columns: {} };
 const MAX_FAVORITES = 50;
 const MAX_EXPANDED = 200;
 const SORT_KEYS: SortKey[] = ["name", "modified", "kind", "size"];
+
+function columnsOf(value: unknown): ColumnWidths {
+  const columns: ColumnWidths = {};
+  if (!value || typeof value !== "object") return columns;
+  for (const key of Object.keys(COLUMN_MIN) as ColumnKey[]) {
+    const width = (value as Record<string, unknown>)[key];
+    if (typeof width === "number" && Number.isFinite(width)) columns[key] = Math.round(Math.min(COLUMN_MAX, Math.max(COLUMN_MIN[key], width)));
+  }
+  return columns;
+}
 
 function loadPrefs(): Prefs {
   try {
@@ -32,7 +47,7 @@ function loadPrefs(): Prefs {
     const strings = (value: unknown, max: number) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0).slice(0, max) : null);
     return { view: raw.view === "grid" ? "grid" : "list", hidden: raw.hidden === true, preview: raw.preview !== false, sort,
       location: typeof raw.location === "string" && raw.location ? raw.location : null,
-      favorites: strings(raw.favorites, MAX_FAVORITES), expanded: strings(raw.expanded, MAX_EXPANDED) ?? DEFAULT_PREFS.expanded };
+      favorites: strings(raw.favorites, MAX_FAVORITES), expanded: strings(raw.expanded, MAX_EXPANDED) ?? DEFAULT_PREFS.expanded, columns: columnsOf(raw.columns) };
   } catch { return DEFAULT_PREFS; }
 }
 
@@ -45,12 +60,14 @@ type State = Prefs & {
   addFavorite: (path: string, current: string[]) => void; removeFavorite: (path: string, current: string[]) => void;
   moveFavorite: (path: string, delta: number, current: string[]) => void; resetFavorites: () => void;
   setExpanded: (key: string, open: boolean) => void; expandAll: (keys: string[]) => void; collapseAll: () => void;
+  /** 끈 열 너비를 저장한다. 빈 값이면 모든 열이 기본 너비로 돌아간다. */
+  setColumns: (columns: ColumnWidths) => void;
 };
 
 const save = (state: Prefs) => {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ view: state.view, hidden: state.hidden, preview: state.preview, sort: state.sort, location: state.location,
-      favorites: state.favorites, expanded: state.expanded }));
+      favorites: state.favorites, expanded: state.expanded, columns: state.columns }));
   }
   catch { /* 저장 공간이 없어도 창은 동작한다. */ }
 };
@@ -98,6 +115,7 @@ export const useFiles = create<State>((set, get) => {
       update({ favorites: next });
     },
     resetFavorites: () => update({ favorites: null }),
+    setColumns: (columns) => update({ columns: columnsOf(columns) }),
     setExpanded: (key, open) => {
       const { expanded } = get();
       if (open === expanded.includes(key)) return;
@@ -244,17 +262,67 @@ export function sortEntries(entries: FileEntry[], sort: Sort): FileEntry[] {
 
 /** 미리 보기 글은 앞 256KB만 읽는다. NUL이 있으면 이진 파일로 보고, UTF-8이 아니면 한국어 Windows의 기본 인코딩(CP949)으로 읽는다. */
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
-export function decodeText(bytes: Uint8Array): string | null {
+export const decodeText = (bytes: Uint8Array): string | null => decodeTextAs(bytes)?.text ?? null;
+
+/** 읽은 글의 인코딩. 뷰어가 고친 글을 같은 인코딩(BOM 포함)으로 다시 쓴다. */
+export type TextEncoding = "utf-8" | "utf-8-bom" | "utf-16le" | "euc-kr";
+export const ENCODING_LABELS: Record<TextEncoding, string> = { "utf-8": "UTF-8", "utf-8-bom": "UTF-8 BOM", "utf-16le": "UTF-16 LE", "euc-kr": "CP949" };
+/** exact가 false면 깨진 글자를 바꿔 읽었거나 끝을 잘라 읽은 것이라, 그대로 저장하면 원래 바이트를 잃는다. */
+export type DecodedText = { text: string; encoding: TextEncoding; exact: boolean };
+export function decodeTextAs(bytes: Uint8Array): DecodedText | null {
   const sample = bytes.subarray(0, 8192);
   const utf16 = sample[0] === 0xff && sample[1] === 0xfe;
   if (!utf16 && sample.includes(0)) return null;
-  if (utf16) return new TextDecoder("utf-16le").decode(bytes);
-  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  if (utf16) { const text = new TextDecoder("utf-16le").decode(bytes); return { text, encoding: "utf-16le", exact: bytes.length % 2 === 0 && !text.includes("�") }; }
+  const encoding = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? "utf-8-bom" : "utf-8";
+  try { return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), encoding, exact: true }; }
   catch {
     // 잘린 끝의 반쪽 글자 때문일 수 있으니 끝 3바이트를 빼고 다시 본다.
-    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, Math.max(0, bytes.length - 3))); }
-    catch { return new TextDecoder("euc-kr").decode(bytes); }
+    try { return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, Math.max(0, bytes.length - 3))), encoding, exact: false }; }
+    catch { const text = new TextDecoder("euc-kr").decode(bytes); return { text, encoding: "euc-kr", exact: !text.includes("�") }; }
   }
+}
+
+let cp949: Map<string, number> | null = null;
+/** CP949 두 바이트 글자의 역표. 브라우저에는 euc-kr 인코더가 없으니 디코더로 처음 한 번 만든다. */
+function cp949Table() {
+  if (cp949) return cp949;
+  const table = new Map<string, number>();
+  const decoder = new TextDecoder("euc-kr");
+  const pair = new Uint8Array(2);
+  for (let lead = 0x81; lead <= 0xfe; lead += 1) {
+    for (let trail = 0x41; trail <= 0xfe; trail += 1) {
+      pair[0] = lead; pair[1] = trail;
+      const char = decoder.decode(pair);
+      if (char.length === 1 && char !== "�" && !table.has(char)) table.set(char, (lead << 8) | trail);
+    }
+  }
+  return (cp949 = table);
+}
+
+/** 글을 encoding의 바이트로 바꾼다. CP949로 나타낼 수 없는 글자가 있으면 그 글자를 던진다. */
+export function encodeText(text: string, encoding: TextEncoding): Uint8Array {
+  if (encoding === "utf-8") return new TextEncoder().encode(text);
+  if (encoding === "utf-8-bom") { const body = new TextEncoder().encode(text); const bytes = new Uint8Array(body.length + 3); bytes.set([0xef, 0xbb, 0xbf]); bytes.set(body, 3); return bytes; }
+  if (encoding === "utf-16le") {
+    const bytes = new Uint8Array(2 + text.length * 2);
+    bytes[0] = 0xff; bytes[1] = 0xfe;
+    for (let at = 0; at < text.length; at += 1) { const unit = text.charCodeAt(at); bytes[2 + at * 2] = unit & 0xff; bytes[3 + at * 2] = unit >> 8; }
+    return bytes;
+  }
+  const table = cp949Table();
+  const out: number[] = [];
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    if (code < 0x80) { out.push(code); continue; }
+    const pair = table.get(char);
+    if (pair === undefined) throw new UnencodableError(char);
+    out.push(pair >> 8, pair & 0xff);
+  }
+  return Uint8Array.from(out);
+}
+export class UnencodableError extends Error {
+  constructor(public char: string) { super(`‘${char}’은(는) CP949로 저장할 수 없는 글자입니다.`); }
 }
 
 export async function readTextPreview(target: string, signal: AbortSignal): Promise<string | null> {
@@ -265,11 +333,31 @@ export async function readTextPreview(target: string, signal: AbortSignal): Prom
 
 /** 뷰어 창은 글을 앞 8MB까지 읽는다. 더 큰 파일은 거기까지만 보이고 truncated로 알린다. */
 export const TEXT_VIEWER_BYTES = 8 * 1024 * 1024;
-export async function readTextFile(target: string, signal: AbortSignal): Promise<{ text: string | null; truncated: boolean }> {
+/** decoded가 null이면 이진 파일이다. modified는 읽은 순간의 수정 시각이라 저장할 때 그 사이 바뀌었는지 보는 데 쓴다. */
+export async function readTextFile(target: string, signal: AbortSignal): Promise<{ decoded: DecodedText | null; truncated: boolean; modified: string | null }> {
   const response = await fetch(contentUrl(target), { signal, headers: { Range: `bytes=0-${TEXT_VIEWER_BYTES - 1}` }, cache: "no-store" });
   if (!response.ok) throw new Error(response.status === 403 ? "이 파일을 읽을 권한이 없습니다." : response.status === 404 ? "파일이 없습니다." : "파일을 읽지 못했습니다.");
   const total = Number(/\/(\d+)$/.exec(response.headers.get("Content-Range") ?? "")?.[1] ?? "0");
-  return { text: decodeText(new Uint8Array(await response.arrayBuffer())), truncated: total > TEXT_VIEWER_BYTES };
+  return { decoded: decodeTextAs(new Uint8Array(await response.arrayBuffer())), truncated: total > TEXT_VIEWER_BYTES, modified: response.headers.get("X-File-Modified") };
+}
+
+/** 저장 실패. code가 FILE_CHANGED면 연 뒤에 다른 곳에서 파일이 바뀐 것이다. */
+export class SaveError extends Error {
+  constructor(message: string, public code: string) { super(message); }
+}
+function toBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return btoa(binary);
+}
+/** 뷰어에서 고친 글을 그 파일에 쓴다. modified가 null이면 그 사이 바뀌었어도 덮어쓴다. */
+export async function saveTextFile(target: string, bytes: Uint8Array, modified: string | null): Promise<SaveResult> {
+  let response: Response;
+  try { response = await fetch("/api/v1/files/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: target, data: toBase64(bytes), modified }) }); }
+  catch { throw new SaveError("Relay 서버에 연결할 수 없습니다.", "NETWORK"); }
+  const data = await response.json().catch(() => null) as (SaveResult & { error?: { code?: string; message?: string } }) | null;
+  if (!response.ok || !data) throw new SaveError(data?.error?.message ?? `저장하지 못했습니다(HTTP ${response.status}).`, data?.error?.code ?? "HTTP");
+  return data;
 }
 
 /** PDF 미리 보기가 첫 쪽을 그리는 상한. 더 큰 파일은 아이콘만 보인다. */

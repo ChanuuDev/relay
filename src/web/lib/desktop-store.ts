@@ -122,15 +122,25 @@ function initialState() {
   return { windows, focused: "sessions" as AppId | null, nextZ, mobile, closing: {} as Transient, minimizing: {} as Transient };
 }
 
+/** 닫기 전에 물어볼 창. guard가 true를 돌려주면 지금은 닫지 않고, 사용자가 동의하면 guard가 proceed를 불러 닫는다. */
+const closeGuards = new Map<AppId, (proceed: () => void) => boolean>();
+export function guardClose(id: AppId, guard: (proceed: () => void) => boolean) {
+  closeGuards.set(id, guard);
+  return () => { if (closeGuards.get(id) === guard) closeGuards.delete(id); };
+}
+
 export const useDesktop = create<DesktopState>((set, get) => ({
   ...initialState(),
   open: (id) => set((state) => raise(state, id)),
   focus: (id) => set((state) => (state.focused === id && state.windows[id].open && !state.windows[id].minimized ? state : raise(state, id))),
   // 닫기·최소화는 과도 상태만 켜고, 종료 트윈이 끝나면 컴포넌트가 finalize*를 부른다(§3-A2·A3).
-  close: (id) => set((state) => (state.closing[id] || !state.windows[id].open ? state : {
-    closing: { ...state.closing, [id]: true },
-    focused: topmost(state.windows, { closing: state.closing, minimizing: state.minimizing }, id),
-  })),
+  close: (id) => {
+    const closeNow = () => set((state) => (state.closing[id] || !state.windows[id].open ? state : {
+      closing: { ...state.closing, [id]: true },
+      focused: topmost(state.windows, { closing: state.closing, minimizing: state.minimizing }, id),
+    }));
+    if (!closeGuards.get(id)?.(closeNow)) closeNow();
+  },
   finalizeClose: (id) => set((state) => {
     if (!state.closing[id]) return state;
     const windows: Windows = { ...state.windows, [id]: { ...state.windows[id], open: false, minimized: false, z: 0 } };

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env, ready, useRelayServer } from "./web-helpers";
 
@@ -291,6 +291,13 @@ test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽�
   await expect(viewer.locator(".viewer-prose h1")).toHaveText("안내");
   await expect(viewer.locator(".viewer-prose strong")).toHaveText("굵게");
   await expect(viewer.locator(".viewer-status")).toContainText("줄 4");
+  // 본문은 고정 폭이 아니라 창을 넓히면 함께 넓어진다.
+  const proseWidth = async () => (await viewer.locator(".viewer-prose").boundingBox())!.width;
+  const narrow = await proseWidth();
+  await viewer.locator(".window-title").dblclick();
+  await expect.poll(proseWidth).toBeGreaterThan(narrow + 100);
+  expect(Math.abs((await proseWidth()) - (await viewer.locator(".viewer-document").evaluate((node) => node.clientWidth)))).toBeLessThanOrEqual(1);
+  await viewer.locator(".window-title").dblclick();
   await viewer.getByRole("radio", { name: "원문" }).click();
   await expect(viewer.locator(".viewer-source")).toContainText("# 안내");
   await viewer.locator(".viewer-stage").focus();
@@ -317,6 +324,125 @@ test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽�
   await viewer.getByRole("button", { name: "줄 바꿈" }).click();
   await expect(code).not.toHaveAttribute("data-wrap", "");
   expect(errors).toEqual([]);
+});
+
+test("뷰어: 글·코드를 고쳐 원래 인코딩·줄 끝으로 저장하고, 바뀐 파일·저장 안 한 변경은 묻는다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  const source = path.join(disk, "예제.ts");
+  writeFileSync(source, "const a = 1;\r\nexport default a;\r\n");
+  await page.getByRole("button", { name: "새로 고침" }).click();
+  await row(page, "예제.ts").dblclick();
+  const viewer = page.locator(win("viewer"));
+  await expect(viewer.locator(".viewer-code")).toContainText("export default a;");
+  await viewer.getByRole("button", { name: "편집" }).click();
+  const input = viewer.getByRole("textbox", { name: "내용 편집" });
+  await expect(input).toBeFocused();
+  await expect(viewer.locator(".viewer-status")).toContainText("편집 중");
+  await expect(viewer.locator(".viewer-status")).toContainText("UTF-8 · CRLF");
+  // 투명한 입력칸의 글자 자리가 아래 색 입힌 코드의 글자 자리와 겹친다.
+  const offset = await viewer.locator(".viewer-edit").evaluate((edit) => {
+    const area = edit.querySelector("textarea")!, text = edit.querySelector<HTMLElement>(".viewer-text")!;
+    const areaStyle = getComputedStyle(area), textStyle = getComputedStyle(text);
+    return { x: area.getBoundingClientRect().left + parseFloat(areaStyle.paddingLeft) - (text.getBoundingClientRect().left + parseFloat(textStyle.paddingLeft)),
+      y: area.getBoundingClientRect().top + parseFloat(areaStyle.paddingTop) - text.getBoundingClientRect().top, height: area.offsetHeight - (edit as HTMLElement).offsetHeight };
+  });
+  expect(Math.abs(offset.x)).toBeLessThanOrEqual(0.5); expect(Math.abs(offset.y)).toBeLessThanOrEqual(0.5); expect(offset.height).toBe(0);
+  // 고치고 Ctrl+S로 저장하면 CRLF가 그대로 남는다.
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type("// 끝\n");
+  await page.keyboard.press("Tab");
+  await expect(viewer.locator(".viewer-status")).toContainText("수정됨");
+  await expect(viewer.locator(".viewer-edit .viewer-line")).toHaveCount(4);
+  await page.keyboard.press("Control+s");
+  await expect(viewer.locator(".files-toast")).toContainText("저장했습니다.");
+  expect(readFileSync(source, "utf8")).toBe("const a = 1;\r\nexport default a;\r\n// 끝\r\n\t");
+  await expect(viewer.getByRole("button", { name: "저장" })).toBeDisabled();
+  // 다른 곳에서 바뀐 파일은 덮어쓰기 전에 묻는다.
+  writeFileSync(source, "밖에서 고침\r\n");
+  await input.press("Backspace");
+  await viewer.getByRole("button", { name: "저장" }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("다른 곳에서 파일이 바뀌었습니다");
+  await dialog.getByRole("button", { name: "취소" }).click();
+  expect(readFileSync(source, "utf8")).toBe("밖에서 고침\r\n");
+  await viewer.getByRole("button", { name: "저장" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "덮어쓰기" }).click();
+  await expect(viewer.locator(".files-toast")).toContainText("저장했습니다.");
+  expect(readFileSync(source, "utf8")).toBe("const a = 1;\r\nexport default a;\r\n// 끝\r\n");
+  // 저장하지 않은 채 닫으려 하면 묻고, 취소하면 고친 글이 남으며, 버리면 닫힌다.
+  await input.press("x");
+  await viewer.locator("[data-window-action=close]").click();
+  await expect(page.getByRole("alertdialog")).toContainText("저장하지 않은 변경 사항이 있습니다");
+  await page.getByRole("alertdialog").getByRole("button", { name: "취소" }).click();
+  await expect(input).toHaveValue(/\nx$/);
+  await viewer.locator("[data-window-action=close]").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "버리기" }).click();
+  await expect(viewer).toHaveCount(0);
+  expect(readFileSync(source, "utf8")).toBe("const a = 1;\r\nexport default a;\r\n// 끝\r\n");
+  // 편집을 끝내면 서식 보기로 돌아가고, CP949 글도 그 인코딩으로 저장한다.
+  const legacy = path.join(disk, "옛 글.txt");
+  writeFileSync(legacy, Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x0a]));
+  await page.locator(dock("파일 탐색기")).click();
+  await page.getByRole("button", { name: "새로 고침" }).click();
+  await row(page, "옛 글.txt").dblclick();
+  await expect(viewer.locator(".viewer-source")).toContainText("한글");
+  await viewer.getByRole("button", { name: "편집" }).click();
+  await expect(viewer.locator(".viewer-status")).toContainText("CP949 · LF");
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type("똠");
+  await page.keyboard.press("Control+s");
+  await expect(viewer.locator(".files-toast")).toContainText("저장했습니다.");
+  expect([...readFileSync(legacy)]).toEqual([0xc7, 0xd1, 0xb1, 0xdb, 0x0a, 0x8c, 0x63]);
+  await viewer.getByRole("button", { name: "편집" }).click();
+  await expect(viewer.getByRole("textbox", { name: "내용 편집" })).toHaveCount(0);
+  await expect(viewer.locator(".viewer-source")).toContainText("한글\n똠");
+  expect(errors).toEqual([]);
+});
+
+test("파일 탐색기: 목록 머리글 경계를 끌어 열 너비를 바꾸고, 두 번 누르면 기본 너비로 돌아간다", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openFolder(page);
+  const header = (key: string) => page.locator(`${win("files")} .files-columns [data-column="${key}"]`);
+  const cell = (key: string) => row(page, "보고서.txt").locator(`[data-column="${key}"]`);
+  const width = async (locator: ReturnType<typeof header>) => Math.round((await locator.boundingBox())!.width);
+  // 포인터 이동은 화면 프레임에 맞춰 전달되므로, 끈 뒤의 너비는 반영될 때까지 기다려 본다.
+  const widthOf = (locator: ReturnType<typeof header>) => expect.poll(() => width(locator));
+  const start = { modified: await width(header("modified")), kind: await width(header("kind")), name: await width(header("name")) };
+  expect(start.modified).toBe(152); expect(start.kind).toBe(136);
+  const drag = async (key: string, dx: number) => {
+    const handle = header(key).locator(".files-col-resize");
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + dx / 2, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2);
+    await page.mouse.up();
+  };
+  // 날짜|종류 경계를 오른쪽으로 40px 끌면 날짜 열이 넓어지고 종류 열이 좁아진다. 행 칸도 같이 움직인다.
+  await drag("kind", 40);
+  await widthOf(header("modified")).toBe(192); await widthOf(header("kind")).toBe(96);
+  await widthOf(cell("modified")).toBe(192);
+  // 끌기는 정렬을 바꾸지 않는다.
+  await expect(header("kind")).not.toHaveAttribute("aria-sort", /.+/);
+  // 이름|날짜 경계를 왼쪽으로 끌면 날짜 열이 넓어지고 이름 열이 좁아진다. 종류 열은 그대로다. 이름 열은 120px 아래로는 줄지 않는다.
+  await drag("modified", -10);
+  await widthOf(header("modified")).toBe(202); await widthOf(header("kind")).toBe(96);
+  await widthOf(header("name")).toBe(start.name - 10);
+  await drag("modified", -400);
+  await widthOf(header("name")).toBe(120);
+  const widest = await width(header("modified"));
+  expect(widest).toBeGreaterThan(202);
+  // 다시 열어도 남는다.
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("파일 탐색기")).click();
+  await expect(row(page, "보고서.txt")).toBeVisible();
+  await widthOf(header("modified")).toBe(widest);
+  // 경계를 두 번 누르면 모든 열이 기본 너비로 돌아간다.
+  await header("kind").locator(".files-col-resize").dblclick();
+  await widthOf(header("modified")).toBe(152); await widthOf(header("kind")).toBe(136);
+  await expect(header("kind")).not.toHaveAttribute("aria-sort", /.+/);
 });
 
 test("파일 탐색기: 오른쪽 클릭으로 복사·잘라내기·붙여넣기·삭제·속성을 한다", async ({ page }) => {

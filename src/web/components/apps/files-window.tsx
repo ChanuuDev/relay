@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type SubmitEvent } from "react";
+import {
+  useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SubmitEvent,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, EyeOff, FileWarning, Folder, FolderOpen, HardDrive, LayoutGrid, List,
@@ -17,8 +19,8 @@ import { SplitView } from "../desktop/split-view";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
-  contentUrl, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, sortEntries,
-  TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey,
+  COLUMN_MIN, contentUrl, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, sortEntries,
+  TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey, type ColumnKey, type ColumnWidths,
 } from "../../lib/files";
 
 /** 격자 보기에서 섬네일을 그리는 그림 크기 상한. 큰 사진 수천 장이 한꺼번에 내려오지 않게 한다. */
@@ -41,6 +43,7 @@ export function FilesWindow() {
   const showHidden = useFiles((state) => state.hidden);
   const showPreview = useFiles((state) => state.preview);
   const sort = useFiles((state) => state.sort);
+  const columns = useFiles((state) => state.columns);
   const clipboard = useFiles((state) => state.clipboard);
   const { go, back, forward, select, setView, toggleHidden, togglePreview, sortBy, setClipboard } = useFiles.getState();
   const isOpen = useDesktop((state) => state.windows.files.open);
@@ -343,7 +346,7 @@ export function FilesWindow() {
       <FilesTree places={places.data} favorites={favorites} location={location} showHidden={showHidden} error={places.isError ? places.error.message : null}
         onGo={(target) => go(target)} onMenu={(tree, left, top) => openMenu(null, left, top, tree)} />} main={
     <div className="files-content">
-      {(() => { const main = <section className="files-main" aria-label="폴더 내용" onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
+      {(() => { const main = <section className="files-main" aria-label="폴더 내용" style={columnStyle(columns)} onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
         {location === null
           ? <ThisPC places={places.data} favorites={favorites} loading={places.isPending} onGo={(target) => go(target)} />
           : errorMessage
@@ -358,6 +361,9 @@ export function FilesWindow() {
                   {COLUMNS.map((column) => <button key={column.key} type="button" role="columnheader" data-column={column.key}
                     aria-sort={sort.key === column.key ? (sort.desc ? "descending" : "ascending") : undefined} onClick={() => sortBy(column.key)}>
                     <span>{column.label}</span>{sort.key === column.key && <ChevronUp aria-hidden="true" data-desc={sort.desc ? "" : undefined} />}
+                    {column.key !== "name" && <span className="files-col-resize" aria-hidden="true" title="끌어서 열 너비 조절 · 두 번 눌러 기본 너비"
+                      onPointerDown={(event) => resizeColumn(event, column.key as ColumnKey)} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                      onDoubleClick={(event) => { event.stopPropagation(); useFiles.getState().setColumns({}); }} />}
                   </button>)}
                 </div>}
                 <div ref={listRef} className="files-list" data-view={view} role="listbox" tabIndex={0} aria-label={`${data.name} 내용`}
@@ -510,6 +516,48 @@ function ThisPC({ places, favorites, loading, onGo }: { places: Places | undefin
 }
 
 type ItemProps = { entry: FileEntry; index: number; selected: boolean; cut: boolean; onSelect: () => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
+
+const columnStyle = (columns: ColumnWidths) => Object.fromEntries(Object.entries(columns).map(([key, width]) => [`--files-${key}`, `${width}px`])) as CSSProperties;
+/** 이름 열이 끝까지 지키는 폭 */
+const NAME_MIN = 120;
+
+/**
+ * 머리글 사이 경계를 끌어 열 너비를 바꾼다. 경계가 포인터를 따라가도록 경계 양쪽 열을 함께 바꾸며(합은 그대로),
+ * 왼쪽이 이름 열이면 오른쪽 열만 바꾸고 이름 열이 남는 폭을 받는다. 끄는 동안은 CSS 변수만 바꾸고 놓을 때 저장한다.
+ */
+function resizeColumn(event: ReactPointerEvent<HTMLSpanElement>, key: ColumnKey) {
+  if (event.button !== 0) return;
+  event.preventDefault(); event.stopPropagation();
+  const handle = event.currentTarget;
+  const main = handle.closest<HTMLElement>(".files-main");
+  const headers = Array.from(handle.closest(".files-columns")?.querySelectorAll<HTMLElement>("[role=columnheader]") ?? []).filter((item) => item.offsetWidth > 0);
+  const at = headers.findIndex((item) => item.dataset.column === key);
+  if (!main || at < 1) return;
+  const leftKey = headers[at - 1].dataset.column as SortKey;
+  const width = (element: HTMLElement) => element.getBoundingClientRect().width;
+  const startLeft = width(headers[at - 1]), startRight = width(headers[at]);
+  const startX = event.clientX;
+  const changed: ColumnWidths = {};
+  handle.setPointerCapture(event.pointerId);
+  handle.dataset.active = "";
+  const move = (moveEvent: PointerEvent) => {
+    const leftMin = leftKey === "name" ? Math.min(startLeft, NAME_MIN) : COLUMN_MIN[leftKey as ColumnKey];
+    const dx = Math.min(startRight - COLUMN_MIN[key], Math.max(leftMin - startLeft, moveEvent.clientX - startX));
+    changed[key] = Math.round(startRight - dx);
+    if (leftKey !== "name") changed[leftKey as ColumnKey] = Math.round(startLeft + dx);
+    for (const [column, value] of Object.entries(changed)) main.style.setProperty(`--files-${column}`, `${value}px`);
+  };
+  const end = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", end);
+    handle.removeEventListener("pointercancel", end);
+    delete handle.dataset.active;
+    if (Object.keys(changed).length) useFiles.getState().setColumns({ ...useFiles.getState().columns, ...changed });
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", end);
+  handle.addEventListener("pointercancel", end);
+}
 
 function ListRow({ entry, index, selected, cut, onSelect, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
