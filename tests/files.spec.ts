@@ -235,6 +235,7 @@ test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽�
   writeFileSync(path.join(disk, "문서.pdf"), tinyPdf());
   writeFileSync(path.join(disk, "안내.md"), "# 안내\n\n**굵게** 쓴 글\n");
   writeFileSync(path.join(disk, "그림2.png"), PNG);
+  writeFileSync(path.join(disk, "예제.ts"), "const greet = (name: string) => `안녕, ${name}`;\n/* 여러 줄\n   주석 */\nexport default greet;\n");
   await page.getByRole("button", { name: "새로 고침" }).click();
   await expect(row(page, "문서.pdf")).toBeVisible();
 
@@ -300,6 +301,21 @@ test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽�
   await page.locator(".files-preview").getByRole("button", { name: "뷰어로 열기" }).click();
   await expect(viewer.locator(".window-title")).toHaveText("보고서.txt");
   await expect(viewer.locator(".viewer-source")).toContainText("첫 줄 내용");
+  // 소스 코드는 줄 번호와 구문 색이 붙고, 여러 줄 주석도 줄마다 색이 이어진다.
+  await page.locator(dock("파일 탐색기")).click();
+  await row(page, "예제.ts").dblclick();
+  await expect(viewer.locator(".window-title")).toHaveText("예제.ts");
+  const code = viewer.locator(".viewer-code");
+  await expect(code).toHaveAttribute("data-language", "typescript");
+  await expect(code.locator(".viewer-line")).toHaveCount(5);
+  await expect(code.locator(".viewer-line").first().locator(".hljs-keyword").first()).toHaveText("const");
+  await expect(code.locator(".viewer-line").nth(1).locator(".hljs-comment")).toHaveText("/* 여러 줄");
+  await expect(code.locator(".viewer-line").nth(2).locator(".hljs-comment")).toHaveText("   주석 */");
+  await expect(viewer.locator(".viewer-status")).toContainText("TypeScript · 줄 5");
+  await expect(code).toHaveAttribute("style", /--gutter: 2ch/);
+  expect(await code.locator(".viewer-line .hljs-keyword").first().evaluate((el) => getComputedStyle(el).color)).not.toBe(await code.locator(".viewer-line .hljs-comment").first().evaluate((el) => getComputedStyle(el).color));
+  await viewer.getByRole("button", { name: "줄 바꿈" }).click();
+  await expect(code).not.toHaveAttribute("data-wrap", "");
   expect(errors).toEqual([]);
 });
 

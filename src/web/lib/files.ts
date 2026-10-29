@@ -138,16 +138,40 @@ export async function openOnSystem(target: string, action: "open" | "reveal"): P
 
 export type Preview = "image" | "video" | "audio" | "text" | "pdf" | null;
 export type FileType = { label: string; icon: LucideIcon; tone: string; preview: Preview };
-/** 두 번 누르면 뷰어 창에서 여는 종류. 그 밖의 파일은 기본 앱으로 연다. */
+/** 두 번 누르면 뷰어 창에서 여는 종류. 글·소스 코드는 모두 `text`이고, 그 밖의 파일은 기본 앱으로 연다. */
 export type ViewerKind = "image" | "text";
 export const viewerKind = (entry: Pick<FileEntry, "name" | "kind">): ViewerKind | null => {
   if (entry.kind === "directory") return null;
   const ext = extensionOf(entry.name);
   if (IMAGE_EXT.has(ext)) return "image";
-  return ext === "txt" || ext === "md" || ext === "markdown" || ext === "log" ? "text" : null;
+  return TEXT_EXT.has(ext) || BARE_TEXT_NAMES.has(entry.name.toLowerCase()) ? "text" : null;
 };
 
-const TEXT = "txt md markdown log csv tsv json jsonc json5 yml yaml toml ini cfg conf env gitignore gitattributes editorconfig xml svg html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php sh bash zsh ps1 psm1 bat cmd sql lua r pl dart gradle properties lock tex srt vtt";
+/** 확장자 없이 이름으로 알아보는 글 파일. */
+const BARE_TEXT_NAMES = new Set(["dockerfile", "makefile", "license", "readme", "changelog", "authors", "contributors", "notice", "procfile", "vagrantfile", "gemfile", "rakefile", "jenkinsfile", "cmakelists.txt"]);
+/** 확장자(또는 이름) → highlight.js 언어와 사람이 읽을 이름. 없으면 색 없이 보인다. */
+const LANGUAGES: Record<string, [language: string, label: string]> = {
+  js: ["javascript", "JavaScript"], mjs: ["javascript", "JavaScript"], cjs: ["javascript", "JavaScript"], jsx: ["javascript", "JavaScript (JSX)"],
+  ts: ["typescript", "TypeScript"], tsx: ["typescript", "TypeScript (TSX)"], json: ["json", "JSON"], jsonc: ["json", "JSON"], json5: ["json", "JSON5"],
+  xml: ["xml", "XML"], html: ["xml", "HTML"], htm: ["xml", "HTML"], vue: ["xml", "Vue"], svelte: ["xml", "Svelte"], svg: ["xml", "SVG"],
+  css: ["css", "CSS"], scss: ["scss", "SCSS"], less: ["less", "Less"],
+  py: ["python", "Python"], rb: ["ruby", "Ruby"], go: ["go", "Go"], rs: ["rust", "Rust"], java: ["java", "Java"], kt: ["kotlin", "Kotlin"], kts: ["kotlin", "Kotlin"],
+  c: ["c", "C"], h: ["c", "C"], cc: ["cpp", "C++"], cpp: ["cpp", "C++"], hpp: ["cpp", "C++"], cs: ["csharp", "C#"], swift: ["swift", "Swift"], php: ["php", "PHP"],
+  sh: ["bash", "셸 스크립트"], bash: ["bash", "Bash"], zsh: ["bash", "Zsh"], env: ["bash", "환경 변수"], ps1: ["powershell", "PowerShell"], psm1: ["powershell", "PowerShell"],
+  bat: ["dos", "배치 파일"], cmd: ["dos", "배치 파일"], sql: ["sql", "SQL"], lua: ["lua", "Lua"], r: ["r", "R"], pl: ["perl", "Perl"], dart: ["dart", "Dart"], gradle: ["gradle", "Gradle"],
+  yml: ["yaml", "YAML"], yaml: ["yaml", "YAML"], toml: ["ini", "TOML"], ini: ["ini", "INI"], cfg: ["ini", "설정 파일"], conf: ["ini", "설정 파일"], properties: ["properties", "Properties"],
+  editorconfig: ["ini", "EditorConfig"], gitignore: ["plaintext", "Git 무시 목록"], gitattributes: ["plaintext", "Git 속성"], md: ["markdown", "Markdown"], markdown: ["markdown", "Markdown"],
+  tex: ["latex", "LaTeX"], diff: ["diff", "Diff"], patch: ["diff", "Patch"], dockerfile: ["dockerfile", "Dockerfile"], makefile: ["makefile", "Makefile"],
+};
+export type CodeLanguage = { language: string; label: string };
+/** 파일 이름으로 구문 강조 언어를 고른다. 모르는 글 파일(txt·log·csv 등)은 null이다. */
+export function codeLanguage(name: string): CodeLanguage | null {
+  const lower = name.toLowerCase();
+  const found = LANGUAGES[extensionOf(name)] ?? LANGUAGES[lower] ?? (lower.startsWith("dockerfile") ? LANGUAGES.dockerfile : lower === "cmakelists.txt" ? ["makefile", "CMake"] : null);
+  return found ? { language: found[0], label: found[1] } : null;
+}
+
+const TEXT = "txt md markdown log csv tsv json jsonc json5 yml yaml toml ini cfg conf env gitignore gitattributes editorconfig xml svg html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php sh bash zsh ps1 psm1 bat cmd sql lua r pl dart gradle properties lock tex srt vtt diff patch";
 const CODE = "json jsonc json5 yml yaml toml xml html htm css scss less js mjs cjs jsx ts tsx vue svelte py rb go rs java kt kts c h cc cpp hpp cs swift php lua r pl dart gradle sql";
 const TERMINAL = "sh bash zsh ps1 psm1 bat cmd exe msi com";
 const TEXT_EXT = new Set(TEXT.split(" "));
@@ -186,6 +210,7 @@ export function fileType(entry: Pick<FileEntry, "name" | "kind">): FileType {
   if (TERMINAL_EXT.has(ext)) return { label, icon: FileTerminal, tone: "code", preview: TEXT_EXT.has(ext) ? "text" : null };
   if (CODE_EXT.has(ext)) return { label, icon: FileCode, tone: "code", preview: "text" };
   if (TEXT_EXT.has(ext)) return { label, icon: FileText, tone: "text", preview: "text" };
+  if (BARE_TEXT_NAMES.has(entry.name.toLowerCase())) return { label: codeLanguage(entry.name)?.label ?? "텍스트 문서", icon: codeLanguage(entry.name) ? FileCode : FileText, tone: codeLanguage(entry.name) ? "code" : "text", preview: "text" };
   return { label, icon: File, tone: "plain", preview: null };
 }
 

@@ -9,7 +9,8 @@ import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { extensions } from "./note-editor";
 import { useDesktop } from "../../lib/desktop-store";
-import { contentUrl, extensionOf, formatDate, formatSize, openOnSystem, readTextFile } from "../../lib/files";
+import { codeLanguage, contentUrl, extensionOf, formatDate, formatSize, openOnSystem, readTextFile } from "../../lib/files";
+import { renderCode } from "../../lib/highlight";
 import { useViewer, type ViewerDoc } from "../../lib/viewer";
 
 const ZOOM_MIN = 0.05;
@@ -72,7 +73,7 @@ export function ViewerWindow() {
     </WindowTitleBar>}>
     <div ref={bodyRef} className="viewer-stage" tabIndex={0} aria-label={doc ? `${doc.name} 내용` : "뷰어"} onKeyDown={onKey} data-kind={doc?.kind ?? "empty"}>
       {!doc
-        ? <div className="viewer-empty"><Images aria-hidden="true" /><strong>열린 파일이 없습니다</strong><span>파일 탐색기에서 그림이나 글 파일을 두 번 누르면 여기에 열립니다.</span></div>
+        ? <div className="viewer-empty"><Images aria-hidden="true" /><strong>열린 파일이 없습니다</strong><span>파일 탐색기에서 그림·글·소스 코드 파일을 두 번 누르면 여기에 열립니다.</span></div>
         : doc.kind === "image"
           ? <ImageView key={doc.path} doc={doc} tools={systemTools} say={say} />
           : <TextView key={doc.path} doc={doc} tools={systemTools} say={say} />}
@@ -203,6 +204,7 @@ type TextMode = "rich" | "source";
 
 function TextView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say: (text: string, tone?: "info" | "error") => void }) {
   const markdown = extensionOf(doc.name) === "md" || extensionOf(doc.name) === "markdown";
+  const language = codeLanguage(doc.name);
   const [state, setState] = useState<TextState>({ status: "loading" });
   const [mode, setMode] = useState<TextMode>(markdown ? "rich" : "source");
   const [wrap, setWrap] = useState(true);
@@ -241,14 +243,22 @@ function TextView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say: 
         : state.status === "binary" ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>글자로 읽을 수 없는 파일입니다</strong><span>이진 파일이거나 알 수 없는 인코딩입니다.</span></div>
           : state.status === "error" ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>파일을 열 수 없습니다</strong><span>{state.message}</span></div>
             : effective === "rich" ? <MarkdownView text={text} />
-              : <pre className="viewer-source" data-wrap={wrap ? "" : undefined}>{text}</pre>}
+              : language ? <CodeView text={text} language={language.language} wrap={wrap} />
+                : <pre className="viewer-source" data-wrap={wrap ? "" : undefined}>{text}</pre>}
       {state.status === "ready" && state.truncated && <p className="viewer-truncated" role="status">파일이 커서 앞 8MB까지만 보입니다.</p>}
     </div>
     <footer className="viewer-status" aria-live="polite">
-      <span>{stats ? `줄 ${stats.lines.toLocaleString("ko-KR")} · 글자 ${stats.chars.toLocaleString("ko-KR")}` : state.status === "loading" ? "불러오는 중…" : "읽을 수 없음"}{doc.size !== null ? ` · ${formatSize(doc.size)}` : ""}{doc.modified ? ` · ${formatDate(doc.modified)}` : ""}</span>
+      <span>{language ? `${language.label} · ` : ""}{stats ? `줄 ${stats.lines.toLocaleString("ko-KR")} · 글자 ${stats.chars.toLocaleString("ko-KR")}` : state.status === "loading" ? "불러오는 중…" : "읽을 수 없음"}{doc.size !== null ? ` · ${formatSize(doc.size)}` : ""}{doc.modified ? ` · ${formatDate(doc.modified)}` : ""}</span>
       <span className="viewer-status-side" title={doc.path}>{doc.path}</span>
     </footer>
   </>;
+}
+
+/** 소스 코드: 줄 번호와 구문 강조. 줄마다 `.viewer-line` 하나이고 번호 자리는 줄 수의 자릿수만큼이다. */
+function CodeView({ text, language, wrap }: { text: string; language: string; wrap: boolean }) {
+  const rendered = useMemo(() => renderCode(text, language), [text, language]);
+  return <pre className="viewer-source viewer-code" data-language={language} data-wrap={wrap ? "" : undefined} data-plain={rendered.highlighted ? undefined : ""}
+    style={{ ["--gutter" as string]: `${Math.max(2, String(rendered.lines).length)}ch` }} dangerouslySetInnerHTML={{ __html: rendered.html }} />;
 }
 
 /** Markdown을 메모 창과 같은 서식으로 그린다(읽기 전용 tiptap). */
