@@ -5,6 +5,7 @@ import { handler } from "../src/web/server";
 import { byteRange, copyName, crumbsOf, newFolderName } from "../src/files/files.service";
 import { decodeTextAs, encodeText } from "../src/web/lib/files";
 import { fixture } from "./helpers";
+import { RelayError } from "../src/errors";
 
 describe("File explorer API", () => {
   let f: ReturnType<typeof fixture>;
@@ -107,6 +108,32 @@ describe("File explorer API", () => {
 
   const post = (url: string, body: unknown, headers: Record<string, string> = {}) => request(url, { method: "POST", body: JSON.stringify(body),
     headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers } });
+
+  test("clipboard validates every path and same-origin POST before publishing a native file list", async () => {
+    const copied: string[][] = [];
+    const handle = handler(f.service, f.config, { files: { launch: () => {}, clipboard: async (paths) => { copied.push(paths); } } });
+    const send = (body: unknown, headers: Record<string, string> = {}, query = "") => handle(new Request(`${origin}/api/v1/files/clipboard${query}`,
+      { method: "POST", body: JSON.stringify(body), headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers } }));
+    const file = path.join(disk, "메모.txt"), folder = path.join(disk, "폴더 하나");
+    expect(await (await send({ paths: [file, folder, file] })).json()).toEqual({ schemaVersion: 1, copied: 2 });
+    expect(copied).toEqual([[file, folder]]);
+    expect((await send({ paths: [file, path.join(disk, "없음")] })).status).toBe(404);
+    for (const body of [{ paths: [] }, { paths: "x" }, { paths: ["relative.txt"] }, { paths: [file], extra: 1 }, { paths: Array(201).fill(file) }, []]) {
+      expect((await send(body)).status).toBe(400);
+    }
+    expect((await send({ paths: [file] }, { origin: "https://evil.example" })).status).toBe(403);
+    expect((await send({ paths: [file] }, { "sec-fetch-site": "cross-site" })).status).toBe(403);
+    expect((await send({ paths: [file] }, { "content-type": "text/plain" })).status).toBe(415);
+    expect((await send({ paths: [file] }, {}, "?x=1")).status).toBe(400);
+    expect((await handle(new Request(`${origin}/api/v1/files/clipboard`, { headers: { host: "127.0.0.1:7474" } }))).status).toBe(405);
+    expect(copied).toHaveLength(1);
+    const failing = handler(f.service, f.config, { files: { launch: () => {}, clipboard: async () => { throw new RelayError("CLIPBOARD_UNAVAILABLE", "클립보드 사용 중", 5, 503); } } });
+    const failure = await failing(new Request(`${origin}/api/v1/files/clipboard`, { method: "POST", body: JSON.stringify({ paths: [file] }),
+      headers: { host: "127.0.0.1:7474", origin, "content-type": "application/json", "sec-fetch-site": "same-origin" } }));
+    expect(failure.status).toBe(503);
+    expect((await failure.json()).error.code).toBe("CLIPBOARD_UNAVAILABLE");
+    expect(readFileSync(file, "utf8")).toBe(memo);
+  });
 
   test("stat reports properties of files and folders, including folder contents", async () => {
     const file = await (await request(`/api/v1/files/stat?path=${q(path.join(disk, "메모.txt"))}`)).json();

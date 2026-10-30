@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { env, ready, useRelayServer } from "./web-helpers";
 
 useRelayServer();
@@ -12,6 +13,8 @@ const row = (page: Page, name: string) => page.locator(`${win("files")} [role=op
 
 /** 저장소 폴더 안에 둘러볼 파일을 만들고, 경로 입력으로 그 폴더를 연다. */
 async function openFolder(page: Page) {
+  // 일반 화면 테스트는 시스템 클립보드를 바꾸지 않는다. 별도 Windows Shell 테스트에서 실제 복사를 검증한다.
+  await page.route("**/api/v1/files/clipboard", (route) => route.fulfill({ json: { schemaVersion: 1, copied: route.request().postDataJSON().paths.length } }));
   const disk = path.join(realpathSync(env.dir), "둘러보기");
   mkdirSync(path.join(disk, "하위 폴더"), { recursive: true });
   writeFileSync(path.join(disk, "보고서.txt"), "첫 줄 내용\n둘째 줄\n");
@@ -33,6 +36,34 @@ async function openFolder(page: Page) {
   // 왼쪽 트리가 임시 폴더(항목이 수천 개일 수 있다)까지 펼쳐 읽는 동안은 서버가 다른 요청을 늦게 받으므로, 지금 폴더 행이 트리에 나올 때까지 기다린다.
   await expect(page.locator('.files-tree [role=treeitem][aria-selected="true"][aria-label="둘러보기"]')).toBeVisible({ timeout: 30_000 });
   return disk;
+}
+
+/** 별도 STA 프로세스에서 FileDrop·복사 효과를 읽고 Windows Shell의 실제 붙여넣기 명령을 실행한다. */
+function shellPaste(destination: string): { paths: string[]; effect: number } {
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+Add-Type -AssemblyName System.Windows.Forms
+$paths = @([Windows.Forms.Clipboard]::GetFileDropList())
+if ($paths.Count -eq 0) { throw 'No file drop list' }
+$stream = [Windows.Forms.Clipboard]::GetData('Preferred DropEffect')
+$effect = [BitConverter]::ToUInt32($stream.ToArray(), 0)
+$shell = New-Object -ComObject Shell.Application
+$folder = $shell.NameSpace($env:RELAY_TEST_PASTE_TARGET)
+$folder.Self.InvokeVerb('paste')
+$until = (Get-Date).AddSeconds(10)
+do {
+  $missing = @($paths | Where-Object { -not (Test-Path -LiteralPath (Join-Path $env:RELAY_TEST_PASTE_TARGET ([IO.Path]::GetFileName($_)))) })
+  if ($missing.Count -eq 0) { break }
+  Start-Sleep -Milliseconds 100
+} while ((Get-Date) -lt $until)
+if ($missing.Count -gt 0) { throw 'Shell paste did not finish' }
+[pscustomobject]@{ paths = $paths; effect = $effect } | ConvertTo-Json -Compress
+`;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+    { windowsHide: true, timeout: 20_000, encoding: "utf8", env: { ...process.env, RELAY_TEST_PASTE_TARGET: destination } });
+  if (result.status !== 0) throw new Error(`Windows Shell paste failed: ${result.stderr} ${result.error ?? ""}`);
+  return JSON.parse(result.stdout);
 }
 
 test("파일 탐색기: 폴더를 열고 미리 보기·숨김·찾기·이동·키보드가 동작한다", async ({ page }) => {
@@ -844,5 +875,50 @@ test("파일 탐색기: 트리의 우클릭·F2로 폴더 이름을 바꾸고 �
   await tree.locator('[data-node=pc-root]').focus();
   await page.keyboard.press("F2");
   await expect(rename).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+
+test("파일 탐색기: 복사·Ctrl+C가 Windows 파일 클립보드를 채워 Shell에 단일·다중 파일을 붙여넣는다", async ({ page }) => {
+  test.skip(process.platform !== "win32", "Windows 파일 클립보드 통합 검증");
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  await page.unroute("**/api/v1/files/clipboard");
+  const toast = page.locator(".files-toast");
+  const copiedText = (target: string) => { try { return readFileSync(target, "utf8"); } catch { return null; } };
+  await row(page, "보고서.txt").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "복사", exact: true }).click();
+  await expect(toast).toContainText("Windows 탐색기에서도 붙여넣을 수 있습니다");
+  const single = path.join(realpathSync(env.dir), "외부 붙여넣기 한 개");
+  mkdirSync(single);
+  expect(shellPaste(single)).toEqual({ paths: [path.join(disk, "보고서.txt")], effect: 1 });
+  await expect.poll(() => copiedText(path.join(single, "보고서.txt"))).toBe("첫 줄 내용\n둘째 줄\n");
+
+  // 한글·공백·따옴표·달러 문자가 있는 파일과 폴더를 함께 복사한다. 경로는 명령으로 해석되지 않는다.
+  const name = "한글 '인용' $().txt";
+  writeFileSync(path.join(disk, name), "특수 문자 경로\n");
+  await page.getByRole("button", { name: "새로 고침", exact: true }).click();
+  await row(page, name).click();
+  await row(page, "하위 폴더").click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+c");
+  await expect(toast).toContainText("항목 2개를 복사했습니다. Windows 탐색기에서도 붙여넣을 수 있습니다");
+  const multiple = path.join(realpathSync(env.dir), "외부 붙여넣기 여러 개");
+  mkdirSync(multiple);
+  const data = shellPaste(multiple);
+  expect(data.effect).toBe(1);
+  expect(data.paths.sort()).toEqual([path.join(disk, name), path.join(disk, "하위 폴더")].sort());
+  await expect.poll(() => copiedText(path.join(multiple, name))).toBe("특수 문자 경로\n");
+  await expect.poll(() => copiedText(path.join(multiple, "하위 폴더", "안쪽.md"))).toBe("# 안쪽\n");
+  expect(existsSync(path.join(disk, name))).toBe(true);
+  expect(existsSync(path.join(disk, "하위 폴더", "안쪽.md"))).toBe(true);
+
+  // 시스템 클립보드 오류는 안내하고, Relay 안의 붙여넣기는 계속 쓸 수 있다.
+  await page.route("**/api/v1/files/clipboard", (route) => route.fulfill({ status: 503, json: { error: { message: "Windows 클립보드 사용 중" } } }));
+  await page.locator(".files-list").click({ position: { x: 200, y: 320 } });
+  await row(page, "zeta.log").click();
+  await page.keyboard.press("Control+c");
+  await expect(toast).toContainText("Windows 클립보드 사용 중 Relay 안에서는 붙여넣을 수 있습니다");
+  await page.keyboard.press("Control+v");
+  await expect(row(page, "zeta - 복사본.log")).toBeVisible();
   expect(errors).toEqual([]);
 });

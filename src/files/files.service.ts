@@ -3,6 +3,8 @@ import { constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, read
 import os from "node:os";
 import path from "node:path";
 import { RelayError } from "../errors";
+import { systemFileClipboard, type FileClipboardWriter } from "./windows-clipboard";
+export type { FileClipboardWriter } from "./windows-clipboard";
 
 /** 파일 탐색기 창의 서버 쪽. 로컬 디스크를 읽고, 화면이 시킨 복사·이동·휴지통 이동·새 폴더·이름 바꾸기만 한다. 열기는 운영체제의 탐색기·기본 앱에 넘긴다. */
 
@@ -32,6 +34,7 @@ export interface DeleteResult { schemaVersion: 1; recycled: boolean; done: strin
 export interface SaveResult { schemaVersion: 1; path: string; size: number; modified: string }
 export interface FolderResult { schemaVersion: 1; path: string; name: string }
 export interface RenameResult { schemaVersion: 1; from: string; to: string; name: string }
+export interface ClipboardResult { schemaVersion: 1; copied: number }
 
 /** 한 폴더에서 돌려주는 최대 항목 수. 넘치면 이름 순 앞부분만 주고 truncated로 알린다. */
 export const MAX_ENTRIES = 5000;
@@ -364,6 +367,17 @@ function pathList(value: unknown, label: string): string[] {
   return list.filter((item, index) => list.findIndex((other) => samePath(other, item)) === index);
 }
 const failureOf = (error: unknown): string => (error instanceof RelayError ? error.message : fsError(error).message);
+
+/** POST /api/v1/files/clipboard {paths}. 전부 검사한 뒤 Windows의 파일 목록 클립보드에 복사한다. */
+export async function copyToClipboard(body: unknown, write: FileClipboardWriter = systemFileClipboard): Promise<ClipboardResult> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RelayError("INVALID_ARGUMENT", "{ paths } JSON을 보내세요.");
+  const { paths: raw, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).length) throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 키: ${Object.keys(rest).join(", ")}`);
+  const paths = pathList(raw, "paths");
+  for (const target of paths) { try { lstatSync(target); } catch (error) { throw fsError(error); } }
+  await write(paths);
+  return { schemaVersion: 1, copied: paths.length };
+}
 
 /** 붙여넣을 이름. 같은 폴더에 복사하거나 같은 이름이 있으면 탐색기처럼 `이름 - 복사본`, `이름 - 복사본 (2)`를 쓴다. */
 export function copyName(directory: string, name: string, taken = (candidate: string) => existsSync(path.join(directory, candidate))): string {

@@ -2,11 +2,11 @@ import { create } from "zustand";
 import {
   File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileTerminal, FileText, FileVideo, Folder, Presentation, type LucideIcon,
 } from "lucide-react";
-import type { DeleteResult, Drive, FileEntry, FileInfo, FolderResult, Listing, PasteMode, PasteResult, Place, Places, RenameResult, SaveResult } from "../../files/files.service";
+import type { ClipboardResult, DeleteResult, Drive, FileEntry, FileInfo, FolderResult, Listing, PasteMode, PasteResult, Place, Places, RenameResult, SaveResult } from "../../files/files.service";
 
-export type { DeleteResult, Drive, FileEntry, FileInfo, FolderResult, Listing, PasteMode, PasteResult, Place, Places, RenameResult, SaveResult };
+export type { ClipboardResult, DeleteResult, Drive, FileEntry, FileInfo, FolderResult, Listing, PasteMode, PasteResult, Place, Places, RenameResult, SaveResult };
 
-/** 복사·잘라내기한 항목. 창 안에서만 쓰는 클립보드라 새로 고치면 비워진다. */
+/** 복사·잘라내기한 항목. Relay 안의 붙여넣기 상태로, 새로 고치면 비워진다. Windows 복사는 시스템 클립보드에도 게시한다. */
 export type Clipboard = { paths: string[]; mode: PasteMode };
 
 /** 위치. null은 `이 PC`(즐겨찾기·드라이브 시작 화면)다. */
@@ -430,6 +430,8 @@ export const pasteItems = (sources: string[], destination: string, mode: PasteMo
 export const BATCH_MAX = 200;
 /** Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. */
 export const deleteItems = (paths: string[]) => postJson<DeleteResult>("/api/v1/files/delete", { paths });
+/** Windows 탐색기 등에서 붙여넣도록 시스템 파일 클립보드에도 복사한다. */
+export const copyToSystemClipboard = (paths: string[]) => postJson<ClipboardResult>("/api/v1/files/clipboard", { paths });
 /** parent 폴더에 `새 폴더`(겹치면 `새 폴더 (2)`…)를 만든다. */
 export const createFolder = (parent: string) => postJson<FolderResult>("/api/v1/files/mkdir", { parent });
 /** 같은 폴더 안에서 이름만 바꾼다. 서버가 이름을 검사하고 덮어쓰지 않는다. */

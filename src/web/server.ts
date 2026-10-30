@@ -5,7 +5,7 @@ import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
 import { exportFileName, NoteStore, parseBatch, parseExport } from "../notes/notes.store";
 import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.store";
-import { deleteItems, fileResponse, listDirectory, makeFolder, openPath, pasteItems, places, renameItem, saveFile, statPath, systemLauncher, systemRemover, type Launcher, type Remover } from "../files/files.service";
+import { copyToClipboard, deleteItems, fileResponse, listDirectory, makeFolder, openPath, pasteItems, places, renameItem, saveFile, statPath, systemLauncher, systemRemover, type FileClipboardWriter, type Launcher, type Remover } from "../files/files.service";
 import { api, parseAction } from "./api";
 import { assets } from "./assets";
 import { PID_HEADER, portFailure } from "./control";
@@ -24,8 +24,9 @@ export const FILES_STAT_PATH = "/api/v1/files/stat";
 export const FILES_SAVE_PATH = "/api/v1/files/save";
 export const FILES_MKDIR_PATH = "/api/v1/files/mkdir";
 export const FILES_RENAME_PATH = "/api/v1/files/rename";
-/** 파일 정리(붙여넣기·삭제·새 폴더·이름 바꾸기) 경로 */
-const FILES_CHANGE_PATHS = new Set([FILES_PASTE_PATH, FILES_DELETE_PATH, FILES_MKDIR_PATH, FILES_RENAME_PATH]);
+export const FILES_CLIPBOARD_PATH = "/api/v1/files/clipboard";
+/** 파일 정리(붙여넣기·삭제·새 폴더·이름 바꾸기·클립보드 복사) 경로 */
+const FILES_CHANGE_PATHS = new Set([FILES_PASTE_PATH, FILES_DELETE_PATH, FILES_MKDIR_PATH, FILES_RENAME_PATH, FILES_CLIPBOARD_PATH]);
 /** 파일 탐색기의 쓰기 경로. 모두 같은 출처 JSON POST만 받는다. */
 const FILES_WRITE_PATHS = new Set([FILES_OPEN_PATH, FILES_SAVE_PATH, ...FILES_CHANGE_PATHS]);
 export const CALCULATOR_PATH = "/api/v1/calculator/history";
@@ -37,9 +38,9 @@ export interface Features {
   /** 메모 저장(POST /api/v1/notes)·내보내기·가져오기(POST /api/v1/notes/import) */
   notes?: NoteStore;
   /** 로컬 디스크를 읽는 GET /api/v1/files*, 탐색기·기본 앱으로 넘기는 POST /api/v1/files/open, 복사·이동 POST /api/v1/files/paste, 휴지통 이동 POST /api/v1/files/delete,
-   *  새 폴더 POST /api/v1/files/mkdir, 이름 바꾸기 POST /api/v1/files/rename, 뷰어 저장 POST /api/v1/files/save.
+   *  새 폴더 POST /api/v1/files/mkdir, 이름 바꾸기 POST /api/v1/files/rename, 시스템 파일 복사 POST /api/v1/files/clipboard, 뷰어 저장 POST /api/v1/files/save.
    *  remove를 주지 않으면 운영체제의 휴지통(Windows)이나 바로 삭제를 쓴다. */
-  files?: { launch: Launcher; remove?: Remover };
+  files?: { launch: Launcher; remove?: Remover; clipboard?: FileClipboardWriter };
   /** 쓰기 연결의 세션 서비스. 목록에서 하는 세션 정리(POST /api/v1/sessions/:id/actions) */
   writer?: SessionService;
   /** 계산기 이력(GET·POST /api/v1/calculator/history) */
@@ -109,7 +110,8 @@ export function handler(service: SessionService, config: Config, { notes, files,
       checkWrite(request, config.webPort);
       if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "파일 정리 요청은 query를 받지 않습니다.");
       const body = await readBody(request);
-      return Response.json(pathname === FILES_PASTE_PATH ? pasteItems(body) : pathname === FILES_MKDIR_PATH ? makeFolder(body)
+      return Response.json(pathname === FILES_CLIPBOARD_PATH ? await copyToClipboard(body, files!.clipboard)
+        : pathname === FILES_PASTE_PATH ? pasteItems(body) : pathname === FILES_MKDIR_PATH ? makeFolder(body)
         : pathname === FILES_RENAME_PATH ? renameItem(body) : deleteItems(body, files!.remove ?? systemRemover), { headers });
     } catch (error) { return failed(error, "POST"); }
   };

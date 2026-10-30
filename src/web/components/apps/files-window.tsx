@@ -21,7 +21,7 @@ import { RenameField, type RenameEntry } from "./files-rename-field";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
-  BATCH_MAX, COLUMN_MIN, contentUrl, createFolder, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, renameItem, sortEntries,
+  BATCH_MAX, COLUMN_MIN, contentUrl, copyToSystemClipboard, createFolder, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, renameItem, sortEntries,
   TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey, type ColumnKey, type ColumnWidths,
 } from "../../lib/files";
 
@@ -33,7 +33,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [{ key: "name", label: "이�
 
 /** 본문 항목(entry)·빈 곳(둘 다 없음)·왼쪽 트리 항목(tree)의 오른쪽 클릭 메뉴. */
 type Menu = { entry: FileEntry | null; tree?: TreeTarget; left: number; top: number; id: number };
-type Notice = { text: string; tone: "info" | "error"; id: number };
+type Notice = { text: string; tone: "info" | "error"; id: number; pending?: boolean };
 
 /** Windows 디스크를 둘러보는 파일 탐색기. 서버는 읽기만 하고, 열기·탐색기에서 보기는 운영체제에 넘긴다. */
 export function FilesWindow() {
@@ -116,7 +116,7 @@ export function FilesWindow() {
   // 고른 항목이 보이도록 스크롤한다.
   useEffect(() => { if (selectedIndex >= 0) document.getElementById(optionId(selectedIndex))?.scrollIntoView({ block: "nearest" }); }, [selectedIndex, view]);
   useEffect(() => {
-    if (!notice) return;
+    if (!notice || notice.pending) return;
     const timer = setTimeout(() => setNotice((now) => (now?.id === notice.id ? null : now)), 3200);
     return () => clearTimeout(timer);
   }, [notice]);
@@ -140,12 +140,19 @@ export function FilesWindow() {
   const inClipboard = (target: string, mode?: PasteMode) => Boolean(clipboard && (!mode || clipboard.mode === mode) && clipboard.paths.some((path) => path.toLowerCase() === target.toLowerCase()));
   /** 여럿을 다룰 때 알림에 쓰는 말: 하나면 이름, 여럿이면 개수. */
   const nameOf = (items: FileEntry[]) => (items.length === 1 ? `‘${items[0].name}’을(를)` : `항목 ${items.length.toLocaleString("ko-KR")}개를`);
-  function cutOrCopy(items: FileEntry[], mode: PasteMode) {
+  async function cutOrCopy(items: FileEntry[], mode: PasteMode) {
     if (!items.length) return;
     if (items.length > BATCH_MAX) { say(`한 번에 ${BATCH_MAX}개까지만 ${mode === "cut" ? "잘라낼" : "복사할"} 수 있습니다.`, "error"); return; }
     const next: Clipboard = { paths: items.map((item) => item.path), mode };
     setClipboard(next);
-    say(mode === "cut" ? `${nameOf(items)} 잘라냈습니다. 붙여넣을 폴더에서 Ctrl+V를 누르세요.` : `${nameOf(items)} 복사했습니다.`);
+    if (mode === "copy" && (places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform))) {
+      const id = Date.now();
+      setNotice({ id, tone: "info", text: "Windows 클립보드에 복사하는 중…", pending: true });
+      try {
+        await copyToSystemClipboard(next.paths);
+        setNotice((now) => now?.id === id ? { id: Date.now(), tone: "info", text: `${nameOf(items)} 복사했습니다. Windows 탐색기에서도 붙여넣을 수 있습니다.` } : now);
+      } catch (error) { say(`${error instanceof Error ? error.message : "Windows 클립보드에 복사하지 못했습니다."} Relay 안에서는 붙여넣을 수 있습니다.`, "error"); }
+    } else say(mode === "cut" ? `${nameOf(items)} 잘라냈습니다. 붙여넣을 폴더에서 Ctrl+V를 누르세요.` : `${nameOf(items)} 복사했습니다.`);
   }
   function requestRemove(items: FileEntry[]) {
     if (!items.length) return;
