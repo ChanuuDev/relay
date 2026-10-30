@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent as Rea
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Download, Folder, FolderOpen, HardDrive, House, Image, LoaderCircle, Monitor, Music, Star, Video, type LucideIcon } from "lucide-react";
 import { driveName, getJson, listUrl, useFiles, type Listing, type Location, type Place, type Places } from "../../lib/files";
+import { RenameField, type RenameEntry } from "./files-rename-field";
 
 export const PLACE_ICONS: Record<Place["id"], LucideIcon> = { home: House, desktop: Monitor, documents: FolderOpen, downloads: Download, pictures: Image, music: Music, videos: Video };
 
 export type Favorite = { path: string; label: string; place: Place["id"] | null };
 /** 트리 항목 종류: 즐겨찾기 묶음 · 이 PC · 즐겨찾기 항목 · 드라이브 · 폴더 */
-export type TreeTarget = { kind: "fav-root" | "pc-root" | "favorite" | "drive" | "folder"; path: string | null };
+export type TreeTarget = { kind: "fav-root" | "pc-root" | "favorite" | "drive" | "folder"; path: string | null; rename?: () => void };
 
 const baseName = (target: string) => target.split(/[\\/]/).filter(Boolean).at(-1) ?? target;
 
@@ -25,21 +26,26 @@ type Shared = {
   places: Places | undefined; location: Location; expanded: Set<string>; showHidden: boolean; focusKey: string | null;
   onGo: (target: Location) => void; onToggle: (key: string, open: boolean) => void; onFocusKey: (key: string) => void;
   onMenu: (target: TreeTarget, left: number, top: number) => void;
+  busy: boolean; renaming: string | null; onRenaming: (key: string | null) => void;
+  onRename: (entry: RenameEntry, name: string | null) => Promise<string | null>;
 };
 
 const same = (a: string | null, b: string | null) => a !== null && b !== null && a.toLowerCase() === b.toLowerCase();
 
 /** Windows 탐색기의 탐색 창처럼 `즐겨찾기`와 `이 PC`를 트리로 보인다. 폴더는 펼칠 때 하위 폴더를 읽는다(본문 목록과 같은 캐시). */
-export function FilesTree({ places, favorites, location, showHidden, error, onGo, onMenu }: {
+export function FilesTree({ places, favorites, location, showHidden, error, onGo, onMenu, busy, onRename }: {
   places: Places | undefined; favorites: Favorite[]; location: Location; showHidden: boolean; error: string | null;
   onGo: (target: Location) => void; onMenu: (target: TreeTarget, left: number, top: number) => void;
+  busy: boolean; onRename: Shared["onRename"];
 }) {
   const expandedList = useFiles((state) => state.expanded);
   const expanded = new Set(expandedList);
   const { setExpanded } = useFiles.getState();
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const treeRef = useRef<HTMLUListElement>(null);
-  const shared: Shared = { places, location, expanded, showHidden, focusKey, onGo, onToggle: setExpanded, onFocusKey: setFocusKey, onMenu };
+  const shared: Shared = { places, location, expanded, showHidden, focusKey, onGo, onToggle: setExpanded, onFocusKey: setFocusKey, onMenu,
+    busy, renaming, onRenaming: setRenaming, onRename };
   const drives = places?.drives ?? [];
   // 초점을 받을 항목이 사라졌으면(접힘·새로 고침) 첫 항목이 받는다.
   const tabKey = focusKey && treeRef.current?.querySelector(`[data-key="${CSS.escape(focusKey)}"]`) ? focusKey : "fav:";
@@ -136,20 +142,38 @@ function Node({ shared, nodeKey, tabKey, level, label, Icon, tone, target, child
   useEffect(() => { if (current && nodeKey.startsWith("pc:")) rowRef.current?.scrollIntoView({ block: "nearest" }); }, [current, nodeKey]);
 
   const activate = () => {
+    rowRef.current?.focus({ preventScroll: true });
     onFocusKey(nodeKey);
     if (target.kind === "fav-root") onToggle(nodeKey, !open);
     else onGo(target.path);
   };
-  const menu = (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation(); onFocusKey(nodeKey); rowRef.current?.focus(); onMenu(target, event.clientX, event.clientY); };
+  const canRename = (target.kind === "folder" || target.kind === "favorite") && target.path !== null
+    && !same(target.path, shared.places?.home ?? null) && !shared.places?.drives.some((drive) => same(target.path, drive.path));
+  const startRename = () => { if (canRename && !shared.busy) shared.onRenaming(nodeKey); };
+  const menu = (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation(); onFocusKey(nodeKey); rowRef.current?.focus();
+    onMenu({ ...target, rename: canRename ? startRename : undefined }, event.clientX, event.clientY); };
+  async function finishRename(name: string | null, focus: boolean) {
+    const tree = rowRef.current?.closest(".files-tree");
+    const to = await shared.onRename({ path: target.path!, name: baseName(target.path!), kind: "directory" }, name);
+    if (to === null) return false;
+    shared.onRenaming(null);
+    const key = nodeKey.slice(0, nodeKey.indexOf(":") + 1) + to;
+    onFocusKey(key);
+    if (focus) requestAnimationFrame(() => tree?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
+    return true;
+  }
 
   return <li ref={rowRef} role="treeitem" className="tree-item files-tree-item" data-key={nodeKey} data-node={target.kind} data-hidden={hidden ? "" : undefined} aria-level={level}
     aria-expanded={leaf ? undefined : open} aria-selected={current} aria-label={label} tabIndex={tabKey === nodeKey ? 0 : -1}
-    onFocus={(event) => { if (event.target === event.currentTarget) onFocusKey(nodeKey); }}>
+    onFocus={(event) => { if (event.target === event.currentTarget) onFocusKey(nodeKey); }}
+    onKeyDown={(event) => { if (event.target === event.currentTarget && event.key === "F2") { event.preventDefault(); event.stopPropagation(); startRename(); } }}>
     <div className="tree-row" style={{ ["--depth" as string]: level - 1 }} title={target.path ?? label} onClick={activate} onContextMenu={menu}>
       <span className="tree-chevron" data-hidden={leaf ? "" : undefined} aria-hidden="true"
         onClick={(event) => { event.stopPropagation(); onFocusKey(nodeKey); if (!leaf) onToggle(nodeKey, !open); }}><ChevronRight /></span>
       <Icon className="tree-icon files-tree-icon" data-tone={tone} aria-hidden="true" />
-      <span className="tree-label">{label}</span>
+      {shared.renaming === nodeKey && canRename
+        ? <RenameField entry={{ path: target.path!, name: baseName(target.path!), kind: "directory" }} onDone={finishRename} />
+        : <span className="tree-label">{label}</span>}
     </div>
     {open && !leaf && <ul role="group" className="files-tree-group">
       {list === null

@@ -742,3 +742,107 @@ test("파일 탐색기: 오른쪽 클릭으로 새 폴더를 만들어 바로 �
   await expect(rename).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test("파일 탐색기: 트리의 우클릭·F2로 폴더 이름을 바꾸고 현재 위치·이력·즐겨찾기·클립보드가 따라간다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  const tree = page.locator(".files-tree");
+  const node = (name: string) => tree.locator(`[role=treeitem][data-node=folder][aria-label="${name}"]`);
+  const treeRow = (name: string) => node(name).locator(":scope > .tree-row");
+  const rename = tree.locator(".files-rename");
+  const prefs = () => page.evaluate(() => JSON.parse(localStorage.getItem("relay-files-v1")!));
+  await node("둘러보기").locator(":scope > .tree-row .tree-chevron").click();
+  await expect(node("하위 폴더")).toBeVisible();
+  await row(page, "하위 폴더").click();
+  await page.keyboard.press("Control+c");
+  await treeRow("하위 폴더").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "즐겨찾기에 추가" }).click();
+
+  // 트리 메뉴에서 이름 입력. 폴더 이름 전체가 선택되며 Enter 뒤 같은 트리 항목으로 초점이 돌아온다.
+  await treeRow("하위 폴더").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "이름 바꾸기" }).click();
+  await expect(rename).toBeFocused();
+  expect(await rename.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd])).toEqual([0, 5]);
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("tree-rename.png") });
+  await rename.fill("하위 변경");
+  await page.keyboard.press("Enter");
+  await expect(rename).toHaveCount(0);
+  await expect(node("하위 변경")).toBeFocused();
+  await expect(row(page, "하위 변경")).toBeVisible();
+  expect(existsSync(path.join(disk, "하위 변경", "안쪽.md"))).toBe(true);
+  expect((await prefs()).favorites).toContain(path.join(disk, "하위 변경"));
+  // 이름 바꾸기 전에 복사해 둔 폴더도 새 경로에서 복사된다.
+  await page.locator(".files-list").focus();
+  await page.keyboard.press("Control+v");
+  await expect(row(page, "하위 변경 - 복사본")).toBeVisible();
+  expect(existsSync(path.join(disk, "하위 변경 - 복사본", "안쪽.md"))).toBe(true);
+
+  // 트리에서 폴더를 클릭해 열고 F2. 현재 폴더가 바뀌어도 본문은 그대로 이어지고 트리에 초점이 남는다.
+  await treeRow("하위 변경").click();
+  await expect(row(page, "안쪽.md")).toBeVisible();
+  await expect(node("하위 변경")).toBeFocused();
+  await page.keyboard.press("F2");
+  await expect(rename).toHaveValue("하위 변경");
+  // 한글 조합 중의 Enter는 이름 변경을 확정하지 않는다.
+  await rename.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
+  await expect(rename).toBeFocused();
+  await rename.fill("열린 폴더");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".files-crumb[aria-current=location]")).toHaveText("열린 폴더");
+  await expect(row(page, "안쪽.md")).toBeVisible();
+  await expect(node("열린 폴더")).toBeFocused();
+
+  // 상위 폴더를 바꾸면 현재 하위 경로·펼친 트리·뒤로/앞으로 이력까지 새 경로를 따른다.
+  await treeRow("둘러보기").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "이름 바꾸기" }).click();
+  await rename.fill("자료함");
+  await page.keyboard.press("Enter");
+  const moved = path.join(path.dirname(disk), "자료함");
+  await expect.poll(async () => (await prefs()).location).toBe(path.join(moved, "열린 폴더"));
+  await expect(node("자료함")).toBeFocused();
+  await expect(row(page, "안쪽.md")).toBeVisible();
+  expect(existsSync(path.join(moved, "열린 폴더", "안쪽.md"))).toBe(true);
+  expect(existsSync(disk)).toBe(false);
+  expect((await prefs()).favorites).toContain(path.join(moved, "열린 폴더"));
+  await page.getByRole("button", { name: "뒤로", exact: true }).click();
+  await expect(page.locator(".files-crumb[aria-current=location]")).toHaveText("자료함");
+  await expect(row(page, "열린 폴더")).toBeVisible();
+  await page.getByRole("button", { name: "앞으로", exact: true }).click();
+  await expect(row(page, "안쪽.md")).toBeVisible();
+
+  // 즐겨찾기 쪽에서도 F2. 중복·잘못된 이름은 입력을 유지하고, Esc면 취소한다.
+  const favorite = tree.locator('[data-node=favorite][aria-label="열린 폴더"]');
+  await favorite.focus();
+  await page.keyboard.press("F2");
+  await rename.fill("하위 변경 - 복사본");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".files-toast")).toContainText("같은 이름의 항목이 이미 있습니다");
+  await expect(rename).toBeFocused();
+  await rename.fill("a:b");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".files-toast")).toContainText("다음 문자는 쓸 수 없습니다");
+  await page.keyboard.press("Escape");
+  await expect(rename).toHaveCount(0);
+  await expect(favorite).toBeFocused();
+  expect(existsSync(path.join(moved, "열린 폴더"))).toBe(true);
+  await page.keyboard.press("F2");
+  await rename.fill("즐겨찾기 변경");
+  await page.keyboard.press("Enter");
+  await expect(tree.locator('[data-node=favorite][aria-label="즐겨찾기 변경"]')).toBeFocused();
+  await expect(page.locator(".files-crumb[aria-current=location]")).toHaveText("즐겨찾기 변경");
+  expect(existsSync(path.join(moved, "즐겨찾기 변경", "안쪽.md"))).toBe(true);
+
+  // 드라이브와 트리 묶음은 이름 바꾸기를 제공하지 않는다.
+  const drive = tree.locator('[data-node=drive]').first();
+  await drive.focus();
+  await page.keyboard.press("F2");
+  await expect(rename).toHaveCount(0);
+  await drive.locator(":scope > .tree-row").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "이름 바꾸기" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await tree.locator('[data-node=pc-root]').focus();
+  await page.keyboard.press("F2");
+  await expect(rename).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

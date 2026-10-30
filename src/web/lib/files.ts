@@ -74,8 +74,8 @@ type State = Prefs & Selection & {
   /** current는 지금 보이는 즐겨찾기(기본값이면 사용자 폴더 목록). 처음 고칠 때 기본값을 실제 목록으로 굳힌다. */
   addFavorite: (path: string, current: string[]) => void; removeFavorite: (path: string, current: string[]) => void;
   moveFavorite: (path: string, delta: number, current: string[]) => void; resetFavorites: () => void;
-  /** 이름을 바꾼 폴더를 가리키던 즐겨찾기를 새 경로로 바꿔 끼운다. */
-  replaceFavorites: (paths: string[]) => void;
+  /** 이름이 바뀐 폴더 안의 탐색 위치·이력·선택·즐겨찾기·클립보드·트리 펼침도 새 경로를 따른다. */
+  followRename: (from: string, to: string) => void;
   setExpanded: (key: string, open: boolean) => void; expandAll: (keys: string[]) => void; collapseAll: () => void;
   /** 끈 열 너비를 저장한다. 빈 값이면 모든 열이 기본 너비로 돌아간다. */
   setColumns: (columns: ColumnWidths) => void;
@@ -146,7 +146,19 @@ export const useFiles = create<State>((set, get) => {
       update({ favorites: next });
     },
     resetFavorites: () => update({ favorites: null }),
-    replaceFavorites: (paths) => update({ favorites: paths.slice(0, MAX_FAVORITES) }),
+    followRename: (from, to) => {
+      const moved = (target: string) => {
+        const lower = target.toLowerCase();
+        const base = from.toLowerCase();
+        return lower === base || (lower.startsWith(base) && /[\\/]/.test(target[from.length] ?? "")) ? to + target.slice(from.length) : target;
+      };
+      const optional = (target: string | null) => target === null ? null : moved(target);
+      const state = get();
+      update({ location: optional(state.location), history: state.history.map(optional), selected: optional(state.selected),
+        picked: state.picked.map(moved), anchor: optional(state.anchor), favorites: state.favorites?.map(moved) ?? null,
+        clipboard: state.clipboard ? { ...state.clipboard, paths: state.clipboard.paths.map(moved) } : null,
+        expanded: state.expanded.map((key) => { const colon = key.indexOf(":") + 1; return key.slice(0, colon) + moved(key.slice(colon)); }) });
+    },
     setColumns: (columns) => update({ columns: columnsOf(columns) }),
     setExpanded: (key, open) => {
       const { expanded } = get();

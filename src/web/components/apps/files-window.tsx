@@ -1,6 +1,6 @@
 import {
   useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
-  type SubmitEvent, type SyntheticEvent,
+  type SubmitEvent,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,6 +17,7 @@ import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { DesktopMenu, type MenuEntry } from "../desktop/menu";
 import { SplitView } from "../desktop/split-view";
+import { RenameField, type RenameEntry } from "./files-rename-field";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
@@ -109,7 +110,7 @@ export function FilesWindow() {
   useEffect(() => { setQuery(""); setRenaming(null); }, [location]);
   useEffect(() => {
     if (!focused || !data) return;
-    const frame = requestAnimationFrame(() => { if (!document.activeElement?.closest(".window[data-window=files] input")) listRef.current?.focus({ preventScroll: true }); });
+    const frame = requestAnimationFrame(() => { if (!document.activeElement?.closest(".window[data-window=files] input, .files-tree")) listRef.current?.focus({ preventScroll: true }); });
     return () => cancelAnimationFrame(frame);
   }, [focused, data?.path]); // eslint-disable-line react-hooks/exhaustive-deps
   // 고른 항목이 보이도록 스크롤한다.
@@ -209,29 +210,21 @@ export function FilesWindow() {
     select(entry.path);
     setRenaming(entry.path);
   }
-  /** 이름 바꾸기를 끝낸다. name이 null이면 그만두기다. 바꾸지 못하면 알리고 false를 돌려 입력을 그대로 둔다. focus면 끝난 뒤 목록에 초점을 돌려준다. */
-  async function finishRename(entry: FileEntry, name: string | null, focus: boolean): Promise<boolean> {
-    const end = () => { setRenaming(null); if (focus) listRef.current?.focus({ preventScroll: true }); return true; };
-    if (name === null || !name.trim() || name.trim() === entry.name) return end();
+  /** 목록과 트리가 같은 이름 변경 API와 경로 갱신을 쓴다. 실패하면 입력을 유지하도록 null을 돌려준다. */
+  async function changeName(entry: RenameEntry, name: string | null): Promise<string | null> {
+    if (name === null || !name.trim() || name.trim() === entry.name) return entry.path;
     try {
       const result = await renameItem(entry.path, name);
+      useFiles.getState().followRename(result.from, result.to);
       await queryClient.invalidateQueries({ queryKey: ["files", "list", parentOf(entry.path)] });
-      // 입력 밖을 눌러 끝냈으면 그사이 고른 항목을 그대로 둔다.
-      if (useFiles.getState().selected === entry.path) select(result.to);
-      followRename(entry.path, result.to);
-      return end();
-    } catch (error) { say(error instanceof Error ? error.message : "이름을 바꾸지 못했습니다.", "error"); return false; }
+      return result.to;
+    } catch (error) { say(error instanceof Error ? error.message : "이름을 바꾸지 못했습니다.", "error"); return null; }
   }
-  /** 이름을 바꾼 항목(폴더면 그 안까지)을 가리키던 클립보드·즐겨찾기를 새 경로로 맞춘다. */
-  function followRename(from: string, to: string) {
-    const base = from.toLowerCase();
-    const moved = (target: string) => {
-      const lower = target.toLowerCase();
-      if (lower === base) return to;
-      return lower.startsWith(base) && /[\\/]/.test(target[from.length] ?? "") ? to + target.slice(from.length) : target;
-    };
-    if (clipboard?.paths.some((item) => moved(item) !== item)) setClipboard({ ...clipboard, paths: clipboard.paths.map(moved) });
-    if (favoritePaths !== null && favoriteList.some((item) => moved(item) !== item)) useFiles.getState().replaceFavorites(favoriteList.map(moved));
+  async function finishRename(entry: RenameEntry, name: string | null, focus: boolean): Promise<boolean> {
+    if (await changeName(entry, name) === null) return false;
+    setRenaming(null);
+    if (focus) listRef.current?.focus({ preventScroll: true });
+    return true;
   }
   async function copyPath(target: string) {
     try { await navigator.clipboard.writeText(target); say("경로를 복사했습니다."); }
@@ -275,6 +268,7 @@ export function FilesWindow() {
     return [
       { kind: "item", id: "open", label: "열기", onSelect: () => go(target) },
       favoriteEntry(target),
+      ...(tree.rename ? [{ kind: "item" as const, id: "rename", label: "이름 바꾸기", disabled: busy, onSelect: tree.rename }] : []),
       ...(tree.kind === "favorite" ? [
         { kind: "item" as const, id: "up", label: "위로 이동", disabled: at <= 0, onSelect: () => useFiles.getState().moveFavorite(target, -1, favoriteList) },
         { kind: "item" as const, id: "down", label: "아래로 이동", disabled: at < 0 || at >= favoriteList.length - 1, onSelect: () => useFiles.getState().moveFavorite(target, 1, favoriteList) },
@@ -452,7 +446,7 @@ export function FilesWindow() {
     </WindowTitleBar>}>
     <SplitView name="files" label="탐색 창" className="files-layout" defaultWidth={240} minWidth={168} maxWidth={520} minMain={320} side={
       <FilesTree places={places.data} favorites={favorites} location={location} showHidden={showHidden} error={places.isError ? places.error.message : null}
-        onGo={(target) => go(target)} onMenu={(tree, left, top) => openMenu(null, left, top, tree)} />} main={
+        busy={busy} onRename={changeName} onGo={(target) => go(target)} onMenu={(tree, left, top) => openMenu(null, left, top, tree)} />} main={
     <div className="files-content">
       {(() => { const main = <section className="files-main" aria-label="폴더 내용" style={columnStyle(columns)} data-checking={checking ? "" : undefined} onContextMenu={(event) => { if (location === null || event.defaultPrevented) return; event.preventDefault(); select(null); openMenu(null, event.clientX, event.clientY); }}>
         {location === null
@@ -635,41 +629,6 @@ type ItemProps = { entry: FileEntry; index: number; selected: boolean; cut: bool
   /** 이름을 고치는 동안 이름 자리에 놓을 입력 */
   renameField: ReactNode;
   onPick: (event: ReactMouseEvent) => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
-
-/**
- * 이름 자리에 뜨는 이름 바꾸기 입력. Enter면 바꾸고 Esc면 그만두며, 다른 곳을 누르면 그대로 바꾼다. 파일은 확장자 앞까지만 골라 둔다.
- * 한글을 조합하는 중의 Enter는 조합을 끝낼 뿐이다. 입력 안의 키·클릭은 목록으로 올려 보내지 않는다(Backspace가 상위 폴더로, 글자가 이름 찾기로 가지 않게).
- */
-function RenameField({ entry, onDone }: { entry: FileEntry; onDone: (name: string | null, focus: boolean) => Promise<boolean> }) {
-  const ref = useRef<HTMLInputElement>(null);
-  const settled = useRef(false);
-  const [value, setValue] = useState(entry.name);
-  useEffect(() => {
-    const input = ref.current;
-    if (!input) return;
-    input.focus({ preventScroll: true });
-    const dot = entry.kind === "file" ? entry.name.lastIndexOf(".") : -1;
-    input.setSelectionRange(0, dot > 0 ? dot : entry.name.length);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  async function finish(name: string | null, focus: boolean) {
-    if (settled.current) return;
-    settled.current = true;
-    if (await onDone(name, focus)) return;
-    settled.current = false;
-    ref.current?.focus({ preventScroll: true });
-    ref.current?.select();
-  }
-  const stop = (event: SyntheticEvent) => event.stopPropagation();
-  return <input ref={ref} className="files-rename" value={value} aria-label={`‘${entry.name}’의 새 이름`} spellCheck={false} autoComplete="off" maxLength={255}
-    onChange={(event) => setValue(event.target.value)} onBlur={() => void finish(value, false)}
-    onKeyDown={(event) => {
-      event.stopPropagation();
-      if (event.nativeEvent.isComposing) return;
-      if (event.key === "Enter") { event.preventDefault(); void finish(value, true); }
-      else if (event.key === "Escape") { event.preventDefault(); void finish(null, true); }
-    }}
-    onMouseDown={stop} onClick={stop} onDoubleClick={stop} onContextMenu={stop} />;
-}
 
 /** 고른 파일 크기의 합. 파일이 하나도 없으면(폴더만) null이다. */
 function sizeOf(items: FileEntry[]): number | null {
