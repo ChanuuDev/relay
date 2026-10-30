@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { handler } from "../src/web/server";
-import { byteRange, copyName, crumbsOf } from "../src/files/files.service";
+import { byteRange, copyName, crumbsOf, newFolderName } from "../src/files/files.service";
 import { decodeTextAs, encodeText } from "../src/web/lib/files";
 import { fixture } from "./helpers";
 
@@ -226,6 +226,59 @@ describe("File explorer API", () => {
     expect(roundTrip(Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0x8c, 0x63, 0x0d, 0x0a]))).toBe("euc-kr");
     expect(() => encodeText("한글 😀", "euc-kr")).toThrow("CP949");
     expect(decodeTextAs(Buffer.from([0x41, 0x00, 0x42]))).toBeNull();
+  });
+
+  test("mkdir makes Explorer-style new folders and rename changes only the name without overwriting", async () => {
+    // 이름 없이 만들면 `새 폴더`, 또 만들면 `새 폴더 (2)`. 이름을 주면 그 이름이고, 겹치면 409다.
+    const first = await (await post("/api/v1/files/mkdir", { parent: disk })).json();
+    expect(first).toEqual({ schemaVersion: 1, path: path.join(disk, "새 폴더"), name: "새 폴더" });
+    expect(statSync(first.path).isDirectory()).toBe(true);
+    expect((await (await post("/api/v1/files/mkdir", { parent: disk })).json()).name).toBe("새 폴더 (2)");
+    expect((await (await post("/api/v1/files/mkdir", { parent: disk, name: "  자료  " })).json()).path).toBe(path.join(disk, "자료"));
+    const exists = await post("/api/v1/files/mkdir", { parent: disk, name: "폴더 하나" });
+    expect(exists.status).toBe(409);
+    expect((await exists.json()).error.message).toBe("같은 이름의 항목이 이미 있습니다.");
+    expect((await post("/api/v1/files/mkdir", { parent: path.join(disk, "메모.txt") })).status).toBe(400);
+    expect((await post("/api/v1/files/mkdir", { parent: path.join(disk, "없음") })).status).toBe(404);
+
+    // 이름 바꾸기: 같은 폴더 안에서, 끝의 점·공백은 떼고, 대소문자만 바꾸는 것도 된다.
+    const renamed = await (await post("/api/v1/files/rename", { path: path.join(disk, "메모.txt"), name: "회의록.md. " })).json();
+    expect(renamed).toEqual({ schemaVersion: 1, from: path.join(disk, "메모.txt"), to: path.join(disk, "회의록.md"), name: "회의록.md" });
+    expect(readFileSync(path.join(disk, "회의록.md"), "utf8")).toBe(memo);
+    expect(existsSync(path.join(disk, "메모.txt"))).toBe(false);
+    const folder = await (await post("/api/v1/files/rename", { path: first.path, name: "Archive" })).json();
+    expect(folder.to).toBe(path.join(disk, "Archive"));
+    if (process.platform === "win32") {
+      expect((await post("/api/v1/files/rename", { path: path.join(disk, "Archive"), name: "ARCHIVE" })).status).toBe(200);
+      expect(readdirSync(disk)).toContain("ARCHIVE");
+    }
+    // 덮어쓰지 않는다.
+    const clash = await post("/api/v1/files/rename", { path: path.join(disk, "회의록.md"), name: "page.html" });
+    expect(clash.status).toBe(409);
+    expect(readFileSync(path.join(disk, "page.html"), "utf8")).toBe("<script>alert(1)</script>");
+    expect(readFileSync(path.join(disk, "회의록.md"), "utf8")).toBe(memo);
+    // 못 쓰는 이름: 빈 이름, 금지 글자, 예약 이름, 너무 긴 이름, 경로를 섞은 이름
+    const message = async (name: unknown) => { const response = await post("/api/v1/files/rename", { path: path.join(disk, "회의록.md"), name }); expect(response.status).toBe(400); return (await response.json()).error.message as string; };
+    expect(await message("  . ")).toBe("이름을 입력하세요.");
+    expect(await message("a:b.txt")).toContain("다음 문자는 쓸 수 없습니다");
+    expect(await message("..\\밖.txt")).toContain("다음 문자는 쓸 수 없습니다");
+    expect(await message("CON.txt")).toContain("예약한 이름");
+    expect(await message("가".repeat(256))).toContain("너무 깁니다");
+    expect(await message(3)).toBe("name은 문자열입니다.");
+    // 드라이브·없는 항목·잘못된 본문·다른 사이트·GET
+    expect((await post("/api/v1/files/rename", { path: path.parse(disk).root, name: "x" })).status).toBe(400);
+    expect((await post("/api/v1/files/rename", { path: path.join(disk, "없음"), name: "x" })).status).toBe(404);
+    for (const bad of [{ path: path.join(disk, "회의록.md") }, { path: path.join(disk, "회의록.md"), name: "x", y: 1 }, []]) expect((await post("/api/v1/files/rename", bad)).status).toBe(400);
+    for (const bad of [{ parent: disk, x: 1 }, { parent: disk, name: "a?b" }, []]) expect((await post("/api/v1/files/mkdir", bad)).status).toBe(400);
+    expect((await post("/api/v1/files/mkdir", { parent: disk }, { "sec-fetch-site": "cross-site" })).status).toBe(403);
+    expect((await request("/api/v1/files/rename")).status).toBe(405);
+    expect((await request("/api/v1/files/mkdir")).status).toBe(405);
+    expect(existsSync(path.join(disk, "새 폴더 (3)"))).toBe(false);
+  });
+
+  test("new folder name helper", () => {
+    expect(newFolderName(disk)).toBe("새 폴더");
+    expect(newFolderName(disk, (name) => ["새 폴더", "새 폴더 (2)"].includes(name))).toBe("새 폴더 (3)");
   });
 
   test("copy name helper", () => {

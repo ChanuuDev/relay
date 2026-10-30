@@ -1133,6 +1133,13 @@ form.files-path { flex: 1; min-width: 140px; }
 .window[data-focused] .files-main[data-checking] .files-row[aria-selected="true"]:hover { background: color-mix(in srgb, var(--selected), var(--primary) 10%); }
 .files-cell-name { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 8px; }
 .files-cell-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 이름 바꾸기 입력: 이름 자리에 바탕색 칸·파란 테두리·옅은 파란 번짐으로 뜬다. 글자는 원래 이름과 같은 자리에서 시작한다. */
+.files-rename { flex: 1; min-width: 0; height: calc(1em + 9px); margin: 0 -6px; padding: 0 5px; border: 1px solid var(--primary); border-radius: 5px;
+  background: var(--background); color: var(--foreground); font: inherit; letter-spacing: inherit; outline: none; user-select: text;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent), 0 1px 2px rgba(0, 0, 0, .08); animation: files-rename-in .14s ease-out both; }
+.files-rename::selection { background: color-mix(in srgb, var(--primary) 32%, transparent); color: inherit; }
+.files-tile .files-rename { flex: none; width: calc(100% + 4px); margin: 0 -2px; font-size: var(--fs-12); text-align: center; }
+@keyframes files-rename-in { from { opacity: 0; box-shadow: 0 0 0 0 transparent; } }
 .files-cell { min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-12); color: var(--muted-foreground); font-variant-numeric: tabular-nums;
   transition: color .16s ease-out; }
 .files-cell[data-column="size"] { text-align: right; }

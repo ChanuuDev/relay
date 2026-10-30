@@ -30,6 +30,8 @@ async function openFolder(page: Page) {
   await page.getByRole("textbox", { name: "경로" }).fill(disk);
   await page.keyboard.press("Enter");
   await expect(row(page, "보고서.txt")).toBeVisible();
+  // 왼쪽 트리가 임시 폴더(항목이 수천 개일 수 있다)까지 펼쳐 읽는 동안은 서버가 다른 요청을 늦게 받으므로, 지금 폴더 행이 트리에 나올 때까지 기다린다.
+  await expect(page.locator('.files-tree [role=treeitem][aria-selected="true"][aria-label="둘러보기"]')).toBeVisible({ timeout: 30_000 });
   return disk;
 }
 
@@ -655,5 +657,88 @@ test("파일 탐색기: 여럿을 고르면 체크 모드가 되어 맨 왼쪽 �
   await tile("보고서.txt").click({ modifiers: ["Control"] });
   await expect(tile("zeta.log").locator(".files-check")).toBeVisible();
   await expect(tile("보고서.txt").locator(".files-check")).toHaveAttribute("data-checked", "");
+  expect(errors).toEqual([]);
+});
+
+test("파일 탐색기: 오른쪽 클릭으로 새 폴더를 만들어 바로 이름을 짓고, 파일·폴더 이름을 바꾼다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const disk = await openFolder(page);
+  const list = page.locator(".files-list");
+  const rename = page.locator(`${win("files")} .files-rename`);
+  const selection = () => rename.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd]);
+  // 빈 곳 메뉴의 새 폴더: `새 폴더`가 생기고, 이름이 모두 골라진 입력으로 바뀐다. 치고 Enter면 그 이름이 된다.
+  await list.click({ button: "right", position: { x: 200, y: 300 } });
+  await page.getByRole("menuitem", { name: "새 폴더" }).click();
+  await expect(rename).toBeFocused();
+  await expect(rename).toHaveValue("새 폴더");
+  expect(await selection()).toEqual([0, 4]);
+  expect(existsSync(path.join(disk, "새 폴더"))).toBe(true);
+  await page.keyboard.type("자료");
+  await page.keyboard.press("Enter");
+  await expect(rename).toHaveCount(0);
+  await expect(row(page, "자료")).toHaveAttribute("aria-selected", "true");
+  await expect(list).toBeFocused();
+  expect(existsSync(path.join(disk, "자료"))).toBe(true);
+  expect(existsSync(path.join(disk, "새 폴더"))).toBe(false);
+  // Esc로 그만두면 `새 폴더`로 남고, 또 만들면 `새 폴더 (2)`다.
+  for (const name of ["새 폴더", "새 폴더 (2)"]) {
+    await list.click({ button: "right", position: { x: 200, y: 300 } });
+    await page.getByRole("menuitem", { name: "새 폴더" }).click();
+    await expect(rename).toHaveValue(name);
+    await page.keyboard.press("Escape");
+    await expect(rename).toHaveCount(0);
+    await expect(row(page, name).first()).toHaveAttribute("aria-selected", "true");
+  }
+  expect(existsSync(path.join(disk, "새 폴더 (2)"))).toBe(true);
+
+  // 파일: 확장자 앞까지만 골라져 있어 바로 치면 확장자가 남는다. Backspace·글자는 목록으로 새지 않는다(상위 폴더·이름 찾기 없음).
+  await row(page, "보고서.txt").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "이름 바꾸기" }).click();
+  await expect(rename).toBeFocused();
+  expect(await selection()).toEqual([0, 3]);
+  await page.keyboard.type("주간 보고");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("고서");
+  await page.keyboard.press("Enter");
+  await expect(row(page, "주간 보고서.txt")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".files-crumb[aria-current=location]")).toHaveText("둘러보기");
+  expect(readFileSync(path.join(disk, "주간 보고서.txt"), "utf8")).toBe("첫 줄 내용\n둘째 줄\n");
+  // F2로도 바꾼다. 같은 이름·못 쓰는 글자는 알리고 입력이 남으며, Esc면 원래 이름 그대로다.
+  await page.keyboard.press("F2");
+  await expect(rename).toHaveValue("주간 보고서.txt");
+  await rename.fill("zeta.log");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".files-toast")).toContainText("같은 이름의 항목이 이미 있습니다.");
+  await expect(rename).toBeFocused();
+  await rename.fill("a:b.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".files-toast")).toContainText("다음 문자는 쓸 수 없습니다");
+  await page.keyboard.press("Escape");
+  await expect(rename).toHaveCount(0);
+  await expect(row(page, "주간 보고서.txt")).toBeVisible();
+  expect(existsSync(path.join(disk, "zeta.log"))).toBe(true);
+
+  // 폴더: 이름 전체가 골라져 있고, 다른 항목을 누르면 그대로 바뀌며 누른 항목이 골라진다. 즐겨찾기도 새 경로를 따라간다.
+  await row(page, "하위 폴더").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "즐겨찾기에 추가" }).click();
+  await row(page, "하위 폴더").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "이름 바꾸기" }).click();
+  expect(await selection()).toEqual([0, 5]);
+  await page.keyboard.type("묶음");
+  await row(page, "그림.png").click();
+  await expect(row(page, "묶음")).toBeVisible();
+  await expect(row(page, "그림.png")).toHaveAttribute("aria-selected", "true");
+  expect(existsSync(path.join(disk, "묶음", "안쪽.md"))).toBe(true);
+  const favorites = await page.evaluate(() => JSON.parse(localStorage.getItem("relay-files-v1")!).favorites as string[]);
+  expect(favorites).toContain(path.join(disk, "묶음"));
+  expect(favorites).not.toContain(path.join(disk, "하위 폴더"));
+
+  // 아이콘 보기에서도 이름 자리에 입력이 뜬다.
+  await page.getByRole("radio", { name: "아이콘 보기" }).click();
+  await page.locator(".files-tile", { hasText: "zeta.log" }).click();
+  await page.keyboard.press("F2");
+  await expect(page.locator(".files-tile .files-rename")).toHaveValue("zeta.log");
+  await page.keyboard.press("Escape");
+  await expect(rename).toHaveCount(0);
   expect(errors).toEqual([]);
 });

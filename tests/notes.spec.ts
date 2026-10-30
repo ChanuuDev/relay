@@ -311,8 +311,12 @@ test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창�
   const tip = page.locator('[data-slot="tooltip-content"]');
   await expect(tip).toHaveText("표 넣기");
   await expect(tip.locator("svg")).toHaveCount(0);
-  const [tipBox, toolBox] = [await tip.boundingBox(), await tableTool.boundingBox()];
-  expect(tipBox!.y + tipBox!.height <= toolBox!.y || tipBox!.y >= toolBox!.y + toolBox!.height).toBe(true);
+  // 툴팁이 나타나며 움직이는 동안의 좌표 대신, 단추와 떨어진 최종 위치를 확인한다.
+  await expect.poll(async () => {
+    const [tipBox, toolBox] = await Promise.all([tip.boundingBox(), tableTool.boundingBox()]);
+    return !!tipBox && !!toolBox && (tipBox.y + tipBox.height <= toolBox.y || tipBox.y >= toolBox.y + toolBox.height);
+  }).toBe(true);
+  const toolBox = await tableTool.boundingBox();
   // Radix는 트리거를 떠난 뒤의 포인터 이동으로 닫으므로 실제 마우스처럼 여러 번에 나눠 옮긴다.
   await page.mouse.move(toolBox!.x, toolBox!.y + 200, { steps: 8 });
   await expect(tip).toHaveCount(0);
@@ -351,6 +355,7 @@ test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창�
   await url.fill("tiptap.dev");
   await url.press("Enter");
   await expect(body.locator("a")).toHaveAttribute("href", "https://tiptap.dev");
+  await expect(url).toHaveCount(0);
   await expect(body).toBeFocused();
   // Ctrl+K도 링크 칸을 연다.
   await page.keyboard.press("Control+k");

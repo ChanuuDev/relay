@@ -2,9 +2,9 @@ import { create } from "zustand";
 import {
   File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileTerminal, FileText, FileVideo, Folder, Presentation, type LucideIcon,
 } from "lucide-react";
-import type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places, SaveResult } from "../../files/files.service";
+import type { DeleteResult, Drive, FileEntry, FileInfo, FolderResult, Listing, PasteMode, PasteResult, Place, Places, RenameResult, SaveResult } from "../../files/files.service";
 
-export type { DeleteResult, Drive, FileEntry, FileInfo, Listing, PasteMode, PasteResult, Place, Places, SaveResult };
+export type { DeleteResult, Drive, FileEntry, FileInfo, FolderResult, Listing, PasteMode, PasteResult, Place, Places, RenameResult, SaveResult };
 
 /** 복사·잘라내기한 항목. 창 안에서만 쓰는 클립보드라 새로 고치면 비워진다. */
 export type Clipboard = { paths: string[]; mode: PasteMode };
@@ -74,6 +74,8 @@ type State = Prefs & Selection & {
   /** current는 지금 보이는 즐겨찾기(기본값이면 사용자 폴더 목록). 처음 고칠 때 기본값을 실제 목록으로 굳힌다. */
   addFavorite: (path: string, current: string[]) => void; removeFavorite: (path: string, current: string[]) => void;
   moveFavorite: (path: string, delta: number, current: string[]) => void; resetFavorites: () => void;
+  /** 이름을 바꾼 폴더를 가리키던 즐겨찾기를 새 경로로 바꿔 끼운다. */
+  replaceFavorites: (paths: string[]) => void;
   setExpanded: (key: string, open: boolean) => void; expandAll: (keys: string[]) => void; collapseAll: () => void;
   /** 끈 열 너비를 저장한다. 빈 값이면 모든 열이 기본 너비로 돌아간다. */
   setColumns: (columns: ColumnWidths) => void;
@@ -144,6 +146,7 @@ export const useFiles = create<State>((set, get) => {
       update({ favorites: next });
     },
     resetFavorites: () => update({ favorites: null }),
+    replaceFavorites: (paths) => update({ favorites: paths.slice(0, MAX_FAVORITES) }),
     setColumns: (columns) => update({ columns: columnsOf(columns) }),
     setExpanded: (key, open) => {
       const { expanded } = get();
@@ -411,10 +414,14 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 export const statPath = (target: string, signal?: AbortSignal) => getJson<FileInfo>(`/api/v1/files/stat?path=${encodeURIComponent(target)}`, signal);
 /** 클립보드의 항목을 destination 폴더에 붙여 넣는다. 서버는 덮어쓰지 않고, 항목마다 성공·실패를 돌려준다. */
 export const pasteItems = (sources: string[], destination: string, mode: PasteMode) => postJson<PasteResult>("/api/v1/files/paste", { sources, destination, mode });
-/** Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. */
 /** 붙여넣기·삭제 한 번에 다루는 항목 수 상한. 서버(files.service의 MAX_BATCH)와 같다. */
 export const BATCH_MAX = 200;
+/** Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. */
 export const deleteItems = (paths: string[]) => postJson<DeleteResult>("/api/v1/files/delete", { paths });
+/** parent 폴더에 `새 폴더`(겹치면 `새 폴더 (2)`…)를 만든다. */
+export const createFolder = (parent: string) => postJson<FolderResult>("/api/v1/files/mkdir", { parent });
+/** 같은 폴더 안에서 이름만 바꾼다. 서버가 이름을 검사하고 덮어쓰지 않는다. */
+export const renameItem = (target: string, name: string) => postJson<RenameResult>("/api/v1/files/rename", { path: target, name });
 
 /** 경로 글자만으로 찾은 상위 폴더. 드라이브 루트(C:\)나 /의 상위는 null(`이 PC`)이다. */
 export function parentOf(target: string): string | null {

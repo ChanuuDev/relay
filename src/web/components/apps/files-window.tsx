@@ -1,5 +1,6 @@
 import {
-  useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SubmitEvent,
+  useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
+  type SubmitEvent, type SyntheticEvent,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,7 +20,7 @@ import { SplitView } from "../desktop/split-view";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
-  BATCH_MAX, COLUMN_MIN, contentUrl, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, sortEntries,
+  BATCH_MAX, COLUMN_MIN, contentUrl, createFolder, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, renameItem, sortEntries,
   TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey, type ColumnKey, type ColumnWidths,
 } from "../../lib/files";
 
@@ -60,6 +61,8 @@ export function FilesWindow() {
   // 휴지통으로 옮길 항목(확인 창)과 속성 창에 보일 경로. busy는 붙여넣기·삭제가 서버에서 끝나기를 기다리는 중이다.
   const [removing, setRemoving] = useState<FileEntry[] | null>(null);
   const [properties, setProperties] = useState<string | null>(null);
+  // 이름을 고치고 있는 항목의 경로. 그 항목의 이름 칸이 입력으로 바뀐다.
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const typeahead = useRef({ text: "", at: 0 });
@@ -103,7 +106,7 @@ export function FilesWindow() {
     if (data) useFiles.getState().expandAll(["pc:", ...data.crumbs.slice(0, -1).map((crumb) => `pc:${crumb.path}`)]);
   }, [data?.path]); // eslint-disable-line react-hooks/exhaustive-deps
   // 위치가 바뀌면 거르기를 지우고, 앞에 있는 창이면 목록에 초점을 둔다.
-  useEffect(() => { setQuery(""); }, [location]);
+  useEffect(() => { setQuery(""); setRenaming(null); }, [location]);
   useEffect(() => {
     if (!focused || !data) return;
     const frame = requestAnimationFrame(() => { if (!document.activeElement?.closest(".window[data-window=files] input")) listRef.current?.focus({ preventScroll: true }); });
@@ -187,6 +190,49 @@ export function FilesWindow() {
     } catch (error) { say(error instanceof Error ? error.message : "삭제하지 못했습니다.", "error"); }
     finally { setBusy(false); }
   }
+  /** 지금 폴더에 `새 폴더`를 만들고, 목록에 나타나면 골라 바로 이름을 고치게 한다(탐색기와 같다). Esc로 그만두면 `새 폴더`로 남는다. */
+  async function newFolder() {
+    if (location === null || busy) return;
+    setBusy(true);
+    try {
+      const made = await createFolder(location);
+      setQuery("");
+      await queryClient.invalidateQueries({ queryKey: ["files", "list", location] });
+      if (useFiles.getState().location !== location) return;
+      select(made.path);
+      setRenaming(made.path);
+    } catch (error) { say(error instanceof Error ? error.message : "새 폴더를 만들지 못했습니다.", "error"); }
+    finally { setBusy(false); }
+  }
+  function startRename(entry: FileEntry) {
+    if (busy) return;
+    select(entry.path);
+    setRenaming(entry.path);
+  }
+  /** 이름 바꾸기를 끝낸다. name이 null이면 그만두기다. 바꾸지 못하면 알리고 false를 돌려 입력을 그대로 둔다. focus면 끝난 뒤 목록에 초점을 돌려준다. */
+  async function finishRename(entry: FileEntry, name: string | null, focus: boolean): Promise<boolean> {
+    const end = () => { setRenaming(null); if (focus) listRef.current?.focus({ preventScroll: true }); return true; };
+    if (name === null || !name.trim() || name.trim() === entry.name) return end();
+    try {
+      const result = await renameItem(entry.path, name);
+      await queryClient.invalidateQueries({ queryKey: ["files", "list", parentOf(entry.path)] });
+      // 입력 밖을 눌러 끝냈으면 그사이 고른 항목을 그대로 둔다.
+      if (useFiles.getState().selected === entry.path) select(result.to);
+      followRename(entry.path, result.to);
+      return end();
+    } catch (error) { say(error instanceof Error ? error.message : "이름을 바꾸지 못했습니다.", "error"); return false; }
+  }
+  /** 이름을 바꾼 항목(폴더면 그 안까지)을 가리키던 클립보드·즐겨찾기를 새 경로로 맞춘다. */
+  function followRename(from: string, to: string) {
+    const base = from.toLowerCase();
+    const moved = (target: string) => {
+      const lower = target.toLowerCase();
+      if (lower === base) return to;
+      return lower.startsWith(base) && /[\\/]/.test(target[from.length] ?? "") ? to + target.slice(from.length) : target;
+    };
+    if (clipboard?.paths.some((item) => moved(item) !== item)) setClipboard({ ...clipboard, paths: clipboard.paths.map(moved) });
+    if (favoritePaths !== null && favoriteList.some((item) => moved(item) !== item)) useFiles.getState().replaceFavorites(favoriteList.map(moved));
+  }
   async function copyPath(target: string) {
     try { await navigator.clipboard.writeText(target); say("경로를 복사했습니다."); }
     catch { say("클립보드에 복사하지 못했습니다.", "error"); }
@@ -264,6 +310,7 @@ export function FilesWindow() {
         { kind: "item", id: "cut", label: "잘라내기", onSelect: () => cutOrCopy([entry], "cut") },
         { kind: "item", id: "copy", label: "복사", onSelect: () => cutOrCopy([entry], "copy") },
         ...(entry.kind === "directory" ? [pasteEntry(entry.path)] : []),
+        { kind: "item", id: "rename", label: "이름 바꾸기", disabled: busy, onSelect: () => startRename(entry) },
         { kind: "item", id: "delete", label: "삭제", danger: true, disabled: busy, onSelect: () => requestRemove([entry]) },
         { kind: "separator", id: "sep2" },
         { kind: "item", id: "path", label: "경로 복사", onSelect: () => void copyPath(entry.path) },
@@ -272,7 +319,8 @@ export function FilesWindow() {
     }
     return [
       { kind: "item", id: "refresh", label: "새로 고침", onSelect: refresh },
-      ...(location !== null ? [pasteEntry(location), { kind: "item" as const, id: "explorer", label: "탐색기에서 이 폴더 열기", onSelect: () => void system(location, "open") }, favoriteEntry(location)] : []),
+      ...(location !== null ? [{ kind: "item" as const, id: "new-folder", label: "새 폴더", disabled: busy, onSelect: () => void newFolder() },
+        pasteEntry(location), { kind: "item" as const, id: "explorer", label: "탐색기에서 이 폴더 열기", onSelect: () => void system(location, "open") }, favoriteEntry(location)] : []),
       { kind: "separator", id: "sep" },
       { kind: "radio", id: "list", label: "목록 보기", checked: view === "list", onSelect: () => setView("list") },
       { kind: "radio", id: "grid", label: "아이콘 보기", checked: view === "grid", onSelect: () => setView("grid") },
@@ -283,7 +331,7 @@ export function FilesWindow() {
   };
 
   /** 화살표·Home·End로 고르고(Shift를 누르면 범위), Enter로 열고, Backspace·Alt+↑로 위로, Alt+←/→로 뒤로·앞으로. 글자를 치면 그 이름으로 건너뛴다.
-   *  Ctrl+A는 모두 선택, Ctrl+C·X·V는 고른 항목 복사·잘라내기·붙여넣기, Delete는 삭제, Alt+Enter는 속성이다. */
+   *  Ctrl+A는 모두 선택, Ctrl+C·X·V는 고른 항목 복사·잘라내기·붙여넣기, Delete는 삭제, F2는 이름 바꾸기, Alt+Enter는 속성이다. */
   function onListKey(event: KeyboardEvent<HTMLDivElement>) {
     if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); back(); return; }
     if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); forward(); return; }
@@ -298,6 +346,7 @@ export function FilesWindow() {
     }
     if (event.key === "Delete" && picked.length && !event.ctrlKey && !event.altKey) { event.preventDefault(); requestRemove(picked); return; }
     if (event.key === "F5") { event.preventDefault(); refresh(); return; }
+    if (event.key === "F2") { event.preventDefault(); if (current && picked.length <= 1) startRename(current); return; }
     if (event.shiftKey && event.key === "F10") { event.preventDefault(); openContextAtSelection(); return; }
     if (event.key === "ContextMenu") { event.preventDefault(); openContextAtSelection(); return; }
     if (!entries.length) return;
@@ -436,6 +485,7 @@ export function FilesWindow() {
                     ? <div className="files-list-empty">{query.trim() ? `‘${query.trim()}’과 맞는 항목이 없습니다.` : hiddenCount ? `숨김 항목 ${hiddenCount}개만 있습니다.` : "이 폴더는 비어 있습니다."}</div>
                     : entries.map((entry, index) => {
                       const props: ItemProps = { entry, index, selected: pickedSet.has(entry.path), cut: inClipboard(entry.path, "cut"),
+                        renameField: entry.path === renaming ? <RenameField entry={entry} onDone={(name, focus) => finishRename(entry, name, focus)} /> : null,
                         onPick: (event) => pick(entry, index, event), onOpen: () => openEntry(entry), onMenu: onItemMenu(entry) };
                       return view === "list" ? <ListRow key={entry.path} {...props} /> : <GridTile key={entry.path} {...props} />;
                     })}
@@ -582,7 +632,44 @@ function ThisPC({ places, favorites, loading, onGo }: { places: Places | undefin
 
 /** 체크 상자는 늘 그려 두고 체크 모드(.files-main[data-checking])에서만 CSS로 연다. */
 type ItemProps = { entry: FileEntry; index: number; selected: boolean; cut: boolean;
+  /** 이름을 고치는 동안 이름 자리에 놓을 입력 */
+  renameField: ReactNode;
   onPick: (event: ReactMouseEvent) => void; onOpen: () => void; onMenu: (event: ReactMouseEvent) => void };
+
+/**
+ * 이름 자리에 뜨는 이름 바꾸기 입력. Enter면 바꾸고 Esc면 그만두며, 다른 곳을 누르면 그대로 바꾼다. 파일은 확장자 앞까지만 골라 둔다.
+ * 한글을 조합하는 중의 Enter는 조합을 끝낼 뿐이다. 입력 안의 키·클릭은 목록으로 올려 보내지 않는다(Backspace가 상위 폴더로, 글자가 이름 찾기로 가지 않게).
+ */
+function RenameField({ entry, onDone }: { entry: FileEntry; onDone: (name: string | null, focus: boolean) => Promise<boolean> }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
+  const [value, setValue] = useState(entry.name);
+  useEffect(() => {
+    const input = ref.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    const dot = entry.kind === "file" ? entry.name.lastIndexOf(".") : -1;
+    input.setSelectionRange(0, dot > 0 ? dot : entry.name.length);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  async function finish(name: string | null, focus: boolean) {
+    if (settled.current) return;
+    settled.current = true;
+    if (await onDone(name, focus)) return;
+    settled.current = false;
+    ref.current?.focus({ preventScroll: true });
+    ref.current?.select();
+  }
+  const stop = (event: SyntheticEvent) => event.stopPropagation();
+  return <input ref={ref} className="files-rename" value={value} aria-label={`‘${entry.name}’의 새 이름`} spellCheck={false} autoComplete="off" maxLength={255}
+    onChange={(event) => setValue(event.target.value)} onBlur={() => void finish(value, false)}
+    onKeyDown={(event) => {
+      event.stopPropagation();
+      if (event.nativeEvent.isComposing) return;
+      if (event.key === "Enter") { event.preventDefault(); void finish(value, true); }
+      else if (event.key === "Escape") { event.preventDefault(); void finish(null, true); }
+    }}
+    onMouseDown={stop} onClick={stop} onDoubleClick={stop} onContextMenu={stop} />;
+}
 
 /** 고른 파일 크기의 합. 파일이 하나도 없으면(폴더만) null이다. */
 function sizeOf(items: FileEntry[]): number | null {
@@ -636,13 +723,13 @@ function resizeColumn(event: ReactPointerEvent<HTMLSpanElement>, key: ColumnKey)
   handle.addEventListener("pointercancel", end);
 }
 
-function ListRow({ entry, index, selected, cut, onPick, onOpen, onMenu }: ItemProps) {
+function ListRow({ entry, index, selected, cut, renameField, onPick, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   return <div id={optionId(index)} role="option" aria-selected={selected} className="files-row" data-hidden={entry.hidden ? "" : undefined} data-cut={cut ? "" : undefined}
     onMouseDown={onPick} onDoubleClick={openUnlessCheck(onOpen)} onContextMenu={onMenu} title={entry.name}>
     <span className="files-cell-check"><CheckBox checked={selected} /></span>
-    <span className="files-cell-name"><Icon aria-hidden="true" className="files-icon" data-tone={type.tone} /><span>{entry.name}</span>
+    <span className="files-cell-name"><Icon aria-hidden="true" className="files-icon" data-tone={type.tone} />{renameField ?? <span>{entry.name}</span>}
       {entry.link && <SquareArrowOutUpRight aria-label="바로 가기" className="files-link-badge" />}</span>
     <span className="files-cell" data-column="modified">{formatDate(entry.modified)}</span>
     <span className="files-cell" data-column="kind">{type.label}</span>
@@ -650,7 +737,7 @@ function ListRow({ entry, index, selected, cut, onPick, onOpen, onMenu }: ItemPr
   </div>;
 }
 
-function GridTile({ entry, index, selected, cut, onPick, onOpen, onMenu }: ItemProps) {
+function GridTile({ entry, index, selected, cut, renameField, onPick, onOpen, onMenu }: ItemProps) {
   const type = fileType(entry);
   const Icon = type.icon;
   const [broken, setBroken] = useState(false);
@@ -662,7 +749,7 @@ function GridTile({ entry, index, selected, cut, onPick, onOpen, onMenu }: ItemP
       {thumb ? <img src={contentUrl(entry.path)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />
         : <Icon aria-hidden="true" className="files-icon" data-tone={type.tone} />}
     </span>
-    <span className="files-tile-name">{entry.name}</span>
+    {renameField ?? <span className="files-tile-name">{entry.name}</span>}
   </div>;
 }
 
