@@ -1,10 +1,12 @@
 import { useRef } from "react";
 import { useGSAP } from "@gsap/react";
+import { useMotionValue } from "framer-motion";
 import { APPS, APP_IDS, type AppId } from "../../lib/app-config";
 import { useDesktop } from "../../lib/desktop-store";
 import { bounceIcon, fadeDot } from "../../lib/motion";
 import { Dock as MagnifyingDock, DockIcon, DockItem, DockLabel } from "../ui/dock";
 import { AppIcon } from "./app-icons";
+import { useDockReorder } from "./use-dock-reorder";
 
 export function Dock() {
   const windows = useDesktop((state) => state.windows);
@@ -12,7 +14,12 @@ export function Dock() {
   const focused = useDesktop((state) => state.focused);
   const mobile = useDesktop((state) => state.mobile);
   const focus = useDesktop((state) => state.focus);
+  const dockOrder = useDesktop((state) => state.dockOrder);
+  const setDockOrder = useDesktop((state) => state.setDockOrder);
   const barRef = useRef<HTMLDivElement>(null);
+  const mouseX = useMotionValue(Infinity);
+  // 모바일 탭바는 같은 순서로 보여 주기만 하고, 끌어 바꾸기는 데스크톱 Dock에서만 한다.
+  const reorder = useDockReorder({ order: dockOrder, commit: setDockOrder, bar: barRef, mouseX, enabled: !mobile });
   const openFlags = APP_IDS.map((id) => (windows[id].open && !closing[id] ? "1" : "0")).join("");
   const wasOpen = useRef(openFlags);
 
@@ -34,10 +41,11 @@ export function Dock() {
   };
 
   return <nav className="dock" aria-label="Dock">
-    <MagnifyingDock className="material-dock" ref={barRef} disabled={mobile} baseSize={mobile ? 32 : 48}>
-      {APP_IDS.map((id) =>
-        <DockItem key={id} aria-label={APPS[id].title} data-dock-item={id}
+    <MagnifyingDock className="material-dock" ref={barRef} disabled={mobile} baseSize={mobile ? 32 : 48} mouseX={mouseX} dragging={reorder.dragging !== null}>
+      {reorder.order.map((id) =>
+        <DockItem key={id} aria-label={APPS[id].title} data-dock-item={id} {...reorder.bind(id)}
           data-open={windows[id].open && !closing[id] ? "" : undefined} data-active={focused === id ? "" : undefined}
+          data-dragging={reorder.dragging === id ? "" : undefined}
           onClick={(event) => launch(id, event.currentTarget)}>
           {!mobile && <DockLabel>{APPS[id].title}</DockLabel>}
           <DockIcon><AppIcon app={id} size={mobile ? 32 : 48} /></DockIcon>

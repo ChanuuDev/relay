@@ -159,6 +159,202 @@ test("동작 줄이기 설정을 켜면 확대 중인 Dock도 즉시 고정 크�
   await expect.poll(async () => (await box(page, dock("가이드"))).width).toBeGreaterThan(76);
 });
 
+const DOCK_NAMES = ["세션", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정", "YouTube"];
+const dockNames = (page: Page) => page.locator(".dock-item").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")));
+const storedDock = async (page: Page) => JSON.parse(await page.evaluate(() => localStorage.getItem("relay-dock-order") ?? "null")) as string[] | null;
+const centerOf = async (page: Page, selector: string) => {
+  const rect = await box(page, selector);
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+};
+/** 미끄러지거나 내려앉는 아이콘이 하나도 없다. */
+const dockAtRest = (page: Page) => page.locator(".dock-item").evaluateAll((items) => items.every((item) => !(item as HTMLElement).style.transform));
+/** 이웃이 모두 비켜 섰다: 끄는 아이콘의 빈자리(레이아웃 자리)와 다른 아이콘이 서로 겹치지 않고 간격을 지킨다. */
+const gapIsClear = (page: Page) => page.locator(".dock-item").evaluateAll((items) => {
+  const spans = items.map((item) => {
+    const rect = item.getBoundingClientRect();
+    const x = new DOMMatrixReadOnly(getComputedStyle(item).transform).m41;
+    return item.hasAttribute("data-dragging") ? { left: rect.left - x, right: rect.right - x, moving: false } : { left: rect.left, right: rect.right, moving: Math.abs(x) > 0.1 };
+  });
+  return spans.every((span, index) => !span.moving && (index === 0 || span.left >= spans[index - 1]!.right + 8));
+});
+/** 놓기 직전부터 1.2초 동안 아이콘 중심을 프레임마다 적는다. 놓기 전 프레임이 몇 장 쌓인 뒤에 돌아온다. */
+const recordPath = async (page: Page, selector: string) => {
+  await page.evaluate((selector) => {
+    const item = document.querySelector(selector)!;
+    const trace = { done: false, points: [] as { x: number; y: number; t: number }[] };
+    (window as unknown as { __dockPath: typeof trace }).__dockPath = trace;
+    const start = performance.now();
+    requestAnimationFrame(function tick() {
+      const rect = item.getBoundingClientRect();
+      trace.points.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, t: performance.now() });
+      if (performance.now() - start < 1200) requestAnimationFrame(tick); else trace.done = true;
+    });
+  }, selector);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __dockPath: { points: unknown[] } }).__dockPath.points.length)).toBeGreaterThan(2);
+};
+const recordedPath = async (page: Page) => {
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __dockPath: { done: boolean } }).__dockPath.done)).toBe(true);
+  return page.evaluate(() => (window as unknown as { __dockPath: { points: { x: number; y: number; t: number }[] } }).__dockPath.points);
+};
+
+test("Dock 아이콘을 끌면 이웃이 비켜 서고, 놓은 순서가 새로 고침 뒤에도 남으며, 짧게 누르면 그대로 연다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  record("dock-order", "Dock 순서 확인");
+  await ready(page);
+  expect(await dockNames(page)).toEqual(DOCK_NAMES);
+  // 문턱(4px) 안에서 떼면 클릭이다: 앱이 열리고 순서는 그대로다.
+  const calculator = await centerOf(page, dock("계산기"));
+  await page.mouse.move(calculator.x, calculator.y);
+  await page.mouse.down();
+  await page.mouse.move(calculator.x + 3, calculator.y);
+  await page.mouse.up();
+  await expect(page.locator(win("calculator"))).toBeVisible();
+  expect(await dockNames(page)).toEqual(DOCK_NAMES);
+  expect(await storedDock(page)).toBeNull();
+
+  // 설정을 맨 앞으로 끈다(막대 왼쪽 끝을 지나쳐도 Dock 높이면 안이다). 끄는 동안 순서가 바로 바뀌어 빈자리가 생기고,
+  // 아이콘은 잡은 점이 포인터 밑에 있으며 라벨은 내려간다.
+  const bar = await box(page, ".dock-bar");
+  const start = await centerOf(page, dock("설정"));
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x - 2, start.y);
+  await expect(page.locator(".dock-item[data-dragging]")).toHaveCount(0);
+  const to = { x: bar.x - 50, y: start.y - 8 };
+  await page.mouse.move(to.x, to.y, { steps: 30 });
+  await expect(page.locator(".dock-item[data-dragging]")).toHaveAttribute("aria-label", "설정");
+  await expect(page.locator(".dock-tip")).toHaveCount(0);
+  const moved = ["설정", ...DOCK_NAMES.filter((name) => name !== "설정")];
+  expect(await dockNames(page)).toEqual(moved);
+  await expect.poll(() => gapIsClear(page)).toBe(true);
+  const held = await box(page, dock("설정"));
+  expect(to.x).toBeGreaterThan(held.x); expect(to.x).toBeLessThan(held.x + held.width);
+  expect(to.y).toBeGreaterThan(held.y); expect(to.y).toBeLessThan(held.y + held.height);
+  const clip = { x: Math.max(0, bar.x - 120), y: bar.y - 120, width: bar.width + 200, height: 1000 - (bar.y - 120) };
+  await page.screenshot({ path: test.info().outputPath("dock-reorder-dragging.png") });
+  await page.screenshot({ path: test.info().outputPath("dock-reorder-dragging-zoom.png"), clip });
+
+  // 놓으면 그 자리에 내려앉고 순서를 저장한다. 끈 뒤에는 click이 나지 않아 설정 창이 열리지 않는다.
+  await page.mouse.up();
+  await expect(page.locator(".dock-item[data-dragging]")).toHaveCount(0);
+  await expect.poll(() => dockAtRest(page)).toBe(true);
+  await expect(page.locator(win("settings"))).toHaveCount(0);
+  expect(await dockNames(page)).toEqual(moved);
+  expect(await storedDock(page)).toEqual(["settings", "sessions", "guide", "command", "notes", "files", "viewer", "calculator", "youtube"]);
+  await page.screenshot({ path: test.info().outputPath("dock-reorder-dropped-zoom.png"), clip });
+  // 다음 포인터 움직임에 라벨이 다시 붙는다.
+  const first = await centerOf(page, dock("설정"));
+  await page.mouse.move(first.x, first.y);
+  await expect(page.locator(".dock-tip")).toHaveText("설정");
+  await page.reload();
+  await expect(page.locator(".dock-item")).toHaveCount(9);
+  expect(await dockNames(page)).toEqual(moved);
+  expect(errors).toEqual([]);
+});
+
+test("Dock 밖에서 놓거나 Esc를 누르면 제자리로 돌아가고, Alt+←/→로도 옮기며, 저장된 순서는 지금 앱 목록에 맞춰 합친다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  record("dock-cancel", "Dock 취소 확인");
+  await ready(page);
+  const bar = await box(page, ".dock-bar");
+  // 명령을 오른쪽으로 끌다가 Dock 위로 멀리 들어 올리면 빈자리가 제자리로 돌아가고 아이콘이 흐려진다.
+  const command = await centerOf(page, dock("명령"));
+  await page.mouse.move(command.x, command.y);
+  await page.mouse.down();
+  await page.mouse.move(command.x + 150, command.y, { steps: 15 });
+  await expect.poll(() => dockNames(page)).not.toEqual(DOCK_NAMES);
+  await page.mouse.move(command.x + 150, bar.y - 220, { steps: 12 });
+  await expect.poll(() => dockNames(page)).toEqual(DOCK_NAMES);
+  const face = page.locator(`${dock("명령")} .dock-icon`);
+  await expect.poll(() => face.evaluate((icon) => Number(getComputedStyle(icon).opacity))).toBeLessThan(0.7);
+  await expect.poll(() => gapIsClear(page)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("dock-reorder-outside.png") });
+  // 놓으면 그 자리에서 제자리까지 끊김 없이 다가간다(커밋 순간 튀지 않는다): 멀어지지 않고, 놓은 뒤 첫 프레임은
+  // 그 프레임 간격(+GSAP 시계 차이 25ms)만큼의 감속 곡선(base 220ms·power3.out)까지만 간다. 사이 프레임도 보인다.
+  await recordPath(page, dock("명령"));
+  await page.mouse.up();
+  const path = await recordedPath(page);
+  const end = path.at(-1)!;
+  const distance = path.map((point) => Math.hypot(point.x - end.x, point.y - end.y));
+  const trace = JSON.stringify(path.map((point, index) => [Math.round(point.t - path[0]!.t), Math.round(distance[index]!)]));
+  expect(distance[0], trace).toBeGreaterThan(150);
+  const held = distance.findLastIndex((value) => value >= distance[0]! - 0.5);
+  for (let index = 1; index < distance.length; index++) expect(distance[index]!, trace).toBeLessThanOrEqual(distance[index - 1]! + 1);
+  const firstStep = Math.min(1, (path[held + 1]!.t - path[held]!.t + 25) / 220);
+  expect(1 - distance[held + 1]! / distance[0]!, trace).toBeLessThan(1 - (1 - firstStep) ** 3 + 0.05);
+  expect(distance.filter((value) => value > distance[0]! * 0.05 && value < distance[0]! * 0.95).length, trace).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => dockAtRest(page)).toBe(true);
+  expect(await face.evaluate((icon) => Number(getComputedStyle(icon).opacity))).toBe(1);
+  await expect(page.locator(win("command"))).toHaveCount(0);
+  expect(await dockNames(page)).toEqual(DOCK_NAMES);
+  expect(await storedDock(page)).toBeNull();
+
+  // Esc는 끄는 중에 취소한다. 버튼을 뗄 때까지 다시 끌리지 않고, 제자리에서 떼도 앱이 열리지 않는다.
+  const notes = await centerOf(page, dock("메모"));
+  await page.mouse.move(notes.x, notes.y);
+  await page.mouse.down();
+  await page.mouse.move(notes.x - 130, notes.y, { steps: 12 });
+  await expect.poll(() => dockNames(page)).not.toEqual(DOCK_NAMES);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".dock-item[data-dragging]")).toHaveCount(0);
+  expect(await dockNames(page)).toEqual(DOCK_NAMES);
+  await expect.poll(() => dockAtRest(page)).toBe(true);
+  const home = await centerOf(page, dock("메모"));
+  await page.mouse.move(home.x, home.y, { steps: 6 });
+  await expect(page.locator(".dock-item[data-dragging]")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page.locator(win("notes"))).toHaveCount(0);
+  await expect(page.locator(win("sessions"))).toBeVisible();
+  expect(await dockNames(page)).toEqual(DOCK_NAMES);
+
+  // 실행 중 표시점은 끄는 동안 감췄다가, 내려앉은 뒤 다시 켠다. 제자리에 놓으면 저장하지 않는다.
+  const sessions = await centerOf(page, dock("세션"));
+  const dot = page.locator(`${dock("세션")} .dock-dot`);
+  await page.mouse.move(sessions.x, sessions.y);
+  await page.mouse.down();
+  await page.mouse.move(sessions.x + 30, sessions.y - 6, { steps: 6 });
+  await expect.poll(() => dot.evaluate((node) => Number(getComputedStyle(node).opacity))).toBe(0);
+  await page.mouse.move(sessions.x, sessions.y, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => dockAtRest(page)).toBe(true);
+  await expect.poll(() => dot.evaluate((node) => Number(getComputedStyle(node).opacity))).toBeCloseTo(0.6, 2);
+  expect(await dockNames(page)).toEqual(DOCK_NAMES);
+  expect(await storedDock(page)).toBeNull();
+
+  // 키보드: 초점 둔 아이콘을 Alt+←/→로 한 칸씩 옮긴다. 초점은 따라가고 브라우저 뒤로 가기로 새지 않는다.
+  const url = page.url();
+  await page.locator(dock("계산기")).focus();
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect.poll(() => dockNames(page)).toEqual(["세션", "가이드", "명령", "메모", "파일 탐색기", "계산기", "뷰어", "설정", "YouTube"]);
+  await expect(page.locator(dock("계산기"))).toBeFocused();
+  await page.keyboard.press("Alt+ArrowRight");
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect.poll(() => dockNames(page)).toEqual(["세션", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "설정", "계산기", "YouTube"]);
+  await expect(page.locator(dock("계산기"))).toBeFocused();
+  expect(page.url()).toBe(url);
+  await expect.poll(() => dockAtRest(page)).toBe(true);
+  expect(await storedDock(page)).toEqual(["sessions", "guide", "command", "notes", "files", "viewer", "settings", "calculator", "youtube"]);
+
+  // 없어진 앱·중복·이상한 값은 버리고, 저장에 없던 앱은 기본 순서의 바로 앞 앱 뒤에 끼운다.
+  await page.evaluate(() => localStorage.setItem("relay-dock-order", JSON.stringify(["youtube", "bogus", "calculator", "youtube", 7])));
+  await page.reload();
+  await expect(page.locator(".dock-item")).toHaveCount(9);
+  expect(await dockNames(page)).toEqual(["세션", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "YouTube", "계산기", "설정"]);
+
+  // 동작 줄이기에서도 끌기는 그대로 되고, 놓으면 남는 이동 없이 곧바로 자리 잡는다.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const youtube = await centerOf(page, dock("YouTube"));
+  await page.mouse.move(youtube.x, youtube.y);
+  await page.mouse.down();
+  await page.mouse.move(bar.x + 24, youtube.y, { steps: 20 });
+  await expect(page.locator(".dock-item[data-dragging]")).toHaveAttribute("aria-label", "YouTube");
+  await page.mouse.up();
+  await expect.poll(() => dockAtRest(page)).toBe(true);
+  expect(await dockNames(page)).toEqual(["YouTube", "세션", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정"]);
+  await expect(page.locator(win("youtube"))).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("서버가 새 빌드로 다시 뜨면 열린 화면이 스스로 새로 고치고, 입력 중이면 끊지 않고 알린다", async ({ page }) => {
   let build: string | null = null;
   await page.route("**/api/v1/health", async (route) => {

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { APPS, APP_IDS, DOCK_RESERVED, GUIDE_MIN_VIEWPORT, MAX_Z, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WIDTH, type AppId, type Box } from "./app-config";
+import { readDockOrder, sameOrder, writeDockOrder } from "./dock-order";
 import { captureFrame } from "./motion";
 import { menuBarHeight } from "./pwa";
 
@@ -81,6 +82,8 @@ interface DesktopState {
   mobile: boolean;
   closing: Transient;
   minimizing: Transient;
+  /** Dock 아이콘 순서. 모바일 탭바도 같은 순서를 쓴다. */
+  dockOrder: AppId[];
   open: (id: AppId) => void;
   close: (id: AppId) => void;
   finalizeClose: (id: AppId) => void;
@@ -93,6 +96,7 @@ interface DesktopState {
   resetLayout: () => void;
   setMobile: (mobile: boolean) => void;
   clampAll: (W: number, H: number) => void;
+  setDockOrder: (order: AppId[]) => void;
 }
 
 const without = (map: Transient, id: AppId): Transient => {
@@ -119,7 +123,7 @@ function initialState() {
   const mobile = isMobileWidth(W);
   const windows = restore(W, H, mobile);
   const nextZ = Math.max(0, ...APP_IDS.map((id) => windows[id].z)) + 1;
-  return { windows, focused: "sessions" as AppId | null, nextZ, mobile, closing: {} as Transient, minimizing: {} as Transient };
+  return { windows, focused: "sessions" as AppId | null, nextZ, mobile, closing: {} as Transient, minimizing: {} as Transient, dockOrder: readDockOrder() };
 }
 
 /** 닫기 전에 물어볼 창. guard가 true를 돌려주면 지금은 닫지 않고, 사용자가 동의하면 guard가 proceed를 불러 닫는다. */
@@ -178,6 +182,11 @@ export const useDesktop = create<DesktopState>((set, get) => ({
     const windows = { ...state.windows };
     for (const id of APP_IDS) windows[id] = { ...windows[id], ...clampBox(windows[id], W, H, APPS[id].min) };
     return { windows };
+  }),
+  setDockOrder: (dockOrder) => set((state) => {
+    if (sameOrder(state.dockOrder, dockOrder)) return state;
+    writeDockOrder(dockOrder);
+    return { dockOrder };
   }),
 }));
 

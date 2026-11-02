@@ -354,9 +354,13 @@ body[data-window-dragging] .window-frame { transition: none; }
 .dock-bar { display: flex; align-items: flex-end; gap: 12px; margin: 0 auto; padding: 7px 12px; border-radius: 18px; pointer-events: auto; }
 .dock-item { position: relative; width: 48px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; border-radius: 12px; }
 .dock-icon { aspect-ratio: 1; flex-shrink: 0; }
-.dock-item .app-icon { width: 100%; height: auto; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); }
+.dock-item .app-icon { width: 100%; height: auto; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35)); transition: filter .16s ease-out; }
 .dock-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 .dock-item:active .app-icon { transform: scale(.95); }
+/* 끌어 순서 바꾸기: 집어 든 아이콘은 눌린 축소를 풀고 그림자를 깊게 드리워 Dock 위로 들린 듯 보인다. */
+.dock-bar { user-select: none; -webkit-user-select: none; }
+.dock-item[data-dragging] .app-icon { transform: none; filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .42)); }
+body[data-dock-dragging], body[data-dock-dragging] * { cursor: grabbing !important; user-select: none; }
 .dock-dot { position: absolute; top: calc(100% + 2px); width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0; }
 .dock-item[data-open] .dock-dot { opacity: .6; }
 /* Dock 라벨: Dock 전체에 하나뿐이며 가까운 아이콘을 따라 미끄러진다. 거의 불투명한 알약이라 아래 창 글자가 비치지 않고,

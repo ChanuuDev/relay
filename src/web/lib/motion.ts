@@ -295,6 +295,58 @@ export function bounceIcon(el: HTMLElement | null) {
   }
 }
 
+// ── Dock 순서 바꾸기 ──────────────────────────────────────
+// 끄는 아이콘은 트윈 없이 포인터를 따라가고(§1 드래그 규칙), 비켜 주는 이웃과 놓은 아이콘만 트윈한다.
+// 끄는 동안 바로 반응해야 하므로 이동은 감속(enter)만 쓴다. 대상은 `.dock-item` 버튼이며 x·y만 바꾼다(너비는 확대가 맡는다).
+
+const dockDot = (item: HTMLElement) => item.querySelector<HTMLElement>(".dock-dot");
+const dockFace = (item: HTMLElement) => item.querySelector<HTMLElement>(".dock-icon");
+
+/** 집어 든다: 진행 중인 이동을 끊고 이웃 위로 올리며, 따라다니면 어색한 실행 표시점은 감춘다. */
+export function liftDockItem(item: HTMLElement) {
+  gsap.killTweensOf(item);
+  gsap.set(item, { zIndex: 2 });
+  const dot = dockDot(item);
+  if (dot) { gsap.killTweensOf(dot); gsap.to(dot, { opacity: 0, duration: dur("micro"), ease: EASE.exit }); }
+}
+
+export function followDockItem(item: HTMLElement, x: number, y: number) { gsap.set(item, { x, y }); }
+
+/** 트윈·끌기가 남긴 x·y(px). 레이아웃 자리 = 화면 자리 − 이 값. */
+export function shiftOf(item: Element) {
+  return { x: Number(gsap.getProperty(item, "x")) || 0, y: Number(gsap.getProperty(item, "y")) || 0 };
+}
+
+/** 그리기 직전 매 프레임 부른다. 돌려준 함수로 멈춘다. */
+export function everyFrame(callback: () => void) {
+  gsap.ticker.add(callback);
+  return () => gsap.ticker.remove(callback);
+}
+
+/** Dock 밖에서는 아이콘을 흐리게 해, 놓으면 제자리로 돌아간다는 걸 보인다. */
+export function dimDockItem(item: HTMLElement, dim: boolean) {
+  const face = dockFace(item);
+  if (face) gsap.to(face, { opacity: dim ? 0.6 : 1, duration: dur("micro"), ease: EASE.enter });
+}
+
+/** 자리를 바꾼 이웃을 이전 화면 위치(x)에서 새 자리로 미끄러뜨린다(FLIP). */
+export function slideDockItem(item: HTMLElement, from: number) {
+  gsap.fromTo(item, { x: from }, { x: 0, duration: dur("base"), ease: EASE.enter, clearProps: "transform" });
+}
+
+/** 놓은 아이콘을 지금 보이는 자리(x·현재 y)에서 제자리로 내려놓고, 흐림·표시점·쌓임 순서를 되돌린다. */
+export function settleDockItem(item: HTMLElement, from: number) {
+  const face = dockFace(item);
+  if (face) gsap.to(face, { opacity: 1, duration: dur("micro"), ease: EASE.enter, clearProps: "opacity" });
+  const done = () => {
+    const dot = dockDot(item);
+    if (!dot) return;
+    gsap.killTweensOf(dot);
+    if (item.hasAttribute("data-open") && !reduced()) fadeDot(dot); else gsap.set(dot, { clearProps: "opacity" });
+  };
+  gsap.fromTo(item, { x: from }, { x: 0, y: 0, duration: dur("base"), ease: EASE.enter, clearProps: "transform,zIndex", onComplete: done });
+}
+
 /** 선택 행의 좌측 강조선이 위에서 아래로 그려진다(§3-B3). */
 export function growAccent(el: Target) {
   if (!el || reduced()) return;

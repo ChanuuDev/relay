@@ -19,6 +19,10 @@ type DockProps = {
   baseSize?: number;
   spring?: SpringOptions;
   disabled?: boolean;
+  /** 확대 기준 포인터 x. 바깥에서 넘기면 끄는 동안 바깥이 직접 움직인다. */
+  mouseX?: MotionValue<number>;
+  /** 아이콘을 끄는 중. 라벨을 내리고 포인터 추적(확대·라벨)을 바깥에 맡긴다. */
+  dragging?: boolean;
   ref?: Ref<HTMLDivElement>;
 };
 type LabelEntry = { content: ReactNode; ref: RefObject<HTMLButtonElement | null> };
@@ -62,8 +66,9 @@ function watchReducedMotion(onChange: () => void) {
  *  The label is one element for the whole dock: it follows the item nearest the pointer (or the focused item)
  *  and only swaps its text, so moving along the dock never fades labels in and out. */
 function Dock({ children, className, spring = DEFAULT_SPRING, magnification = 80, distance = 150,
-  panelHeight = 64, baseSize = 48, disabled = false, ref }: DockProps) {
-  const mouseX = useMotionValue(Infinity);
+  panelHeight = 64, baseSize = 48, disabled = false, mouseX: externalMouseX, dragging = false, ref }: DockProps) {
+  const ownMouseX = useMotionValue(Infinity);
+  const mouseX = externalMouseX ?? ownMouseX;
   const soft = useSyncExternalStore(watchReducedMotion, reduced, () => false);
   const staticSize = disabled || soft;
   const entries = useRef(new Map<string, LabelEntry>());
@@ -95,7 +100,9 @@ function Dock({ children, className, spring = DEFAULT_SPRING, magnification = 80
     }
     return best;
   }, []);
-  const show = useCallback((key: string | null) => { place(key); setActive(key); }, [place]);
+  const held = useRef(dragging);
+  held.current = dragging;
+  const show = useCallback((key: string | null) => { if (held.current) return; place(key); setActive(key); }, [place]);
   const keyOf = (target: EventTarget | null) => {
     for (const [key, entry] of entries.current) if (entry.ref.current && target instanceof Node && entry.ref.current.contains(target)) return key;
     return null;
@@ -112,17 +119,20 @@ function Dock({ children, className, spring = DEFAULT_SPRING, magnification = 80
   }, [active, place]);
   // 라벨을 단 항목이 사라지면 그 라벨도 내린다.
   useEffect(() => { if (active && !entries.current.has(active)) setActive(null); }, [active, labels]);
+  // 끄는 동안과 놓은 직후에는 라벨을 내려 둔다. 다음 포인터 움직임에 다시 붙는다(놓는 아이콘 위에서 번쩍이지 않게).
+  useLayoutEffect(() => { if (dragging) { pointer.current = null; setActive(null); } }, [dragging]);
 
-  const current = active ? entries.current.get(active) : undefined;
+  const current = active && !dragging ? entries.current.get(active) : undefined;
   return <motion.div className="dock-row flex max-w-full items-end" data-static={staticSize ? "" : undefined} style={{ height: panelHeight }}>
     <motion.div ref={ref} className={cn("dock-bar", className)} style={{ height: panelHeight }}
       onMouseMove={(event) => {
+        if (dragging) return;
         pointer.current = event.clientX;
         if (!staticSize) mouseX.set(event.clientX);
         const key = nearest(event.clientX);
         if (key !== active) show(key);
       }}
-      onMouseLeave={() => { pointer.current = null; mouseX.set(Infinity); show(focused.current); }}
+      onMouseLeave={() => { pointer.current = null; if (!dragging) { mouseX.set(Infinity); show(focused.current); } }}
       onFocusCapture={(event) => {
         // 키보드 초점만 라벨을 붙잡는다. 눌러서 생긴 초점은 포인터가 떠나면 라벨도 내린다.
         focused.current = (event.target as HTMLElement).matches(":focus-visible") ? keyOf(event.target) : null;
@@ -154,8 +164,12 @@ function DockItem({ children, className, onFocus, onBlur, ...props }: DockItemPr
   const { distance, magnification, baseSize, mouseX, spring, disabled } = useDock();
   const isFocused = useMotionValue(0);
   const mouseDistance = useTransform(mouseX, (value) => {
-    const rect = ref.current?.getBoundingClientRect() ?? { x: 0, width: 0 };
-    return value - rect.x - rect.width / 2;
+    const element = ref.current;
+    if (!element) return value;
+    const rect = element.getBoundingClientRect();
+    // 끌기·자리 바꿈이 남긴 이동(인라인 transform)은 빼고 레이아웃 자리로 잰다. 끄는 아이콘의 빈자리도 다른 아이콘처럼 커지고 줄어든다.
+    const shift = element.style.transform ? new DOMMatrixReadOnly(getComputedStyle(element).transform).m41 : 0;
+    return value - (rect.x - shift) - rect.width / 2;
   });
   const widthTransform = useTransform(mouseDistance, [-distance, 0, distance], [baseSize, magnification, baseSize]);
   const target = useTransform(() => {
