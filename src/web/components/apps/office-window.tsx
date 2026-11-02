@@ -107,11 +107,14 @@ export function OfficeWindow() {
   useEffect(() => {
     let cancelled = false;
     const plan = buildingOf(building);
-    Promise.all([loadImage(plan.url), loadImage(WORKER_URL), loadImage(BADGE_URL)]).then(([background, atlas, badges]) => {
+    // 책상 의자 그림을 받지 못해도 사무실은 연다(의자 없이 앉아 있을 뿐이다).
+    const chair = plan.chair ? loadImage(plan.chair.url).catch(() => null) : Promise.resolve(null);
+    Promise.all([loadImage(plan.url), loadImage(WORKER_URL), loadImage(BADGE_URL), chair]).then(([background, atlas, badges, chairImage]) => {
       if (cancelled) return;
       engine.current = {
         sim: new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length }),
-        renderer: new OfficeRenderer(background, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES }),
+        renderer: new OfficeRenderer(background, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES },
+          chairImage && plan.chair ? { image: chairImage, anchor: plan.chair.anchor, offset: plan.chair.offset } : null),
       };
       const { width, height } = plan.layout.image;
       camera.current = clampCamera({ zoom: 1, cx: width / 2, cy: height / 2 }, view.current, width, height);

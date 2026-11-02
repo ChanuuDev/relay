@@ -24,6 +24,9 @@ import iconOffice from "./public/icons/office.png" with { type: "file" };
 import officeBackground from "./public/office/background.webp" with { type: "file" };
 import officeBirch from "./public/office/hq-birch.webp" with { type: "file" };
 import officeOak from "./public/office/hq-oak.webp" with { type: "file" };
+import officeChairNight from "./public/office/chair-night.png" with { type: "file" };
+import officeChairBirch from "./public/office/chair-birch.png" with { type: "file" };
+import officeChairOak from "./public/office/chair-oak.png" with { type: "file" };
 import officeWorker from "./public/office/worker.png" with { type: "file" };
 import officeBadges from "./public/office/badges.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
@@ -74,10 +77,13 @@ export const assets = new Map<string, Asset>([
   ["/pdf.worker.mjs", { file: pdfWorker, type: "text/javascript; charset=utf-8", cache: "public, max-age=86400" }],
   ["/icons/calculator.png", image(iconCalculator, "image/png")],
   ["/icons/office.png", image(iconOffice, "image/png")],
-  // 사무실 앱: 사옥 배경 그림(야간 본사·자작나무·오크), 캐릭터 스프라이트 아틀라스, 상태 배지
+  // 사무실 앱: 사옥 배경 그림(야간 본사·자작나무·오크)과 사옥별 책상 의자, 캐릭터 스프라이트 아틀라스, 상태 배지
   ["/office/background.webp", image(officeBackground, "image/webp")],
   ["/office/hq-birch.webp", image(officeBirch, "image/webp")],
   ["/office/hq-oak.webp", image(officeOak, "image/webp")],
+  ["/office/chair-night.png", image(officeChairNight, "image/png")],
+  ["/office/chair-birch.png", image(officeChairBirch, "image/png")],
+  ["/office/chair-oak.png", image(officeChairOak, "image/png")],
   ["/office/worker.png", image(officeWorker, "image/png")],
   ["/office/badges.png", image(officeBadges, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],

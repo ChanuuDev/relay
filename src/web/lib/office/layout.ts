@@ -5,8 +5,17 @@ export type Zone = WorkZone | "hall";
 export const WORK_ZONES: readonly WorkZone[] = ["working", "blocked", "handoff", "done"];
 
 /** 앉는 자리. stand가 있으면 의자 대신 그 방향을 보고 서서 머문다(인계 방의 서서 나누는 자리). chair는 발이 닿는 바닥이다.
- *  앉으면 등을 보이고 오른쪽 위 책상을 보며, flip이면 왼쪽 위 책상을 본다. */
-export interface Seat { id: string; chair: Point; approach: string; flip?: boolean; stand?: { view: "front" | "back"; flip?: boolean } }
+ *  앉으면 등을 보이고 오른쪽 위 책상을 보며, flip이면 왼쪽 위 책상을 본다.
+ *  책상 자리(stand·lounge가 없는 자리)에는 사옥의 의자 스프라이트를 앉은 사람 앞에 그려 등받이가 등을 가린다.
+ *  lounge면 배경의 소파·안락의자에 앞(오른쪽 아래, flip이면 왼쪽 아래)을 보고 앉으며, chair는 발이 닿는 바닥이다. */
+export interface Seat {
+  id: string; chair: Point; approach: string; flip?: boolean;
+  stand?: { view: "front" | "back"; flip?: boolean };
+  lounge?: { flip?: boolean };
+}
+
+/** 책상 자리인지(의자를 그릴 자리). */
+export const deskSeat = (seat: Seat) => !seat.stand && !seat.lounge;
 export interface ZoneLayout { seats: Seat[]; door: string }
 export interface OfficeLayout {
   image: { width: number; height: number };

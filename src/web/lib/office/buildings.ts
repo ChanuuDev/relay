@@ -1,6 +1,6 @@
 // 사무실을 어느 사옥으로 보일지. 사옥마다 평면이 달라서 그림과 함께 좌석·길·구역 좌표(OfficeLayout)를 따로 둔다.
 import type { OfficeLayout } from "./layout";
-import { LAYOUT } from "./office-data";
+import { BACKGROUND_URL, LAYOUT } from "./office-data";
 import { BIRCH_LAYOUT } from "./hq-birch";
 import { OAK_LAYOUT } from "./hq-oak";
 
@@ -12,13 +12,24 @@ export interface Building {
   /** 단추에 마우스를 올리면 보이는 한 줄 설명 */
   hint: string;
   url: string;
+  /** 책상 자리마다 그릴 의자(등을 보이고 오른쪽 위를 향함). 배경에는 책상 자리 의자가 지워져 있다. */
+  chair?: { url: string; anchor: readonly [number, number]; offset: readonly [number, number] };
   layout: OfficeLayout;
 }
 
 export const BUILDINGS: readonly Building[] = [
-  { id: "night", name: "야간 본사", hint: "불 켜진 밤의 Relay 본사", url: "/office/background.webp?v=3", layout: LAYOUT },
-  { id: "birch", name: "자작나무 사옥", hint: "햇살 드는 낮, 화이트·자작나무 가구의 사옥", url: "/office/hq-birch.webp?v=1", layout: BIRCH_LAYOUT },
-  { id: "oak", name: "오크 사옥", hint: "노을 지는 저녁, 오크·블랙 스틸 가구의 사옥", url: "/office/hq-oak.webp?v=1", layout: OAK_LAYOUT },
+  {
+    id: "night", name: "야간 본사", hint: "불 켜진 밤의 Relay 본사", url: BACKGROUND_URL, layout: LAYOUT,
+    chair: { url: "/office/chair-night.png?v=1", anchor: [16, 43], offset: [4, 18] },
+  },
+  {
+    id: "birch", name: "자작나무 사옥", hint: "햇살 드는 낮, 화이트·자작나무 가구의 사옥", url: "/office/hq-birch.webp?v=2", layout: BIRCH_LAYOUT,
+    chair: { url: "/office/chair-birch.png?v=1", anchor: [16, 45], offset: [4, 18] },
+  },
+  {
+    id: "oak", name: "오크 사옥", hint: "노을 지는 저녁, 오크·블랙 스틸 가구의 사옥", url: "/office/hq-oak.webp?v=2", layout: OAK_LAYOUT,
+    chair: { url: "/office/chair-oak.png?v=1", anchor: [16, 45], offset: [4, 18] },
+  },
 ];
 
 export const BUILDING_KEY = "relay-office-building";

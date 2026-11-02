@@ -1,11 +1,11 @@
 import { lookKey, recolor, REGIONS, type Look, type Region } from "./look";
-import { HALL_CENTER } from "./layout";
+import { deskSeat, HALL_CENTER, type Seat } from "./layout";
 import { HOME_SECONDS, type Agent, type OfficeSim, type Tally } from "./sim";
 
 /** 잡아 올릴 때는 빠르게 솟았다 살짝 넘치고, 내려놓을 때는 툭 떨어진다. */
 const liftCurve = (t: number) => (t >= 1 ? 1 : t <= 0 ? 0 : 1 - (1 - t) ** 3);
 
-export type AnimName = "front_idle" | "back_idle" | "front_walk" | "back_walk" | "sit" | "type" | "seat" | "grab";
+export type AnimName = "front_idle" | "back_idle" | "front_walk" | "back_walk" | "sit" | "type" | "seat" | "grab" | "lounge";
 /** 등을 잡혀 들렸을 때 바닥에서 떠오르는 높이(배경 픽셀) */
 export const LIFT_PX = 26;
 export type Rect = readonly [number, number, number, number];
@@ -33,6 +33,8 @@ export interface SpriteSheet {
   bases: Record<Region, readonly [number, number, number]>;
 }
 export type BadgeName = "working" | "blocked" | "handoff" | "done" | "ended";
+/** 책상 의자 그림(등을 보이고 오른쪽 위를 향함). anchor는 그림 안 받침 가운데 바닥, offset은 좌석 점에서 그 바닥까지(flip이면 x를 뒤집는다). */
+export interface ChairSprite { image: HTMLImageElement; anchor: readonly [number, number]; offset: readonly [number, number] }
 export interface BadgeSheet { scale: number; icons: Record<BadgeName, Rect> }
 
 export interface Camera { zoom: number; cx: number; cy: number }
@@ -62,6 +64,9 @@ export function pose(agent: Agent, time: number, sheet: SpriteSheet, sitSeconds:
   };
   const sit = anims.sit.frames.length;
   const progress = Math.min(sit - 1, Math.floor((agent.t / sitSeconds) * sit));
+  // 소파·안락의자에는 앞을 보고 앉는다. 앉고 일어서는 동안에도 같은 칸을 쓴다.
+  const sitting = agent.mode === "seated" || agent.mode === "sitdown" || agent.mode === "standup";
+  if (sitting && agent.view === "front" && anims.lounge) return loop("lounge");
   switch (agent.mode) {
     case "walk": return loop(agent.view === "front" ? "front_walk" : "back_walk", agent.hurry ? 1.8 : 1);
     case "sitdown": return { anim: "sit", index: progress };
@@ -89,9 +94,10 @@ export class OfficeRenderer {
   /** 화면에 그린 캐릭터 상자(배경 좌표). 뒤에 그린 것이 위에 있으므로 거꾸로 찾는다. */
   private boxes: { id: string; x: number; y: number; w: number; h: number; head: number }[] = [];
 
+  /** chair: 책상 자리마다 그 의자 깊이에 그릴 의자. 앉은 사람보다 앞에 그려 등받이가 등을 가린다. */
   constructor(private readonly background: HTMLImageElement, private readonly atlas: HTMLImageElement,
     private readonly sheet: SpriteSheet, private readonly sitSeconds: number,
-    private readonly badges?: { image: HTMLImageElement; sheet: BadgeSheet }) {
+    private readonly badges?: { image: HTMLImageElement; sheet: BadgeSheet }, private readonly chair?: ChairSprite | null) {
     this.scene = document.createElement("canvas");
     this.scene.width = background.naturalWidth;
     this.scene.height = background.naturalHeight;
@@ -133,11 +139,21 @@ export class OfficeRenderer {
     context.imageSmoothingEnabled = false;
     context.globalAlpha = 1;
     context.drawImage(this.background, 0, 0);
-    // 들린 캐릭터는 다른 모든 것보다 앞에 그린다.
+    // 발 위치(y) 순으로 캐릭터와 책상 의자를 함께 그린다. 의자는 같은 깊이에 앉은 사람보다 나중에(앞에) 그려 등받이가 등을 가리고,
+    // 의자 뒤를 지나는 사람은 의자에 가려진다. 들린 캐릭터는 다른 모든 것보다 앞에 그린다.
     const raised = (agent: Agent) => (agent.mode === "held" || agent.mode === "land" ? 1 : 0);
-    const agents = sim.agents().sort((a, b) => raised(a) - raised(b) || a.y - b.y || a.x - b.x);
+    const items: { depth: number; order: number; agent?: Agent; seat?: Seat }[] =
+      sim.agents().map((agent) => ({ depth: raised(agent) ? Infinity : agent.y, order: agent.x, agent }));
+    if (this.chair) {
+      for (const zone of Object.values(sim.layout.zones)) for (const seat of zone.seats) {
+        if (deskSeat(seat)) items.push({ depth: seat.chair[1] + 0.5, order: 0, seat });
+      }
+    }
+    items.sort((a, b) => a.depth - b.depth || a.order - b.order);
     this.boxes = [];
-    for (const agent of agents) {
+    for (const item of items) {
+      if (item.seat) { this.drawChair(item.seat); continue; }
+      const agent = item.agent!;
       const { anim, index } = pose(agent, time, this.sheet, this.sitSeconds);
       const meta = (this.sheet.bodies[agent.look.body] ?? this.sheet.bodies[0]!)[anim];
       const [sx, sy, sw, sh] = meta.frames[index]!;
@@ -165,6 +181,23 @@ export class OfficeRenderer {
       if (badge && this.badges) this.badge(badge, agent, head, time);
     }
     context.globalAlpha = 1;
+  }
+
+  /** 책상 의자 하나. 모니터가 왼쪽 위에 있는 자리(flip)는 좌우를 뒤집는다. */
+  private drawChair(seat: Seat) {
+    const { image, anchor, offset } = this.chair!;
+    const context = this.sceneContext;
+    const flip = Boolean(seat.flip);
+    const x = seat.chair[0] + (flip ? -offset[0] : offset[0]);
+    const y = seat.chair[1] + offset[1] - anchor[1];
+    context.globalAlpha = 1;
+    if (flip) {
+      context.save();
+      context.translate(x + anchor[0] + 1, y);
+      context.scale(-1, 1);
+      context.drawImage(image, 0, 0);
+      context.restore();
+    } else context.drawImage(image, x - anchor[0], y);
   }
 
   /** 발밑 그림자. 들린 동안에는 작고 옅어져 높이를 알려 준다. */

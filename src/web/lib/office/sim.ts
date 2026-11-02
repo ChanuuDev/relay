@@ -349,8 +349,11 @@ export class OfficeSim {
       return;
     }
     if (agent.spot?.startsWith("seat:")) {
-      // 앉으면 등을 보이고 책상을 본다. 모니터가 왼쪽 위에 있는 자리는 좌우를 뒤집는다.
-      agent.view = "back"; agent.flip = Boolean(seat?.flip);
+      // 앉으면 등을 보이고 책상을 본다. 모니터가 왼쪽 위에 있는 자리는 좌우를 뒤집는다. 소파·안락의자는 앞을 보고 앉는다.
+      if (seat?.lounge) { agent.view = "front"; agent.flip = Boolean(seat.lounge.flip); }
+      else { agent.view = "back"; agent.flip = Boolean(seat?.flip); }
+      // 로비 소파에 앉은 세션은 한참 쉬다가 다른 자리로 옮긴다.
+      agent.rest = roams(agent.zone) ? (instant ? 3 : 8) + this.random() * 12 : Infinity;
       this.setMode(agent, instant ? "seated" : "sitdown");
       return;
     }
@@ -438,6 +441,9 @@ export class OfficeSim {
           }
           break;
         case "seated":
+          if (!roams(agent.zone) || agent.leaving || this.options.reduced) break;
+          agent.rest -= dt;
+          if (agent.rest <= 0) this.wander(agent);
           break;
       }
     }
@@ -459,7 +465,9 @@ export class OfficeSim {
     this.release(agent);
     this.taken.set(free, agent.id);
     agent.spot = free;
-    this.go(agent);
+    // 소파에 앉아 있었으면 먼저 일어선다. 다 일어서면 길을 잡는다.
+    if (agent.mode === "seated") this.setMode(agent, "standup");
+    else this.go(agent);
   }
 
   /**
