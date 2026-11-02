@@ -872,8 +872,9 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-sync[data-sync="offline"]::before, .notes-sync[data-sync="error"]::before { background: var(--system-yellow); }
 .notes-sync[data-sync="rejected"]::before { background: var(--destructive); }
 
-/* 내용: 불투명 바탕 위에 위치·날짜, 제목, 본문 */
-.notes-content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background); }
+/* 내용: 불투명 바탕 위에 위치·날짜, 제목, 본문.
+   min-height: 0이 없으면 긴 본문 높이만큼 패널 밖으로 늘어나 .note-scroll·.folder-sheet가 스크롤하지 못한다. */
+.notes-content { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--background); }
 .notes-content-bar { display: flex; align-items: center; gap: 12px; min-height: calc(1em + 23px); padding: 0 20px; flex-shrink: 0; font-size: var(--fs-11); color: var(--glass-text-muted); }
 .notes-back { display: none; margin-left: -8px; }
 .notes-back svg { width: 14px; height: 14px; }

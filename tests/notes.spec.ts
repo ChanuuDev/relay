@@ -520,6 +520,27 @@ test("메모 창: 빈 메모장에서 다른 PC의 메모 파일을 가져온다
   expect((await saved(page)).items).toHaveLength(2);
 });
 
+test("메모 창: 본문이 창보다 길면 내용 패널은 창 안에 머물고 본문 영역이 스크롤된다", async ({ page }) => {
+  const body = Array.from({ length: 80 }, (_, index) => `${index + 1}번째 줄: 긴 메모의 본문`).join("\n\n");
+  await seed(page, [{ id: "long", kind: "note", parentId: null, title: "긴 메모", body }], { selected: "long" });
+  const notes = page.locator(win("notes"));
+  const scroll = notes.locator(".note-scroll");
+  const last = notes.locator("#note-body p").last();
+  await expect(last).toContainText("80번째 줄");
+  for (const mode of ["서식", "Markdown"]) {
+    await notes.getByRole("button", { name: mode, exact: true }).click();
+    // 내용 패널이 본문 높이만큼 늘어나 창 밖으로 잘리지 않는다.
+    const [main, content] = await Promise.all([notes.locator("#notes-main").boundingBox(), notes.locator(".notes-content").boundingBox()]);
+    expect(content!.y + content!.height).toBeLessThanOrEqual(main!.y + main!.height + 1);
+    expect(await scroll.evaluate((el) => el.scrollHeight > el.clientHeight + 200)).toBe(true);
+    await scroll.hover();
+    await page.mouse.wheel(0, 20000);
+    await expect.poll(() => scroll.evaluate((el) => Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
+    await scroll.evaluate((el) => { el.scrollTop = 0; });
+  }
+  await expect(page.getByLabel("본문", { exact: true })).toHaveValue(/80번째 줄/);
+});
+
 test("메모 창: 좁은 화면에서는 목록과 내용을 번갈아 보인다", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seed(page, SAMPLE, { expanded: ["f-work"] });
