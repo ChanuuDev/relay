@@ -3,9 +3,9 @@
 import type { OfficeLayout } from "./layout";
 import type { BadgeSheet, SpriteSheet } from "./render";
 
-export const BACKGROUND_URL = "/office/background.webp?v=2";
-export const WORKER_URL = "/office/worker.png?v=2";
-export const BADGE_URL = "/office/badges.png?v=2";
+export const BACKGROUND_URL = "/office/background.webp?v=3";
+export const WORKER_URL = "/office/worker.png?v=3";
+export const BADGE_URL = "/office/badges.png?v=3";
 /** 의자에 앉는 애니메이션 길이(초) */
 export const SIT_SECONDS = 0.5;
 

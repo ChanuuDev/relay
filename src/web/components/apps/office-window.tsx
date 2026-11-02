@@ -91,6 +91,8 @@ export function OfficeWindow() {
   const shownSession = roster.find((session) => session.id === shown) ?? null;
   const history = useQuery(resource<HistoryData>(`/api/v1/sessions/${encodeURIComponent(shown ?? "")}/updates?limit=3`, Boolean(shown) && active));
   const talkers = useMemo(() => roster.filter((session) => session.status === "working" && !session.endedAt), [roster]);
+  // 홀(대기)과 로비(완료)의 세션은 가끔 마주 보고 이야기한다. 말은 시뮬레이션이 정하고 여기서는 자리만 둔다.
+  const chatters = useMemo(() => roster.filter((session) => session.status === null || session.status === "done"), [roster]);
 
   // 그림을 모두 받은 뒤 시뮬레이션과 그리기 준비를 한다.
   useEffect(() => {
@@ -207,8 +209,16 @@ export function OfficeWindow() {
       else bubble.style.visibility = "hidden";
     }
     const visible = new Set<string>();
-    for (const [id, element] of talkRefs.current) {
-      const head = id === target ? null : talking(current.sim.agent(id), element.dataset.kind === "home" ? "home" : "work") ? current.renderer.headOf(id) : null;
+    for (const element of talkRefs.current.values()) {
+      const id = element.dataset.talk!;
+      const kind = element.dataset.kind;
+      let say = false;
+      if (kind === "chat") {
+        const line = current.sim.chatLine(id);
+        const text = element.firstElementChild;
+        if (line && text) { if (text.textContent !== line) text.textContent = line; say = true; }
+      } else say = talking(current.sim.agent(id), kind === "home" ? "home" : "work");
+      const head = id === target || !say ? null : current.renderer.headOf(id);
       if (!head) { element.style.visibility = "hidden"; continue; }
       const point = screenOf(head.x, head.y);
       const w = element.offsetWidth, h = element.offsetHeight;
@@ -382,8 +392,8 @@ export function OfficeWindow() {
   const lines = useMemo(() => (shownSession ? bubbleLines(shownSession, history.data?.items) : []), [shownSession, history.data]);
   const menuSession = menu ? roster.find((session) => session.id === menu.sessionId) ?? null : null;
   const items = menuSession ? menuEntries(menuSession) : [];
-  const talkRef = (id: string) => (element: HTMLDivElement | null) => {
-    if (element) talkRefs.current.set(id, element); else talkRefs.current.delete(id);
+  const talkRef = (key: string) => (element: HTMLDivElement | null) => {
+    if (element) talkRefs.current.set(key, element); else talkRefs.current.delete(key);
   };
 
   return <Window id="office" bodyClassName="office-body" header={<WindowTitleBar id="office" right={legend} />}>
@@ -393,11 +403,15 @@ export function OfficeWindow() {
       onPointerLeave={() => { if (!pointer.current) setHovered(null); }}>
       <canvas ref={canvasRef} className="office-canvas" role="img"
         aria-label={`도트 사무실: ${TALLIES.map((tally) => `${zoneLabel(tally)} ${counts[tally].total}`).join(", ")}`} />
-      {talkers.map((session) => <div key={session.id} ref={talkRef(session.id)} className="office-talk office-float" data-kind="work" data-talk={session.id}
+      {talkers.map((session) => <div key={session.id} ref={talkRef(`work:${session.id}`)} className="office-talk office-float" data-kind="work" data-talk={session.id}
         style={{ animationDelay: floatDelay(session.id) }} aria-hidden="true">
         <time>{stamp(session.updatedAt)}</time><span>{talkLine(session.summary)}</span>
       </div>)}
-      {farewells.map((session) => <div key={session.id} ref={talkRef(session.id)} className="office-talk office-float" data-kind="home" data-talk={session.id}
+      {chatters.map((session) => <div key={session.id} ref={talkRef(`chat:${session.id}`)} className="office-talk office-float" data-kind="chat" data-talk={session.id}
+        style={{ animationDelay: floatDelay(session.id) }} aria-hidden="true">
+        <span />
+      </div>)}
+      {farewells.map((session) => <div key={session.id} ref={talkRef(`home:${session.id}`)} className="office-talk office-float" data-kind="home" data-talk={session.id}
         style={{ animationDelay: floatDelay(session.id) }} aria-hidden="true">
         <span>퇴근합니다! 수고하셨습니다</span>
       </div>)}

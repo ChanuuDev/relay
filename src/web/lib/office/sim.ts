@@ -30,6 +30,10 @@ export interface Agent {
   loose: boolean;
   /** 들린 높이 0–1. 잡으면 올라가고 내려놓으면 내려온다. */
   lift: number;
+  /** 길 노드가 아닌 목적지(대화하러 상대 옆으로 갈 때). 경로의 GOAL 자리에 쓴다. */
+  goal: readonly [number, number] | null;
+  /** 홀·로비에서 마주 보고 나누는 대화. pending이면 상대에게 다가가는 중이다. */
+  chat: Chat | null;
   /** 마지막으로 닿은 노드 */
   node: string;
   x: number;
@@ -47,7 +51,23 @@ export interface Agent {
   rest: number;
 }
 
+export interface Chat { partner: string; lead: boolean; pending: boolean; start: number; until: number; lines: readonly string[] }
+
 export const zoneOf = (status: SessionStatus | null): Zone => status ?? "hall";
+/** 가만히 있지 않고 가끔 돌아다니며 서로 대화하는 구역: 홀(대기)과 완료 로비 */
+export const ROAMING: readonly Zone[] = ["hall", "done"];
+const roams = (zone: Zone) => ROAMING.includes(zone);
+/** 경로 끝의 임시 목적지 표시 */
+const GOAL = "@goal";
+/** 대화 한 줄을 띄우는 초 */
+export const CHAT_LINE_SECONDS = 2.2;
+/** 대화 한 번에 주고받는 말(질문·대답 짝). 홀은 대기 중 잡담, 로비는 퇴근 인사. */
+export const CHAT_LINES: Record<"hall" | "done", readonly (readonly [string, string])[]> = {
+  hall: [["어떤 작업 맡으셨어요?", "아직 배정 전이에요"], ["커피 한잔 할래요?", "좋아요, 가요!"], ["어제 그 버그 봤어요?", "봤어요, 고쳤대요"],
+    ["오늘 리뷰 많네요", "같이 힘내요!"], ["로그 확인해 봤어요?", "지금 보는 중이에요"], ["다음 작업 뭐예요?", "곧 알려 준대요"]],
+  done: [["오늘 고생 많았어요", "수고하셨어요!"], ["그 작업 끝났어요?", "방금 끝냈어요"], ["퇴근하세요?", "네, 먼저 갈게요"],
+    ["내일 봐요!", "들어가세요~"], ["테스트 다 통과했죠?", "네, 깔끔해요"], ["저녁 뭐 먹어요?", "치킨이요!"]],
+};
 /** 완료하고 세션도 끝난 뒤 로비에 머무는 시간. 그 뒤에는 스스로 퇴근해 보이지 않는다. */
 export const LINGER_MS = 10 * 60 * 1000;
 /** 완료+종료 후 머무는 시간이 지났으면 퇴근한 것이다. 사무실에 남지 않는다. */
@@ -98,6 +118,8 @@ export class OfficeSim {
   private readonly random: () => number;
   private readonly clock: () => number;
   private synced = false;
+  /** 시뮬레이션이 흐른 초. 대화 차례를 잰다. */
+  private time = 0;
   private totals: Record<Tally, number> = { hall: 0, working: 0, blocked: 0, handoff: 0, done: 0, home: 0 };
 
   constructor(readonly layout: OfficeLayout, private readonly options: SimOptions) {
@@ -151,6 +173,7 @@ export class OfficeSim {
       agent.session = next.session;
       agent.homeAt = homeTime(next.session);
       if (agent.zone !== next.zone || agent.leaving) {
+        this.dropChat(agent);
         // 작업 상태가 바뀌면 새 구역으로 서둘러 간다. 처음 들어오거나 다시 돌아온 세션은 보통 걸음이다.
         agent.hurry = agent.zone !== next.zone && !agent.leaving && !first;
         this.release(agent); agent.zone = next.zone; agent.leaving = false;
@@ -168,7 +191,7 @@ export class OfficeSim {
     const spot = this.claim(zone, session.id);
     const agent: Agent = {
       id: session.id, session, look: lookFor(session.id, this.options.bodies), zone, spot, leaving: false, hurry: false,
-      homeAt: homeTime(session), loose: false, lift: 0,
+      homeAt: homeTime(session), loose: false, lift: 0, goal: null, chat: null,
       node: spot, x: 0, y: 0, path: [], mode: "appear", t: 0, view: "front", flip: false, alpha: 0,
       phase: this.random() * 4, rest: 2 + this.random() * 6,
     };
@@ -212,6 +235,7 @@ export class OfficeSim {
   }
 
   private leave(agent: Agent, kind: "out" | "home") {
+    this.dropChat(agent);
     this.release(agent);
     agent.leaving = kind;
     agent.hurry = false;
@@ -240,7 +264,7 @@ export class OfficeSim {
       case "standup": case "appear": return; // 끝나면 길을 잡는다.
       case "walk": {
         const next = agent.path[0];
-        if (!next) { this.go(agent); return; }
+        if (!next || next === GOAL) { agent.goal = null; agent.loose = true; this.go(agent); return; }
         const rest = this.graph.route(next, this.targetOf(agent));
         agent.path = rest ? [next, ...rest] : [next];
         return;
@@ -280,9 +304,12 @@ export class OfficeSim {
     agent.path = [];
     agent.hurry = false;
     if (agent.leaving) { this.setMode(agent, "vanish"); return; }
-    const stand = agent.spot ? this.seats.get(agent.spot)?.stand : undefined;
+    if (!agent.spot) { this.meet(agent); return; }
+    const stand = this.seats.get(agent.spot)?.stand;
     if (stand) {
-      agent.view = stand.view; agent.flip = Boolean(stand.flip); agent.rest = Infinity;
+      agent.view = stand.view; agent.flip = Boolean(stand.flip);
+      // 로비에 선 세션은 잠시 뒤 다른 자리로 옮기거나 누군가와 이야기한다. 인계 방은 그 자리에 머문다.
+      agent.rest = roams(agent.zone) && !instant ? 4 + this.random() * 8 : roams(agent.zone) ? 2 + this.random() * 10 : Infinity;
       this.setMode(agent, "stand");
       return;
     }
@@ -301,7 +328,9 @@ export class OfficeSim {
   grab(id: string) {
     const agent = this.byId.get(id);
     if (!agent || agent.leaving || agent.mode === "appear" || agent.mode === "vanish") return false;
+    this.dropChat(agent);
     agent.path = [];
+    agent.goal = null;
     agent.hurry = false;
     agent.view = "front";
     this.setMode(agent, "held");
@@ -327,6 +356,7 @@ export class OfficeSim {
   step(seconds: number) {
     const dt = Math.min(Math.max(seconds, 0), 0.1);
     const now = this.clock();
+    this.time += dt;
     for (const agent of [...this.byId.values()]) {
       agent.t += dt;
       // 로비에서 머무는 시간이 다 되면 스스로 출구로 나간다.
@@ -351,8 +381,13 @@ export class OfficeSim {
           if (agent.t >= this.options.sitSeconds) { agent.view = "front"; this.go(agent); }
           break;
         case "stand":
+          if (agent.chat && !agent.chat.pending) {
+            if (this.time >= agent.chat.until && agent.chat.lead) this.endChat(agent);
+            break;
+          }
+          if (agent.chat) break;
           agent.rest -= dt;
-          if (agent.rest <= 0 && agent.zone === "hall" && !agent.leaving && !this.options.reduced) this.wander(agent);
+          if (agent.rest <= 0 && roams(agent.zone) && !agent.leaving && !this.options.reduced) this.idle(agent);
           break;
         case "walk":
           this.walk(agent, dt);
@@ -374,8 +409,18 @@ export class OfficeSim {
     }
   }
 
+  /** 홀·로비에서 쉬던 세션이 할 일을 고른다: 가끔 가까운 동료에게 가서 이야기하고, 아니면 다른 빈자리로 옮긴다. */
+  private idle(agent: Agent) {
+    if (this.random() < 0.45 && this.startChat(agent)) return;
+    this.wander(agent);
+  }
+
+  /** 같은 구역의 빈자리(홀은 배회 지점, 로비는 서 있는 자리)로 옮긴다. */
   private wander(agent: Agent) {
-    const free = this.shuffle(this.layout.hall.wander.map((_, index) => wanderNode(index))).find((node) => !this.taken.has(node));
+    const candidates = agent.zone === "hall"
+      ? this.layout.hall.wander.map((_, index) => wanderNode(index))
+      : agent.zone === "done" ? this.layout.zones.done.seats.map((seat) => seatNode(seat.id)) : [];
+    const free = this.shuffle(candidates).find((node) => !this.taken.has(node));
     if (!free) { agent.rest = 4; return; }
     this.release(agent);
     this.taken.set(free, agent.id);
@@ -383,12 +428,88 @@ export class OfficeSim {
     this.go(agent);
   }
 
+  /** 쉬고 있는 동료 하나를 골라 그 옆으로 걸어간다. 도착하면 마주 보고 대화한다. */
+  private startChat(agent: Agent) {
+    const partners = [...this.byId.values()].filter((other) => other !== agent && other.zone === agent.zone && other.mode === "stand"
+      && !other.chat && !other.leaving && Math.hypot(other.x - agent.x, other.y - agent.y) < 320);
+    if (!partners.length) return false;
+    const partner = partners[Math.floor(this.random() * partners.length)]!;
+    const side = agent.x < partner.x ? -1 : 1;
+    agent.goal = [partner.x + side * 24, partner.y + 2];
+    const lines = CHAT_LINES[agent.zone === "done" ? "done" : "hall"];
+    const pair = lines[Math.floor(this.random() * lines.length)]!;
+    agent.chat = { partner: partner.id, lead: true, pending: true, start: 0, until: 0, lines: pair };
+    partner.chat = { partner: agent.id, lead: false, pending: true, start: 0, until: 0, lines: pair };
+    partner.rest = Infinity;
+    this.release(agent);
+    const from = agent.loose ? this.nearestNode(agent.x, agent.y) : agent.node;
+    const near = this.nearestNode(agent.goal[0], agent.goal[1]);
+    const route = this.graph.route(from, near) ?? [];
+    agent.path = [...(agent.loose && from !== near ? [from] : []), ...route, GOAL];
+    agent.loose = false;
+    this.setMode(agent, "walk");
+    return true;
+  }
+
+  /** 대화하러 간 자리에 닿았다. 상대가 그대로 있으면 마주 보고 이야기를 시작하고, 아니면 빈자리를 찾아간다. */
+  private meet(agent: Agent) {
+    agent.goal = null;
+    agent.loose = true;
+    const partner = agent.chat ? this.byId.get(agent.chat.partner) : undefined;
+    if (!agent.chat || !partner || partner.chat?.partner !== agent.id) {
+      agent.chat = null;
+      agent.spot = this.claim(agent.zone, agent.id);
+      this.go(agent);
+      return;
+    }
+    const until = this.time + agent.chat.lines.length * CHAT_LINE_SECONDS + 0.8;
+    for (const [one, other] of [[agent, partner], [partner, agent]] as const) {
+      one.view = "front";
+      one.flip = one.x > other.x;
+      one.chat = { ...one.chat!, pending: false, start: this.time, until };
+    }
+    this.setMode(agent, "stand");
+  }
+
+  /** 대화를 마치면 각자 잠시 쉬고, 자리 없이 다가갔던 쪽은 빈자리로 돌아간다. */
+  private endChat(agent: Agent) {
+    const partner = agent.chat ? this.byId.get(agent.chat.partner) : undefined;
+    for (const one of [agent, partner]) {
+      if (!one) continue;
+      one.chat = null;
+      one.rest = 3 + this.random() * 6;
+      if (!one.spot && !one.leaving) { one.spot = this.claim(one.zone, one.id); this.go(one); }
+    }
+  }
+
+  /** 대화를 끊는다(구역이 바뀌거나 잡혀 들리거나 떠날 때). 상대도 풀어 준다. */
+  private dropChat(agent: Agent) {
+    if (!agent.chat) return;
+    const partner = this.byId.get(agent.chat.partner);
+    agent.chat = null;
+    agent.goal = null;
+    if (partner?.chat?.partner === agent.id) {
+      partner.chat = null;
+      partner.rest = 2 + this.random() * 3;
+      if (!partner.spot && !partner.leaving && partner.mode === "stand") { partner.spot = this.claim(partner.zone, partner.id); this.go(partner); }
+    }
+  }
+
+  /** 지금 이 세션이 말하는 한마디. 대화 중 자기 차례일 때만 준다(먼저 다가간 쪽이 묻고 상대가 답한다). */
+  chatLine(id: string) {
+    const chat = this.byId.get(id)?.chat;
+    if (!chat || chat.pending || this.time >= chat.until) return null;
+    const turn = Math.floor((this.time - chat.start) / CHAT_LINE_SECONDS);
+    if (turn >= chat.lines.length) return null;
+    return (turn % 2 === 0) === chat.lead ? chat.lines[turn]! : null;
+  }
+
   private walk(agent: Agent, dt: number) {
     let budget = WALK_SPEED * (agent.hurry ? HURRY : 1) * dt;
     while (budget > 0) {
       const next = agent.path[0];
       if (!next) { this.arrive(agent); return; }
-      const [tx, ty] = this.graph.point(next);
+      const [tx, ty] = next === GOAL && agent.goal ? agent.goal : this.graph.point(next);
       const dx = tx - agent.x, dy = ty - agent.y;
       const length = Math.hypot(dx, dy);
       if (length > 0.01) {
@@ -396,7 +517,7 @@ export class OfficeSim {
         if (Math.abs(dx) > 0.2) agent.flip = dx < 0;
       }
       if (length <= budget) {
-        agent.x = tx; agent.y = ty; agent.node = next; agent.path.shift();
+        agent.x = tx; agent.y = ty; if (next !== GOAL) agent.node = next; agent.path.shift();
         budget -= length;
         continue;
       }

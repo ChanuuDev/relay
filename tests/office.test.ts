@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HALL_CENTER, inside, seatNode, WalkGraph, zoneAt, type OfficeLayout } from "../src/web/lib/office/layout";
 import { hash, hslToRgb, lookFor, lookKey, recolor, rgbToHsl, seeded, shift } from "../src/web/lib/office/look";
-import { HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type OfficeSession } from "../src/web/lib/office/sim";
+import { CHAT_LINE_SECONDS, HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type OfficeSession } from "../src/web/lib/office/sim";
 import { bubbleLines, clip, shortId, stamp, talkLine } from "../src/web/lib/office/bubble";
 import { badgeFor } from "../src/web/lib/office/render";
 import { LAYOUT } from "../src/web/lib/office/office-data";
@@ -182,6 +182,59 @@ describe("office simulation", () => {
     expect(agent).toMatchObject({ zone: "blocked" });
     expect(["sitdown", "seated"]).toContain(agent.mode);
     expect(sim.grab("missing")).toBe(false);
+  });
+
+  test("idle agents in the hall now and then walk up to a colleague, face each other and talk in turns", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1 });
+    sim.sync([session("a", null), session("b", null)]);
+    const [a, b] = [sim.agent("a")!, sim.agent("b")!];
+    run(sim, 3.8);
+    const lead = a.chat?.lead ? a : b, other = lead === a ? b : a;
+    expect(lead.chat).toMatchObject({ partner: other.id, lead: true });
+    expect(other.chat).toMatchObject({ partner: lead.id, lead: false });
+    run(sim, 2);
+    expect(lead.chat!.pending).toBe(false);
+    expect(lead.mode).toBe("stand");
+    expect(Math.abs(lead.x - other.x)).toBeCloseTo(24, 0);
+    // 마주 본다: 왼쪽에 선 쪽은 오른쪽을, 오른쪽에 선 쪽은 왼쪽을 본다.
+    const [left, right] = lead.x < other.x ? [lead, other] : [other, lead];
+    expect([left.flip, right.flip]).toEqual([false, true]);
+    const pair = lead.chat!.lines;
+    const spoken = new Set<string>();
+    for (let t = 0; t < pair.length * CHAT_LINE_SECONDS + 0.5; t += 0.1) {
+      sim.step(0.1);
+      const first = sim.chatLine(lead.id), second = sim.chatLine(other.id);
+      expect(first !== null && second !== null).toBe(false);
+      if (first) spoken.add(`lead:${first}`);
+      if (second) spoken.add(`other:${second}`);
+    }
+    expect(spoken).toEqual(new Set([`lead:${pair[0]}`, `other:${pair[1]}`]));
+    run(sim, 1);
+    expect(lead.chat).toBeNull();
+    expect(other.chat).toBeNull();
+    expect(lead.spot).not.toBeNull();
+  });
+
+  test("grabbing one side of a conversation ends it for both", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1 });
+    sim.sync([session("a", null), session("b", null)]);
+    run(sim, 3.8);
+    const lead = [sim.agent("a")!, sim.agent("b")!].find((agent) => agent.chat?.lead)!;
+    const other = sim.agent(lead.chat!.partner)!;
+    expect(sim.grab(other.id)).toBe(true);
+    expect(other.chat).toBeNull();
+    expect(lead.chat).toBeNull();
+  });
+
+  test("lobby agents do not stand still: after a rest they move to another free spot", () => {
+    const lobby: OfficeLayout = { ...layout, zones: { ...layout.zones, done: { door: "d-door", seats: [
+      { id: "l1", chair: [190, 250], approach: "d-a", stand: { view: "front" } }, { id: "l2", chair: [215, 250], approach: "d-a", stand: { view: "back" } }] } } };
+    const sim = new OfficeSim(lobby, { sitSeconds: 0.5, random: () => 0.9 });
+    sim.sync([session("a", "done")]);
+    const agent = sim.agent("a")!;
+    expect(agent).toMatchObject({ mode: "stand", spot: seatNode("l1") });
+    run(sim, 12);
+    expect(agent.spot).toBe(seatNode("l2"));
   });
 
   test("a drop point maps to the zone whose floor polygon holds it", () => {

@@ -101,21 +101,32 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   const area = await win(page).locator(".office-stage").boundingBox();
   const fitScale = Math.min(area!.width / 1676, area!.height / 938);
   const screen = (x: number, y: number) => ({ x: area!.x + (area!.width - 1676 * fitScale) / 2 + x * fitScale, y: area!.y + (area!.height - 938 * fitScale) / 2 + y * fitScale });
-  await agent(page, "결과 정리").focus();
-  const bubbleBox = await win(page).locator(".office-bubble").boundingBox();
-  await agent(page, "결과 정리").blur();
-  await expect(win(page).locator(".office-bubble")).toHaveCount(0);
+  // 인계 방 책상에 앉은 세션을 잡아 작업 중 방에 놓는다(로비·홀 세션은 돌아다니므로 앉아 있는 세션으로 본다).
+  await agent(page, "막 시작한 세션").focus();
+  const detail = win(page).locator(".office-bubble");
+  await expect(detail).toBeVisible();
+  // 방금 인계 대기로 옮겼으니 책상에 닿아 말풍선이 멈출 때까지 기다린다.
+  let bubbleBox = await detail.boundingBox();
+  await expect.poll(async () => {
+    const previous = bubbleBox;
+    await page.waitForTimeout(300);
+    bubbleBox = await detail.boundingBox();
+    // 말풍선은 숨쉬듯 3px 오르내리므로 그보다 크게 움직일 때만(걷는 중) 기다린다.
+    return Math.abs(bubbleBox!.x - previous!.x) + Math.abs(bubbleBox!.y - previous!.y) < 8;
+  }, { timeout: 15000 }).toBe(true);
+  await agent(page, "막 시작한 세션").blur();
+  await expect(detail).toHaveCount(0);
   const start = { x: bubbleBox!.x + bubbleBox!.width / 2, y: bubbleBox!.y + bubbleBox!.height + 30 };
   await page.mouse.move(start.x, start.y);
   await expect(win(page).locator(".office-stage")).toHaveAttribute("data-hovering", "");
   await page.mouse.down();
-  const target = screen(1400, 600);
+  const target = screen(820, 200);
   for (let step = 1; step <= 12; step++) await page.mouse.move(start.x + ((target.x - start.x) * step) / 12, start.y + ((target.y - start.y) * step) / 12);
   await expect(win(page).locator(".office-stage")).toHaveAttribute("data-dragging", "");
   await page.mouse.up();
   await expect(win(page).locator(".office-stage")).not.toHaveAttribute("data-dragging", "");
-  await expect(agent(page, "결과 정리")).toContainText("인계 대기");
-  expect(cli(["show", "office-done", "--provider", "xai"]).session.status).toBe("handoff");
+  await expect(agent(page, "막 시작한 세션")).toContainText("작업 중");
+  expect(cli(["show", "office-new", "--provider", "openai"]).session.status).toBe("working");
 
   // 메뉴의 세션 상세 열기는 세션 창에서 그 세션을 연다.
   await agent(page, "결과 정리").focus();

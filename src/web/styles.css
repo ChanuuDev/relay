@@ -1597,6 +1597,8 @@ form.files-path { flex: 1; min-width: 140px; }
 .office-talk time { font-weight: 600; color: #1f7a94; font-variant-numeric: tabular-nums; }
 .office-talk span { overflow: hidden; text-overflow: ellipsis; }
 .office-talk[data-kind="home"] { background: #fff2cf; font-weight: 600; }
+/* 홀·로비에서 마주 보고 나누는 잡담: 조금 작고 둥글게 */
+.office-talk[data-kind="chat"] { padding: 2px 8px 3px; border-radius: 9px; font-size: 10.5px; }
 .office-bubble-hint { margin-top: 6px; font-size: 10.5px; color: #7a8199; }
 .office-legend-item[data-tally="home"] { opacity: .85; }
 .office-toast { position: absolute; left: 50%; bottom: 60px; z-index: 4; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
