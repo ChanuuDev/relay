@@ -156,6 +156,24 @@ test("파일 탐색기: 탐색기에서 보기·기본 앱으로 열기는 서�
   await expect(page.locator(".files-toast")).toContainText("탐색기에서 보여 줍니다.");
   // 글·그림은 두 번 누르면 뷰어로 열리므로, 기본 앱은 오른쪽 클릭 메뉴로 연다.
   await row(page, "보고서.txt").click({ button: "right" });
+  // 칠하는 줄은 하나뿐이다: 마우스로 열면 아무 줄도 칠하지 않고, 가리킨 줄만 칠하며, 키보드로 옮기면 칠도 함께 옮겨 가고, 메뉴 밖으로 나가면 지운다.
+  const menu = page.getByRole("menu");
+  const painted = () => menu.locator(".menu-item").evaluateAll((items) =>
+    items.filter((item) => getComputedStyle(item).backgroundColor !== "rgba(0, 0, 0, 0)").map((item) => item.textContent));
+  await expect(menu).toBeFocused();
+  await expect.poll(painted).toEqual([]);
+  await menu.getByRole("menuitem", { name: "기본 앱으로 열기" }).hover();
+  await expect(menu.getByRole("menuitem", { name: "기본 앱으로 열기" })).toBeFocused();
+  await expect.poll(painted).toEqual(["기본 앱으로 열기"]);
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(painted).toEqual(["뷰어로 열기"]);
+  await menu.getByRole("menuitem", { name: "삭제" }).hover();
+  await expect.poll(painted).toEqual(["삭제"]);
+  await page.mouse.move(4, 4);
+  await expect(menu).toBeFocused();
+  await expect.poll(painted).toEqual([]);
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(painted).toEqual(["뷰어로 열기"]);
   await page.getByRole("menuitem", { name: "기본 앱으로 열기" }).click();
   await expect(page.locator(".files-toast")).toContainText("기본 앱으로 엽니다.");
   // 오른쪽 클릭 메뉴

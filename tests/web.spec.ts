@@ -414,6 +414,9 @@ test("the list's right-click menu sets the work state, ends, pins and deletes a 
   await row.locator(".row-summary").click({ button: "right" });
   await expect(menu).toBeVisible();
   await expect(row).toHaveAttribute("data-menu", "");
+  // 마우스로 열면 아무 줄도 칠하지 않고 메뉴 자체에 초점을 둔다. ↓로 첫 항목부터 고른다.
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitemradio", { name: "작업 중" })).toBeFocused();
   await page.screenshot({ path: test.info().outputPath("session-menu.png") });
   await menu.getByRole("menuitemradio", { name: "완료" }).click();

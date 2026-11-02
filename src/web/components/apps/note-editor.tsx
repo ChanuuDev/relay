@@ -14,6 +14,7 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { focusMenuOnOpen, followPointer } from "../desktop/menu";
 import { fileNameOf, labelOf, markdownFile, useNoteMode, useNotes, type Note } from "../../lib/notes";
 
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
@@ -234,6 +235,8 @@ function TableTool({ editor, active, disabled }: { editor: Editor | null; active
     <Tool icon={Table} label="표 편집" active disabled={disabled} trigger={(button) => <Popover.Trigger asChild>{button}</Popover.Trigger>} />
     <Popover.Portal>
       <Popover.Content className="format-popover format-menu material-menu" role="menu" aria-label="표 편집" side="bottom" align="start" sideOffset={6}
+        onOpenAutoFocus={(event) => { event.preventDefault(); focusMenuOnOpen(event.currentTarget as HTMLElement); }}
+        onPointerMove={(event) => followPointer(event.currentTarget, event.target)} onPointerLeave={(event) => followPointer(event.currentTarget, null)}
         onCloseAutoFocus={(event) => { event.preventDefault(); editor?.view.focus(); }}>
         {action("위에 행 추가", (chain) => chain.addRowBefore())}
         {action("아래에 행 추가", (chain) => chain.addRowAfter())}

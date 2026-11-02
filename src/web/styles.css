@@ -271,9 +271,12 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 .menu-overlay { position: fixed; inset: 0; z-index: 89; }
 .desktop-menu { position: fixed; min-width: 200px; z-index: 90; padding: 4px; border-radius: 10px; color: var(--foreground); }
 .desktop-menu[data-leaving] { pointer-events: none; }
+.desktop-menu:focus, .format-menu:focus { outline: none; }
 .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 26px; padding: 0 10px; border-radius: 6px; font-size: 13px; text-align: left; }
-.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--primary); color: #fff; outline: none; }
-.menu-item:disabled { opacity: .45; }
+/* 칠하는 줄은 초점 하나뿐이다. 포인터가 지나는 항목으로 초점이 옮겨 가므로(menu.tsx followPointer) :hover를 따로 칠하지 않는다.
+   따로 칠하면 키보드 초점 줄과 포인터 줄이 함께 파랗게 붙어 보인다. 비활성 항목은 포인터를 메뉴로 흘려 칠을 지운다. */
+.menu-item:focus { background: var(--primary); color: #fff; outline: none; }
+.menu-item:disabled { opacity: .45; pointer-events: none; }
 .menu-check { display: inline-flex; align-items: center; width: 12px; }
 .menu-check svg { width: 12px; height: 12px; }
 .menu-separator { margin: 4px 6px; border-top: 1px solid var(--border); }
@@ -281,7 +284,7 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 .menu-label { display: flex; align-items: center; height: 24px; padding: 2px 10px 0 30px; font-size: 11px; font-weight: 600; color: var(--glass-text-muted); }
 /* 되돌릴 수 없는 항목(삭제…)은 빨간 글자, 올리면 빨간 채움 */
 .desktop-menu .menu-item[data-danger] { color: var(--destructive); }
-.menu-item[data-danger]:hover:not(:disabled), .menu-item[data-danger]:focus-visible { background: var(--destructive); color: #fff; }
+.menu-item[data-danger]:focus { background: var(--destructive); color: #fff; }
 
 /* 왼쪽 패널 경계(SplitView, shadcn Resizable): 1px 머리카락 선이고, 양옆 4px까지 잡히며, 올리거나 끌면 파란 막대가 뜬다. */
 .split-view { flex: 1; min-width: 0; min-height: 0; }
