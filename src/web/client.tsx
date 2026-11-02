@@ -18,6 +18,7 @@ import { NotesWindow } from "./components/apps/notes-window";
 import { FilesWindow } from "./components/apps/files-window";
 import { ViewerWindow } from "./components/apps/viewer-window";
 import { CalculatorWindow } from "./components/apps/calculator-window";
+import { OfficeWindow } from "./components/apps/office-window";
 import { ConnectionError, resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { AUTO_LAUNCH_INTERVAL, autoLaunchServer } from "./lib/launch";
 import { listLocation, navigate, useUI } from "./lib/store";
@@ -217,6 +218,7 @@ function App() {
     <main id="desktop">
       <SessionsWindow list={list} detail={detail} updates={updates} relations={children} chain={chain} health={health.data} params={params}
         selectedId={id} activeFilters={activeFilters} copy={copy} onPage={listPage} successAt={successAt} />
+      <OfficeWindow />
       <GuideWindow />
       <CommandWindow detail={detail} health={health.data} copy={copy} />
       <SettingsWindow health={health.data} healthError={health.error} connection={connection} />

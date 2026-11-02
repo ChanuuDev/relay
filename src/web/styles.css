@@ -1540,3 +1540,46 @@ form.files-path { flex: 1; min-width: 140px; }
   .calc-main { padding: 8px 12px 12px; }
   .calc-pad { gap: 8px; }
 }
+
+/* ── 사무실 창: 아이소메트릭 도트 사무실 캔버스, 기록 말풍선, 확대 단추 ─────────────── */
+.window[data-window="office"] .window-frame { container: office / inline-size; }
+.office-body { background: #0b1020; }
+.office-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #0b1020; touch-action: none; user-select: none; -webkit-user-select: none; }
+.office-stage[data-hovering] { cursor: pointer; }
+.office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.office-legend { display: flex; align-items: center; gap: 12px; font-size: var(--fs-12); color: var(--glass-text-muted); white-space: nowrap; }
+.office-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.office-legend-item i { width: 8px; height: 8px; border-radius: 2px; }
+.office-legend-item b { font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
+@container office (max-width: 720px) { .office-legend-label { display: none; } .office-legend { gap: 9px; } }
+@container office (max-width: 520px) { .office-legend { display: none; } }
+
+/* 말풍선: 컨셉 그림처럼 흰 종이에 굵은 남색 테두리, 아래로 꼬리. 위치는 매 프레임 transform으로 캐릭터 머리를 따라간다. */
+.office-bubble { position: absolute; left: 0; top: 0; z-index: 2; width: max-content; min-width: 188px; max-width: 272px; padding: 8px 11px 9px;
+  background: #f7f8fc; color: #151a2c; border: 2px solid #151a2c; border-radius: 6px; pointer-events: none; will-change: transform;
+  box-shadow: 0 3px 0 rgba(5, 8, 20, .5), 0 12px 28px rgba(0, 0, 0, .38); font-size: 12px; line-height: 1.45; letter-spacing: -.01em; word-break: keep-all; }
+.office-bubble::after { content: ""; position: absolute; left: var(--tail-x, 50%); bottom: -7px; width: 10px; height: 10px; background: #f7f8fc;
+  border-right: 2px solid #151a2c; border-bottom: 2px solid #151a2c; transform: translateX(-50%) rotate(45deg); }
+.office-bubble[data-below]::after { bottom: auto; top: -7px; transform: translateX(-50%) rotate(225deg); }
+.office-bubble-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office-bubble-meta { display: flex; align-items: center; gap: 5px; margin-top: 1px; font-size: 11px; color: #586079; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.office-bubble-meta i { width: 7px; height: 7px; border-radius: 2px; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(21, 26, 44, .35); }
+.office-bubble-lines { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px dashed #c3c8d8; display: grid; gap: 2px; }
+.office-bubble-lines li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.office-bubble-lines time { font-weight: 600; color: #2b3352; font-variant-numeric: tabular-nums; }
+.office-bubble-lines span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 확대 단추: 오른쪽 아래에 떠 있는 어두운 유리 알약 */
+.office-zoom { position: absolute; right: 12px; bottom: 12px; z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-control);
+  background: rgba(16, 22, 42, .78); border: 1px solid rgba(255, 255, 255, .2); color: #f1f4fc;
+  backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); }
+.office-zoom [data-slot="button"] { width: 30px; height: 30px; color: inherit; border-radius: var(--radius-control); }
+.office-zoom [data-slot="button"] svg { width: 15px; height: 15px; }
+.office-zoom [data-slot="button"]:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
+.office-zoom [data-slot="button"]:disabled { opacity: .4; }
+.office-overlay { position: absolute; left: 50%; top: 50%; z-index: 3; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 10px;
+  max-width: min(440px, calc(100% - 32px)); padding: 12px 16px; border-radius: 12px; font-size: var(--fs-13); color: #e8ecf8; line-height: 1.5;
+  background: rgba(11, 16, 32, .78); border: 1px solid rgba(255, 255, 255, .14); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.office-overlay svg { width: 16px; height: 16px; flex-shrink: 0; }
+.office-overlay code { font-family: var(--font-mono); font-size: .92em; padding: 1px 6px; border-radius: 6px; background: rgba(255, 255, 255, .1); }
+.office-spin { animation: browser-spin 1s linear infinite; }

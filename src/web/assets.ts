@@ -20,6 +20,10 @@ import iconFiles from "./public/icons/files.png" with { type: "file" };
 import iconViewer from "./public/icons/viewer.png" with { type: "file" };
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs" with { type: "file" };
 import iconCalculator from "./public/icons/calculator.png" with { type: "file" };
+import iconOffice from "./public/icons/office.png" with { type: "file" };
+import officeBackground from "./public/office/background.webp" with { type: "file" };
+import officeWorker from "./public/office/worker.png" with { type: "file" };
+import officeBadges from "./public/office/badges.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
 import iconApp512 from "./public/icons/app-512.png" with { type: "file" };
 import iconOpenAI from "./public/icons/providers/openai.png" with { type: "file" };
@@ -67,6 +71,11 @@ export const assets = new Map<string, Asset>([
   // PDF 미리 보기(pdf.js)의 작업 스레드. 화면 스크립트와 같은 출처라 CSP(script-src 'self')가 허용한다.
   ["/pdf.worker.mjs", { file: pdfWorker, type: "text/javascript; charset=utf-8", cache: "public, max-age=86400" }],
   ["/icons/calculator.png", image(iconCalculator, "image/png")],
+  ["/icons/office.png", image(iconOffice, "image/png")],
+  // 사무실 앱: 배경 그림, 캐릭터 스프라이트 아틀라스, 상태 배지
+  ["/office/background.webp", image(officeBackground, "image/webp")],
+  ["/office/worker.png", image(officeWorker, "image/png")],
+  ["/office/badges.png", image(officeBadges, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],
   ["/icons/app-512.png", image(iconApp512, "image/png")],
   ["/icons/providers/openai.png", image(iconOpenAI, "image/png")],
