@@ -87,7 +87,7 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   await expect(agent(page, "막 시작한 세션")).toContainText("인계 대기");
   await expect(legend).toContainText("홀0");
 
-  // 퇴근(작업 종료)은 완료로 표시하고 세션을 끝낸다. 캐릭터는 로비로 가서 10분 머문다.
+  // 퇴근(작업 종료)은 완료로 표시하고 세션을 끝낸다. 캐릭터는 로비로 가서 1분 머문다.
   await agent(page, "API 응답 검증").focus();
   await page.keyboard.press("Enter");
   await menu.getByRole("menuitem", { name: "퇴근 (작업 종료)" }).click();

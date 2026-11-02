@@ -145,8 +145,10 @@ export class OfficeRenderer {
       const w = sw * scale, h = sh * scale;
       const left = agent.flip ? agent.x - (sw - ax) * scale : agent.x - ax * scale;
       const lifted = Math.round(liftCurve(agent.lift) * LIFT_PX);
-      const top = agent.y - ay * scale - lifted;
-      const head = agent.y - (ay - meta.top) * scale - lifted;
+      // 신나서 말할 때는 제자리에서 콩콩 뛴다. 그림자는 바닥에 남는다.
+      const raise = lifted + Math.round(sim.chatHop(agent.id));
+      const top = agent.y - ay * scale - raise;
+      const head = agent.y - (ay - meta.top) * scale - raise;
       context.globalAlpha = agent.alpha;
       const seated = agent.mode === "seated" || agent.mode === "sitdown" || agent.mode === "standup";
       if (lifted > 0) this.shadow(agent, 1 - agent.lift * 0.45);

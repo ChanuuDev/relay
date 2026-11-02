@@ -1,5 +1,6 @@
 import type { SessionStatus } from "../../../session/session.types";
-import { HALL_CENTER, seatNode, spawnNode, WalkGraph, wanderNode, WORK_ZONES, type OfficeLayout, type Seat, type Zone } from "./layout";
+import { agentName, pickScript, resolveLines, ROLES, SCRIPTS, speaks, taskName, timeline, type ChatContext, type ChatKind, type Line } from "./chat";
+import { HALL_CENTER, seatNode, spawnNode, WalkGraph, wanderNode, WORK_ZONES, type OfficeLayout, type Point, type Seat, type Zone } from "./layout";
 import { lookFor, type Look } from "./look";
 
 /** 사무실이 쓰는 세션 정보. 목록 API의 세션에서 이것만 읽는다. */
@@ -32,8 +33,10 @@ export interface Agent {
   lift: number;
   /** 길 노드가 아닌 목적지(대화하러 상대 옆으로 갈 때). 경로의 GOAL 자리에 쓴다. */
   goal: readonly [number, number] | null;
-  /** 홀·로비에서 마주 보고 나누는 대화. pending이면 상대에게 다가가는 중이다. */
-  chat: Chat | null;
+  /** 홀·로비에서 나누는 대화. 참여한 세션들이 같은 대화를 나눠 가진다. pending이면 상대에게 다가가는 중이다. */
+  chat: Talk | null;
+  /** 이 시각(시뮬레이션 초)까지는 지나가며 인사하지 않는다. 막 이야기를 마쳤거나 방금 인사를 건넸다. */
+  hush: number;
   /** 마지막으로 닿은 노드 */
   node: string;
   x: number;
@@ -51,7 +54,23 @@ export interface Agent {
   rest: number;
 }
 
-export interface Chat { partner: string; lead: boolean; pending: boolean; start: number; until: number; lines: readonly string[] }
+/** 홀·로비에서 나누는 대화 하나 */
+export interface Talk {
+  kind: ChatKind;
+  /** 들어온 순서가 곧 역할: 0 먼저 다가간(지나가는) 쪽 a, 1 상대 b, 2 셋째 c */
+  members: string[];
+  lines: readonly Line[];
+  /** 줄마다 시작 시각(대화 시작부터 초)과 띄우는 초 */
+  at: readonly number[];
+  seconds: readonly number[];
+  /** 대화 전체 길이(초) */
+  length: number;
+  /** 걸어오는 사람이 모두 닿기를 기다리는 중 */
+  pending: boolean;
+  waiting: Set<string>;
+  start: number;
+  until: number;
+}
 
 export const zoneOf = (status: SessionStatus | null): Zone => status ?? "hall";
 /** 가만히 있지 않고 가끔 돌아다니며 서로 대화하는 구역: 홀(대기)과 완료 로비 */
@@ -59,17 +78,25 @@ export const ROAMING: readonly Zone[] = ["hall", "done"];
 const roams = (zone: Zone) => ROAMING.includes(zone);
 /** 경로 끝의 임시 목적지 표시 */
 const GOAL = "@goal";
-/** 대화 한 줄을 띄우는 초 */
-export const CHAT_LINE_SECONDS = 2.2;
-/** 대화 한 번에 주고받는 말(질문·대답 짝). 홀은 대기 중 잡담, 로비는 퇴근 인사. */
-export const CHAT_LINES: Record<"hall" | "done", readonly (readonly [string, string])[]> = {
-  hall: [["어떤 작업 맡으셨어요?", "아직 배정 전이에요"], ["커피 한잔 할래요?", "좋아요, 가요!"], ["어제 그 버그 봤어요?", "봤어요, 고쳤대요"],
-    ["오늘 리뷰 많네요", "같이 힘내요!"], ["로그 확인해 봤어요?", "지금 보는 중이에요"], ["다음 작업 뭐예요?", "곧 알려 준대요"]],
-  done: [["오늘 고생 많았어요", "수고하셨어요!"], ["그 작업 끝났어요?", "방금 끝냈어요"], ["퇴근하세요?", "네, 먼저 갈게요"],
-    ["내일 봐요!", "들어가세요~"], ["테스트 다 통과했죠?", "네, 깔끔해요"], ["저녁 뭐 먹어요?", "치킨이요!"]],
-};
+/** 쉬던 세션이 동료에게 다가가 이야기할 확률(아니면 빈자리로 옮긴다) */
+export const CHAT_CHANCE = 0.45;
+/** 다가가 이야기할 때 근처에 쉬는 동료가 하나 더 있으면 셋이 모일 확률 */
+export const GROUP_CHANCE = 0.35;
+/** 걷다가 쉬는 동료 곁(이 거리 안)을 지나면 인사를 건넬 확률. 퇴근하는 세션은 로비의 동료가 더 자주 배웅한다. */
+export const PASS_RADIUS = 60;
+export const PASS_CHANCE = 0.5;
+export const SENDOFF_CHANCE = 0.75;
+/** 대화하는 사람 사이 거리(배경 픽셀) */
+export const CHAT_GAP = 24;
+/** 이야기를 마친 뒤 또는 인사를 건넬지 정한 뒤 다시 지나가며 인사하기까지 쉬는 초 */
+const HUSH_SECONDS = 8;
+/** 최근에 나온 대본은 이만큼 다시 고르지 않는다. */
+const RECENT_SCRIPTS = 12;
+/** 신나서 말할 때 콩콩 뛰는 시간과 높이 */
+const HOP_SECONDS = 0.5;
+const HOP_PX = 4;
 /** 완료하고 세션도 끝난 뒤 로비에 머무는 시간. 그 뒤에는 스스로 퇴근해 보이지 않는다. */
-export const LINGER_MS = 10 * 60 * 1000;
+export const LINGER_MS = 60 * 1000;
 /** 완료+종료 후 머무는 시간이 지났으면 퇴근한 것이다. 사무실에 남지 않는다. */
 export const wentHome = (session: Pick<OfficeSession, "status" | "endedAt">, now: number) =>
   session.status === "done" && Boolean(session.endedAt) && now - Date.parse(session.endedAt!) >= LINGER_MS;
@@ -107,6 +134,7 @@ export interface SimOptions {
 }
 
 const distance = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by);
+const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 export class OfficeSim {
   readonly graph: WalkGraph;
@@ -120,6 +148,12 @@ export class OfficeSim {
   private synced = false;
   /** 시뮬레이션이 흐른 초. 대화 차례를 잰다. */
   private time = 0;
+  /** 지금 오가는 대화들 */
+  private readonly talks = new Set<Talk>();
+  /** 두 세션이 이야기한 횟수(“또 만났네요”) */
+  private readonly met = new Map<string, number>();
+  /** 최근에 나온 대본 ID(새것부터) */
+  private recent: string[] = [];
   private totals: Record<Tally, number> = { hall: 0, working: 0, blocked: 0, handoff: 0, done: 0, home: 0 };
 
   constructor(readonly layout: OfficeLayout, private readonly options: SimOptions) {
@@ -191,7 +225,7 @@ export class OfficeSim {
     const spot = this.claim(zone, session.id);
     const agent: Agent = {
       id: session.id, session, look: lookFor(session.id, this.options.bodies), zone, spot, leaving: false, hurry: false,
-      homeAt: homeTime(session), loose: false, lift: 0, goal: null, chat: null,
+      homeAt: homeTime(session), loose: false, lift: 0, goal: null, chat: null, hush: 0,
       node: spot, x: 0, y: 0, path: [], mode: "appear", t: 0, view: "front", flip: false, alpha: 0,
       phase: this.random() * 4, rest: 2 + this.random() * 6,
     };
@@ -357,6 +391,7 @@ export class OfficeSim {
     const dt = Math.min(Math.max(seconds, 0), 0.1);
     const now = this.clock();
     this.time += dt;
+    for (const talk of [...this.talks]) if (!talk.pending && this.time >= talk.until) this.finish(talk);
     for (const agent of [...this.byId.values()]) {
       agent.t += dt;
       // 로비에서 머무는 시간이 다 되면 스스로 출구로 나간다.
@@ -381,16 +416,13 @@ export class OfficeSim {
           if (agent.t >= this.options.sitSeconds) { agent.view = "front"; this.go(agent); }
           break;
         case "stand":
-          if (agent.chat && !agent.chat.pending) {
-            if (this.time >= agent.chat.until && agent.chat.lead) this.endChat(agent);
-            break;
-          }
-          if (agent.chat) break;
+          if (agent.chat) { if (!agent.chat.pending) this.face(agent, agent.chat); break; }
           agent.rest -= dt;
           if (agent.rest <= 0 && roams(agent.zone) && !agent.leaving && !this.options.reduced) this.idle(agent);
           break;
         case "walk":
           this.walk(agent, dt);
+          if (agent.mode === "walk") this.passBy(agent);
           break;
         case "held":
           agent.lift = Math.min(1, agent.lift + dt / LIFT_SECONDS);
@@ -411,7 +443,7 @@ export class OfficeSim {
 
   /** 홀·로비에서 쉬던 세션이 할 일을 고른다: 가끔 가까운 동료에게 가서 이야기하고, 아니면 다른 빈자리로 옮긴다. */
   private idle(agent: Agent) {
-    if (this.random() < 0.45 && this.startChat(agent)) return;
+    if (this.random() < CHAT_CHANCE && this.startChat(agent)) return;
     this.wander(agent);
   }
 
@@ -428,81 +460,198 @@ export class OfficeSim {
     this.go(agent);
   }
 
-  /** 쉬고 있는 동료 하나를 골라 그 옆으로 걸어간다. 도착하면 마주 보고 대화한다. */
+  /**
+   * 쉬고 있는 동료 하나를 골라 그 옆으로 걸어간다. 그 곁에 쉬는 동료가 하나 더 있으면 가끔 그도 불러 셋이 나란히 선다.
+   * 다가간 쪽과 셋째는 상대의 양옆에 서고, 모두 닿으면 대화를 시작한다.
+   */
   private startChat(agent: Agent) {
-    const partners = [...this.byId.values()].filter((other) => other !== agent && other.zone === agent.zone && other.mode === "stand"
-      && !other.chat && !other.leaving && Math.hypot(other.x - agent.x, other.y - agent.y) < 320);
+    const partners = this.agents().filter((other) => other !== agent && other.zone === agent.zone && other.mode === "stand"
+      && !other.chat && !other.leaving && distance(other.x, other.y, agent.x, agent.y) < 320);
     if (!partners.length) return false;
     const partner = partners[Math.floor(this.random() * partners.length)]!;
+    const thirds = partners.filter((other) => other !== partner && distance(other.x, other.y, partner.x, partner.y) < 260);
+    const third = thirds.length && this.random() < GROUP_CHANCE ? thirds[Math.floor(this.random() * thirds.length)]! : null;
+    if (!this.begin(third ? [agent, partner, third] : [agent, partner], third ? "group" : "pair")) return false;
     const side = agent.x < partner.x ? -1 : 1;
-    agent.goal = [partner.x + side * 24, partner.y + 2];
-    const lines = CHAT_LINES[agent.zone === "done" ? "done" : "hall"];
-    const pair = lines[Math.floor(this.random() * lines.length)]!;
-    agent.chat = { partner: partner.id, lead: true, pending: true, start: 0, until: 0, lines: pair };
-    partner.chat = { partner: agent.id, lead: false, pending: true, start: 0, until: 0, lines: pair };
-    partner.rest = Infinity;
+    this.approach(agent, [partner.x + side * CHAT_GAP, partner.y + 2]);
+    if (third) this.approach(third, [partner.x - side * CHAT_GAP, partner.y - 2]);
+    return true;
+  }
+
+  /** 대화할 자리(길 노드가 아닌 곳)로 걸어간다. 자리는 비워 두고, 대화가 끝나면 빈자리를 다시 찾는다. */
+  private approach(agent: Agent, goal: Point) {
+    agent.goal = goal;
     this.release(agent);
     const from = agent.loose ? this.nearestNode(agent.x, agent.y) : agent.node;
-    const near = this.nearestNode(agent.goal[0], agent.goal[1]);
+    const near = this.nearestNode(goal[0], goal[1]);
     const route = this.graph.route(from, near) ?? [];
     agent.path = [...(agent.loose && from !== near ? [from] : []), ...route, GOAL];
     agent.loose = false;
     this.setMode(agent, "walk");
-    return true;
   }
 
-  /** 대화하러 간 자리에 닿았다. 상대가 그대로 있으면 마주 보고 이야기를 시작하고, 아니면 빈자리를 찾아간다. */
+  /** 대본을 골라 대화를 연다. 다가가는 대화(pair·group)는 걸어오는 사람이 모두 닿을 때까지 기다린다. */
+  private begin(members: Agent[], kind: ChatKind): Talk | null {
+    const context = this.context(members);
+    const script = pickScript(SCRIPTS[members[0]!.zone === "done" ? "done" : "hall"][kind], context, this.random, this.recent);
+    if (!script) return null;
+    this.recent = [script.id, ...this.recent.filter((id) => id !== script.id)].slice(0, RECENT_SCRIPTS);
+    const lines = resolveLines(script, context);
+    const walkers = kind === "pair" || kind === "group" ? members.filter((_, index) => index !== ROLES.b) : [];
+    const talk: Talk = {
+      kind, members: members.map((member) => member.id), lines, ...timeline(lines),
+      pending: walkers.length > 0, waiting: new Set(walkers.map((member) => member.id)), start: 0, until: 0,
+    };
+    this.talks.add(talk);
+    for (const member of members) member.chat = talk;
+    if (!talk.pending) this.open(talk);
+    return talk;
+  }
+
+  private context(members: readonly Agent[]): ChatContext {
+    const date = new Date(this.clock());
+    const [a, b] = members as [Agent, Agent];
+    const ending = (agent: Agent) => agent.homeAt !== null || agent.leaving === "home";
+    return {
+      hour: date.getHours(), day: date.getDay(),
+      met: (this.met.get(pairKey(a.id, b.id)) ?? 0) > 0,
+      same: a.session.agent === b.session.agent,
+      leaving: [ending(a), ending(b)],
+      people: members.map((member) => ({ name: agentName(member.session.agent), task: taskName(member.session.sessionName) })),
+    };
+  }
+
+  /** 모두 모였다. 시계를 맞추고 서로를 본다. */
+  private open(talk: Talk) {
+    talk.pending = false;
+    talk.start = this.time;
+    talk.until = this.time + talk.length;
+    if (talk.kind === "pair" || talk.kind === "group") {
+      for (const [index, one] of talk.members.entries()) {
+        for (const other of talk.members.slice(index + 1)) this.met.set(pairKey(one, other), (this.met.get(pairKey(one, other)) ?? 0) + 1);
+      }
+    }
+    for (const id of talk.members) {
+      const member = this.byId.get(id);
+      if (member?.mode === "stand") this.face(member, talk);
+    }
+  }
+
+  /** 대화하러 간 자리에 닿았다. 상대가 기다리고 있으면 그쪽을 보고 서고, 모두 닿으면 이야기를 시작한다. 대화가 사라졌으면 빈자리를 찾아간다. */
   private meet(agent: Agent) {
     agent.goal = null;
     agent.loose = true;
-    const partner = agent.chat ? this.byId.get(agent.chat.partner) : undefined;
-    if (!agent.chat || !partner || partner.chat?.partner !== agent.id) {
+    const talk = agent.chat;
+    if (!talk?.pending || !talk.waiting.has(agent.id)) {
       agent.chat = null;
       agent.spot = this.claim(agent.zone, agent.id);
       this.go(agent);
       return;
     }
-    const until = this.time + agent.chat.lines.length * CHAT_LINE_SECONDS + 0.8;
-    for (const [one, other] of [[agent, partner], [partner, agent]] as const) {
-      one.view = "front";
-      one.flip = one.x > other.x;
-      one.chat = { ...one.chat!, pending: false, start: this.time, until };
-    }
+    talk.waiting.delete(agent.id);
     this.setMode(agent, "stand");
+    const host = this.byId.get(talk.members[ROLES.b]!);
+    if (host) {
+      agent.view = "front"; agent.flip = host.x < agent.x;
+      if (host.mode === "stand") { host.view = "front"; host.flip = agent.x < host.x; }
+    }
+    if (!talk.waiting.size) this.open(talk);
   }
 
-  /** 대화를 마치면 각자 잠시 쉬고, 자리 없이 다가갔던 쪽은 빈자리로 돌아간다. */
-  private endChat(agent: Agent) {
-    const partner = agent.chat ? this.byId.get(agent.chat.partner) : undefined;
-    for (const one of [agent, partner]) {
-      if (!one) continue;
-      one.chat = null;
-      one.rest = 3 + this.random() * 6;
-      if (!one.spot && !one.leaving) { one.spot = this.claim(one.zone, one.id); this.go(one); }
+  /** 대화 중에는 지금 말하는 사람을 본다. 자기 차례거나 다 함께 말할 때는 나머지 사람들 쪽을 본다. */
+  private face(agent: Agent, talk: Talk) {
+    const line = talk.lines[this.lineIndex(talk)];
+    const speaker = line && line.by !== "all" ? this.byId.get(talk.members[ROLES[line.by]]!) : undefined;
+    let x: number;
+    if (speaker && speaker !== agent) x = speaker.x;
+    else {
+      const others = talk.members.filter((id) => id !== agent.id).map((id) => this.byId.get(id)).filter((other) => other !== undefined);
+      if (!others.length) return;
+      x = others.reduce((sum, other) => sum + other.x, 0) / others.length;
+    }
+    agent.view = "front";
+    if (Math.abs(x - agent.x) > 3) agent.flip = x < agent.x;
+  }
+
+  /** 지금 띄울 줄. 말 사이 쉬는 틈이거나 대화 밖이면 -1. */
+  private lineIndex(talk: Talk) {
+    if (talk.pending) return -1;
+    const elapsed = this.time - talk.start;
+    for (let index = 0; index < talk.lines.length; index++) {
+      if (elapsed >= talk.at[index]! && elapsed < talk.at[index]! + talk.seconds[index]!) return index;
+    }
+    return -1;
+  }
+
+  /** 대화를 마쳤다. 모두 잠시 쉬고, 자리 없이 다가갔던 쪽은 빈자리로 돌아간다. */
+  private finish(talk: Talk) {
+    this.talks.delete(talk);
+    for (const id of talk.members) {
+      const member = this.byId.get(id);
+      if (member?.chat === talk) this.free(member, 3 + this.random() * 6);
     }
   }
 
-  /** 대화를 끊는다(구역이 바뀌거나 잡혀 들리거나 떠날 때). 상대도 풀어 준다. */
+  /** 대화를 끊는다(구역이 바뀌거나 잡혀 들리거나 떠날 때). 나머지 사람도 모두 풀어 준다. 끊은 쪽의 길은 부른 쪽이 다시 잡는다. */
   private dropChat(agent: Agent) {
-    if (!agent.chat) return;
-    const partner = this.byId.get(agent.chat.partner);
+    const talk = agent.chat;
+    if (!talk) return;
     agent.chat = null;
     agent.goal = null;
-    if (partner?.chat?.partner === agent.id) {
-      partner.chat = null;
-      partner.rest = 2 + this.random() * 3;
-      if (!partner.spot && !partner.leaving && partner.mode === "stand") { partner.spot = this.claim(partner.zone, partner.id); this.go(partner); }
+    this.talks.delete(talk);
+    for (const id of talk.members) {
+      const member = this.byId.get(id);
+      if (member && member !== agent && member.chat === talk) this.free(member, 2 + this.random() * 3);
     }
   }
 
-  /** 지금 이 세션이 말하는 한마디. 대화 중 자기 차례일 때만 준다(먼저 다가간 쪽이 묻고 상대가 답한다). */
-  chatLine(id: string) {
-    const chat = this.byId.get(id)?.chat;
-    if (!chat || chat.pending || this.time >= chat.until) return null;
-    const turn = Math.floor((this.time - chat.start) / CHAT_LINE_SECONDS);
-    if (turn >= chat.lines.length) return null;
-    return (turn % 2 === 0) === chat.lead ? chat.lines[turn]! : null;
+  /** 대화에서 풀려났다. 자리 없이 다가가던(다가갔던) 쪽은 빈자리를 얻어 그리로 간다. 들려 있으면 내려놓은 뒤 간다. */
+  private free(agent: Agent, rest: number) {
+    agent.chat = null;
+    agent.rest = rest;
+    agent.hush = this.time + HUSH_SECONDS;
+    if (agent.spot || agent.leaving) return;
+    agent.spot = this.claim(agent.zone, agent.id);
+    if (agent.mode === "stand") this.go(agent);
+    else if (agent.mode === "walk") {
+      this.retarget(agent);
+      if (!agent.path.includes(GOAL)) agent.goal = null;
+    }
   }
+
+  /** 걷다가 쉬는 동료 곁을 지나면 가끔 걸음을 멈추지 않고 인사를 주고받는다. 로비에서 퇴근하는 세션은 남은 동료가 배웅한다. */
+  private passBy(agent: Agent) {
+    if (agent.chat || agent.hurry || this.time < agent.hush || this.options.reduced || !roams(agent.zone) || agent.path.includes(GOAL)) return;
+    const sendoff = agent.leaving === "home";
+    if (agent.leaving && !sendoff) return;
+    const near = this.agents().find((other) => other !== agent && other.zone === agent.zone && other.mode === "stand" && !other.chat
+      && !other.leaving && this.time >= other.hush && distance(other.x, other.y, agent.x, agent.y) < PASS_RADIUS);
+    if (!near) return;
+    agent.hush = this.time + HUSH_SECONDS;
+    if (this.random() < (sendoff ? SENDOFF_CHANCE : PASS_CHANCE)) this.begin([agent, near], sendoff ? "sendoff" : "pass");
+  }
+
+  /** 지금 이 세션이 말하는 한마디. 대화 중 자기 차례(또는 다 함께 말하는 줄)일 때만 준다. */
+  chatLine(id: string) {
+    const talk = this.byId.get(id)?.chat;
+    if (!talk || talk.pending || this.time >= talk.until) return null;
+    const line = talk.lines[this.lineIndex(talk)];
+    return line && speaks(line, talk.members.indexOf(id)) ? line.text : null;
+  }
+
+  /** 신나서 말하는 줄의 처음에 제자리에서 두 번 콩콩 뛰는 높이(배경 픽셀). */
+  chatHop(id: string) {
+    const talk = this.byId.get(id)?.chat;
+    if (!talk || talk.pending) return 0;
+    const index = this.lineIndex(talk);
+    const line = talk.lines[index];
+    if (!line?.hop || !speaks(line, talk.members.indexOf(id))) return 0;
+    const progress = (this.time - talk.start - talk.at[index]!) / HOP_SECONDS;
+    return progress < 1 ? Math.abs(Math.sin(progress * Math.PI * 2)) * HOP_PX : 0;
+  }
+
+  /** 지금 오가는 대화(시험·점검용) */
+  conversations(): readonly Talk[] { return [...this.talks]; }
 
   private walk(agent: Agent, dt: number) {
     let budget = WALK_SPEED * (agent.hurry ? HURRY : 1) * dt;

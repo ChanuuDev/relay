@@ -324,7 +324,7 @@ export function OfficeWindow() {
         onSelect: () => { if (session.status !== status) void run(session, [{ action: "status", status }], `‘${clip(name, 20)}’ 세션을 ${STATUS_TO[status]} 옮깁니다.`); },
       })),
       { kind: "separator", id: "sep-home" },
-      { kind: "item", id: "home", label: "퇴근 (작업 종료)", onSelect: () => void run(session, home, `‘${clip(name, 20)}’ 세션이 작업을 마치고 로비로 갑니다. 10분 뒤 퇴근합니다.`) },
+      { kind: "item", id: "home", label: "퇴근 (작업 종료)", onSelect: () => void run(session, home, `‘${clip(name, 20)}’ 세션이 작업을 마치고 로비로 갑니다. 1분 뒤 퇴근합니다.`) },
       { kind: "item", id: "detail", label: "세션 상세 열기", onSelect: () => openSession(session.id) },
     ];
   }

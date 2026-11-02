@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { HALL_CENTER, inside, seatNode, WalkGraph, zoneAt, type OfficeLayout } from "../src/web/lib/office/layout";
 import { hash, hslToRgb, lookFor, lookKey, recolor, rgbToHsl, seeded, shift } from "../src/web/lib/office/look";
-import { CHAT_LINE_SECONDS, HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type OfficeSession } from "../src/web/lib/office/sim";
+import { CHAT_GAP, HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type Agent, type OfficeSession, type Talk } from "../src/web/lib/office/sim";
+import { agentName, CHAT_TAIL, fits, LINE_GAP, lineSeconds, pickScript, resolveLines, SCRIPTS, speaks, taskName, timeline, type ChatContext, type Cond } from "../src/web/lib/office/chat";
 import { bubbleLines, clip, shortId, stamp, talkLine } from "../src/web/lib/office/bubble";
 import { badgeFor } from "../src/web/lib/office/render";
 import { LAYOUT } from "../src/web/lib/office/office-data";
@@ -31,6 +32,42 @@ const session = (id: string, status: OfficeSession["status"], extra: Partial<Off
   createdAt: new Date(2026, 10, 2, 9, clock).toISOString(), updatedAt: new Date(2026, 10, 2, 9, clock++).toISOString(), endedAt: null, ...extra,
 });
 const run = (sim: OfficeSim, seconds: number) => { for (let t = 0; t < seconds; t += 0.05) sim.step(0.05); };
+/** 대화 대본이 형편(시각)에 따라 달라지지 않게 고정한 평일 오후 */
+const AFTERNOON = new Date(2026, 10, 4, 15, 0).getTime();
+/** 서서 머무는 자리가 셋인 로비 */
+const lobby3: OfficeLayout = { ...layout, zones: { ...layout.zones, done: { door: "d-door", seats: [
+  { id: "l1", chair: [190, 250], approach: "d-a", stand: { view: "front" } }, { id: "l2", chair: [215, 250], approach: "d-a", stand: { view: "back" } },
+  { id: "l3", chair: [240, 255], approach: "d-a", stand: { view: "front" } }] } } };
+/**
+ * 대화가 끝날 때까지 돌리며 들린 말을 차례대로 적는다(역할:대사, 함께 말하면 쉼표로 잇는다).
+ * 말하는 사람이 하나면 서 있는 나머지는 모두 그쪽을 보고, 콩콩 뛰는 것은 신나서 말하는 사람뿐이다.
+ */
+function listen(sim: OfficeSim, talk: Talk) {
+  const heard: string[] = [];
+  let last = "", hopped = false;
+  for (let t = 0; t < talk.length + 0.5 && sim.conversations().includes(talk); t += 0.05) {
+    sim.step(0.05);
+    const said = talk.members.map((id, role) => ({ role, agent: sim.agent(id), text: sim.chatLine(id) })).filter((one) => one.text);
+    const key = said.map(({ role, text }) => `${role}:${text}`).join(",");
+    if (key && key !== last) heard.push(key);
+    last = key;
+    for (const id of talk.members) {
+      if (sim.chatHop(id) <= 0) continue;
+      hopped = true;
+      expect(said.some(({ agent }) => agent?.id === id)).toBe(true);
+    }
+    if (said.length !== 1 || !sim.conversations().includes(talk)) continue;
+    const speaker = said[0]!.agent!;
+    for (const id of talk.members) {
+      const one = sim.agent(id);
+      if (one && one !== speaker && one.mode === "stand" && Math.abs(speaker.x - one.x) > 3) expect(one.flip).toBe(speaker.x < one.x);
+    }
+  }
+  expect(hopped).toBe(talk.lines.some((line) => line.hop));
+  return heard;
+}
+/** 대본대로라면 들려야 할 말 */
+const expected = (talk: Talk) => talk.lines.map((line) => talk.members.map((_, role) => role).filter((role) => speaks(line, role)).map((role) => `${role}:${line.text}`).join(","));
 
 describe("office walk graph", () => {
   test("routes from the hall through a door to a seat and never through another seat", () => {
@@ -120,7 +157,7 @@ describe("office simulation", () => {
     expect(sim.agent("a")).toBeUndefined();
   });
 
-  test("a finished session that ended waits in the lobby for ten minutes, then walks out; ones gone longer never come in", () => {
+  test("a finished session that ended waits in the lobby for a minute, then walks out; ones gone longer never come in", () => {
     let now = Date.parse("2026-11-02T12:00:00.000Z");
     const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(8), clock: () => now });
     const a = session("a", "working");
@@ -136,7 +173,7 @@ describe("office simulation", () => {
     expect(["sitdown", "seated"]).toContain(agent.mode);
     run(sim, 1);
     expect(agent.leaving).toBe(false);
-    // 10분이 지나면 스스로 일어나 나가서 사라진다(출구가 없는 배치는 홀 가운데로).
+    // 1분이 지나면 스스로 일어나 나가서 사라진다(출구가 없는 배치는 홀 가운데로).
     now += LINGER_MS;
     run(sim, 0.05);
     expect(agent).toMatchObject({ leaving: "home", spot: null });
@@ -184,46 +221,120 @@ describe("office simulation", () => {
     expect(sim.grab("missing")).toBe(false);
   });
 
-  test("idle agents in the hall now and then walk up to a colleague, face each other and talk in turns", () => {
-    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1 });
+  test("idle agents in the hall now and then walk up to a colleague, face each other and talk through a script in turns", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1, clock: () => AFTERNOON });
     sim.sync([session("a", null), session("b", null)]);
     const [a, b] = [sim.agent("a")!, sim.agent("b")!];
     run(sim, 3.8);
-    const lead = a.chat?.lead ? a : b, other = lead === a ? b : a;
-    expect(lead.chat).toMatchObject({ partner: other.id, lead: true });
-    expect(other.chat).toMatchObject({ partner: lead.id, lead: false });
-    run(sim, 2);
-    expect(lead.chat!.pending).toBe(false);
-    expect(lead.mode).toBe("stand");
-    expect(Math.abs(lead.x - other.x)).toBeCloseTo(24, 0);
+    const talk = a.chat!;
+    expect(talk).toBe(b.chat!);
+    expect(talk.kind).toBe("pair");
+    const [lead, other] = talk.members.map((id) => sim.agent(id)!) as [Agent, Agent];
+    expect(talk.waiting.has(lead.id)).toBe(talk.pending);
+    for (let t = 0; talk.pending && t < 5; t += 0.05) sim.step(0.05);
+    expect(talk.pending).toBe(false);
+    expect([lead.mode, other.mode]).toEqual(["stand", "stand"]);
+    expect(Math.abs(lead.x - other.x)).toBeCloseTo(CHAT_GAP, 0);
     // 마주 본다: 왼쪽에 선 쪽은 오른쪽을, 오른쪽에 선 쪽은 왼쪽을 본다.
     const [left, right] = lead.x < other.x ? [lead, other] : [other, lead];
     expect([left.flip, right.flip]).toEqual([false, true]);
-    const pair = lead.chat!.lines;
-    const spoken = new Set<string>();
-    for (let t = 0; t < pair.length * CHAT_LINE_SECONDS + 0.5; t += 0.1) {
-      sim.step(0.1);
-      const first = sim.chatLine(lead.id), second = sim.chatLine(other.id);
-      expect(first !== null && second !== null).toBe(false);
-      if (first) spoken.add(`lead:${first}`);
-      if (second) spoken.add(`other:${second}`);
-    }
-    expect(spoken).toEqual(new Set([`lead:${pair[0]}`, `other:${pair[1]}`]));
+    expect(listen(sim, talk)).toEqual(expected(talk));
     run(sim, 1);
     expect(lead.chat).toBeNull();
     expect(other.chat).toBeNull();
     expect(lead.spot).not.toBeNull();
+    expect(sim.conversations()).toEqual([]);
+  });
+
+  test("sometimes a third colleague is called over: the two stand on either side of the host, who turns to whoever speaks", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1, clock: () => AFTERNOON });
+    sim.sync([session("a", null), session("b", null), session("c", null)]);
+    run(sim, 3.8);
+    const talk = sim.agent("a")!.chat!;
+    expect(talk.kind).toBe("group");
+    expect(talk.members).toHaveLength(3);
+    for (const id of talk.members) expect(sim.agent(id)!.chat).toBe(talk);
+    for (let t = 0; talk.pending && t < 8; t += 0.05) sim.step(0.05);
+    expect(talk.pending).toBe(false);
+    const [a, host, c] = talk.members.map((id) => sim.agent(id)!) as [Agent, Agent, Agent];
+    // 다가간 둘은 상대의 양옆에 선다.
+    expect(Math.abs(a.x - host.x)).toBeCloseTo(CHAT_GAP, 0);
+    expect(Math.abs(c.x - host.x)).toBeCloseTo(CHAT_GAP, 0);
+    expect(Math.sign(a.x - host.x)).toBe(-Math.sign(c.x - host.x));
+    expect(talk.lines.some((line) => line.by === "c" || line.by === "all")).toBe(true);
+    expect(listen(sim, talk)).toEqual(expected(talk));
+    run(sim, 1);
+    expect([a.chat, host.chat, c.chat]).toEqual([null, null, null]);
+    expect([a.spot, c.spot].every(Boolean)).toBe(true);
+  });
+
+  test("a group ends for everyone when one of them is picked up, and the ones still walking over find a free spot instead", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1, clock: () => AFTERNOON });
+    sim.sync([session("a", null), session("b", null), session("c", null)]);
+    run(sim, 3.75);
+    const talk = sim.agent("a")!.chat!;
+    expect(talk.pending).toBe(true);
+    const [walker, host, third] = talk.members.map((id) => sim.agent(id)!) as [Agent, Agent, Agent];
+    expect(sim.grab(host.id)).toBe(true);
+    expect([walker.chat, host.chat, third.chat]).toEqual([null, null, null]);
+    expect(sim.conversations()).not.toContain(talk);
+    for (const one of [walker, third]) {
+      expect(one.spot).not.toBeNull();
+      expect(one.path).not.toContain("@goal");
+    }
+    sim.drop(host.id);
+    run(sim, 3);
+    // 내려놓은 뒤에는 모두 제 갈 길을 간다. 자리를 얻고 서 있으면 그 자리 위에 있다.
+    for (const one of [walker, host, third]) if (one.mode === "stand" && one.spot) expect([one.x, one.y]).toEqual([...sim.graph.point(one.spot)]);
+  });
+
+  test("a walker passing close by a resting colleague trades a quick greeting without stopping", () => {
+    const sim = new OfficeSim(lobby3, { sitSeconds: 0.5, random: () => 0.45, clock: () => AFTERNOON });
+    sim.sync([session("a", "done"), session("b", "done")]);
+    const [a, b] = [sim.agent("a")!, sim.agent("b")!];
+    expect([a.spot, b.spot]).toEqual([seatNode("l1"), seatNode("l2")]);
+    b.rest = 100;
+    // 쉬다가(6.5초) 빈자리로 옮기며 바로 옆 동료 곁을 지난다.
+    run(sim, 6.6);
+    const talk = a.chat!;
+    expect(talk).toMatchObject({ kind: "pass", pending: false, members: ["a", "b"] });
+    expect(b.chat).toBe(talk);
+    expect(a.mode).toBe("walk");
+    expect(listen(sim, talk)).toEqual(expected(talk));
+    expect(a.chat).toBeNull();
+    expect(b.chat).toBeNull();
+    run(sim, 3);
+    expect(a).toMatchObject({ spot: seatNode("l3"), mode: "stand" });
+  });
+
+  test("a colleague in the lobby sends off a session that is leaving for home", () => {
+    let now = Date.parse("2026-11-02T06:00:00.000Z");
+    const sim = new OfficeSim(lobby3, { sitSeconds: 0.5, random: () => 0.1, clock: () => now });
+    sim.sync([session("a", "done", { endedAt: new Date(now).toISOString() }), session("b", "done")]);
+    const [a, b] = [sim.agent("a")!, sim.agent("b")!];
+    b.rest = 100;
+    a.rest = 100;
+    now += LINGER_MS;
+    run(sim, 0.2);
+    expect(a.leaving).toBe("home");
+    const talk = b.chat!;
+    expect(talk).toMatchObject({ kind: "sendoff", members: ["a", "b"] });
+    const heard = listen(sim, talk);
+    expect(heard).toEqual(expected(talk));
+    expect(heard.every((line) => line.startsWith("1:"))).toBe(true);
+    expect(b.chat).toBeNull();
   });
 
   test("grabbing one side of a conversation ends it for both", () => {
-    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1 });
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1, clock: () => AFTERNOON });
     sim.sync([session("a", null), session("b", null)]);
     run(sim, 3.8);
-    const lead = [sim.agent("a")!, sim.agent("b")!].find((agent) => agent.chat?.lead)!;
-    const other = sim.agent(lead.chat!.partner)!;
+    const talk = sim.agent("a")!.chat!;
+    const [lead, other] = talk.members.map((id) => sim.agent(id)!) as [Agent, Agent];
     expect(sim.grab(other.id)).toBe(true);
     expect(other.chat).toBeNull();
     expect(lead.chat).toBeNull();
+    expect(sim.conversations()).toEqual([]);
   });
 
   test("lobby agents do not stand still: after a rest they move to another free spot", () => {
@@ -325,5 +436,78 @@ describe("office bubble", () => {
     expect(talkLine("후속 요청 작업 시작: (1) 완료+종료 세션은 퇴근")).toBe("후속 요청 작업 시작");
     expect(talkLine("API 응답 검증 중. 그다음 정리")).toBe("API 응답 검증 중");
     expect(talkLine(["테스트 통과", "둘째 줄"].join("\n"))).toBe("테스트 통과");
+  });
+});
+
+describe("office chat scripts", () => {
+  const context = (extra: Partial<ChatContext> = {}): ChatContext => ({
+    hour: 15, day: 3, met: false, same: false, leaving: [false, false],
+    people: [{ name: "Cursor", task: "가나다라마바사아자…" }, { name: "Claude", task: "agent-ses…" }, { name: "Codex", task: "" }], ...extra,
+  });
+  const all = Object.entries(SCRIPTS).flatMap(([place, kinds]) => Object.entries(kinds).map(([kind, scripts]) => ({ place, kind, scripts })));
+
+  test("every script is well formed for its kind and short enough for a bubble", () => {
+    for (const { kind, scripts } of all) {
+      for (const script of scripts) {
+        expect(script.lines.length).toBeGreaterThan(0);
+        const speakers = new Set(script.lines.map((line) => line.by));
+        const text = script.lines.map((line) => line.text).join(" ");
+        if (kind === "group") expect(speakers.has("c") || speakers.has("all")).toBe(true);
+        else { expect(speakers.has("c")).toBe(false); expect(text).not.toContain("{c"); }
+        if (kind === "pair" || kind === "group") expect(script.lines.length).toBeGreaterThan(1);
+        if (kind === "sendoff") expect([...speakers]).toEqual(["b"]);
+        for (const line of resolveLines(script, context())) {
+          expect(line.text).not.toMatch(/[{}]/);
+          expect(Array.from(line.text).length).toBeLessThanOrEqual(20);
+        }
+      }
+    }
+    expect(SCRIPTS.hall.pair.length).toBeGreaterThanOrEqual(40);
+    expect(SCRIPTS.done.pair.length).toBeGreaterThanOrEqual(30);
+    expect(new Set(all.flatMap(({ scripts }) => scripts.map((script) => script.id))).size).toBe(all.reduce((sum, { scripts }) => sum + scripts.length, 0));
+  });
+
+  test("situational scripts only come up when the time, day or relationship fits", () => {
+    const morning = context({ hour: 8 }), night = context({ hour: 23, day: 5, met: true, same: true });
+    const has = (ctx: ChatContext, cond: Cond) => SCRIPTS.hall.pair.some((script) => script.when.includes(cond) && fits(script, ctx));
+    expect(has(morning, "morning")).toBe(true);
+    expect(has(morning, "night")).toBe(false);
+    expect(has(morning, "first")).toBe(true);
+    expect(has(night, "night") && has(night, "friday") && has(night, "again") && has(night, "same")).toBe(true);
+    expect(has(night, "first") || has(night, "other") || has(night, "morning")).toBe(false);
+    // 세션 이름이 없으면 이름을 부르는 대본은 고르지 않는다.
+    const named = SCRIPTS.done.pair.find((script) => script.when.includes("named"))!;
+    expect(fits(named, context())).toBe(true);
+    expect(fits(named, context({ people: [{ name: "Claude", task: "" }, { name: "Codex", task: "" }] }))).toBe(false);
+    expect(resolveLines(named, context())[0]!.text).toBe("‘agent-ses…’ 끝났어요?");
+    expect(agentName("claude-code")).toBe("Claude");
+    expect(agentName("cursor-agent")).toBe("Cursor");
+    expect(taskName(null)).toBe("");
+    expect(taskName("사무실 대기·완료 캐릭터 대화 패턴")).toBe("사무실 대기·완료…");
+  });
+
+  test("picking skips recently used scripts while others remain, and fills in names", () => {
+    const scripts = SCRIPTS.hall.pass;
+    const ctx = context();
+    const usable = scripts.filter((script) => fits(script, ctx));
+    const last = usable.at(-1)!;
+    const recent = usable.slice(0, -1).map((script) => script.id);
+    for (const roll of [0, 0.3, 0.99]) expect(pickScript(scripts, ctx, () => roll, recent)).toBe(last);
+    // 다 최근에 나왔으면 그중에서 다시 고른다.
+    expect(usable).toContain(pickScript(scripts, ctx, () => 0.5, usable.map((script) => script.id))!);
+    expect(pickScript([], ctx, () => 0.5)).toBeNull();
+    const greet = scripts.find((script) => script.lines[0]!.text.includes("{b}"))!;
+    expect(resolveLines(greet, ctx)[0]!.text).toBe("오, Claude 님!");
+  });
+
+  test("lines last longer the more there is to read, with a short breath between them", () => {
+    expect(lineSeconds("♪")).toBeCloseTo(1.2);
+    expect(lineSeconds("어떤 작업 맡으셨어요?")).toBeGreaterThan(lineSeconds("네~"));
+    expect(lineSeconds("가".repeat(60))).toBe(3.2);
+    const lines = SCRIPTS.hall.pair[0]!.lines;
+    const { at, seconds, length } = timeline(lines);
+    expect(at[0]).toBe(0);
+    for (let index = 1; index < at.length; index++) expect(at[index]!).toBeCloseTo(at[index - 1]! + seconds[index - 1]! + LINE_GAP);
+    expect(length).toBeCloseTo(at.at(-1)! + seconds.at(-1)! + CHAT_TAIL);
   });
 });
