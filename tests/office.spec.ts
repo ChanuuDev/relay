@@ -15,7 +15,7 @@ const painted = (page: Page) => win(page).locator(".office-canvas").evaluate((ca
   return count / (data.length / 16);
 });
 
-test("사무실: 세션마다 캐릭터가 상태 구역 책상에 앉고, 상태가 바뀌면 옮겨 가며, 말풍선에 기록 이력이 보인다", async ({ page }) => {
+test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으로 말하며, 메뉴·끌어 놓기로 상태를 바꾸고 퇴근하면 로비로 간다", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
@@ -69,9 +69,58 @@ test("사무실: 세션마다 캐릭터가 상태 구역 책상에 앉고, 상�
   await fit.click();
   await expect(fit).toBeDisabled();
 
-  // 캐릭터를 고르면(Enter) 세션 창에서 그 세션 상세가 열린다.
+  // 작업 중인 세션은 머리 위에 지금 하는 일을 말한다(숨쉬듯 위아래로 흔들린다).
+  const talk = win(page).locator('.office-talk[data-kind="work"]');
+  await expect(talk).toHaveCount(1);
+  await expect(talk).toBeVisible();
+  await expect(talk).toContainText("테스트 통과");
+  expect(await talk.evaluate((element) => getComputedStyle(element).animationName)).toBe("office-float");
+
+  // 캐릭터를 고르면(Enter) 상태 메뉴가 열린다. 상태를 바꾸면 그 구역으로 옮겨 간다.
+  await agent(page, "막 시작한 세션").focus();
+  await page.keyboard.press("Enter");
+  const menu = page.locator(".office-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitemradio")).toHaveText(["작업 중", "막힘", "인계 대기", "완료"]);
+  await menu.getByRole("menuitemradio", { name: "인계 대기" }).click();
+  await expect(win(page).locator(".office-toast")).toContainText("인계 대기로 옮깁니다");
+  await expect(agent(page, "막 시작한 세션")).toContainText("인계 대기");
+  await expect(legend).toContainText("홀0");
+
+  // 퇴근(작업 종료)은 완료로 표시하고 세션을 끝낸다. 캐릭터는 로비로 가서 10분 머문다.
+  await agent(page, "API 응답 검증").focus();
+  await page.keyboard.press("Enter");
+  await menu.getByRole("menuitem", { name: "퇴근 (작업 종료)" }).click();
+  await expect(win(page).locator(".office-toast")).toContainText("로비로 갑니다");
+  await expect(agent(page, "API 응답 검증")).toContainText("완료, 종료됨");
+  const ended = cli(["show", "office-working", "--provider", "anthropic"]);
+  expect(ended.session.status).toBe("done");
+  expect(ended.session.endedAt).not.toBeNull();
+
+  // 캐릭터를 끌어 다른 방에 놓으면 그 방의 작업 상태가 된다. 끄는 동안 커서는 잡은 손이다.
+  const area = await win(page).locator(".office-stage").boundingBox();
+  const fitScale = Math.min(area!.width / 1676, area!.height / 938);
+  const screen = (x: number, y: number) => ({ x: area!.x + (area!.width - 1676 * fitScale) / 2 + x * fitScale, y: area!.y + (area!.height - 938 * fitScale) / 2 + y * fitScale });
+  await agent(page, "결과 정리").focus();
+  const bubbleBox = await win(page).locator(".office-bubble").boundingBox();
+  await agent(page, "결과 정리").blur();
+  await expect(win(page).locator(".office-bubble")).toHaveCount(0);
+  const start = { x: bubbleBox!.x + bubbleBox!.width / 2, y: bubbleBox!.y + bubbleBox!.height + 30 };
+  await page.mouse.move(start.x, start.y);
+  await expect(win(page).locator(".office-stage")).toHaveAttribute("data-hovering", "");
+  await page.mouse.down();
+  const target = screen(1400, 600);
+  for (let step = 1; step <= 12; step++) await page.mouse.move(start.x + ((target.x - start.x) * step) / 12, start.y + ((target.y - start.y) * step) / 12);
+  await expect(win(page).locator(".office-stage")).toHaveAttribute("data-dragging", "");
+  await page.mouse.up();
+  await expect(win(page).locator(".office-stage")).not.toHaveAttribute("data-dragging", "");
+  await expect(agent(page, "결과 정리")).toContainText("인계 대기");
+  expect(cli(["show", "office-done", "--provider", "xai"]).session.status).toBe("handoff");
+
+  // 메뉴의 세션 상세 열기는 세션 창에서 그 세션을 연다.
   await agent(page, "결과 정리").focus();
   await page.keyboard.press("Enter");
+  await menu.getByRole("menuitem", { name: "세션 상세 열기" }).click();
   await expect(page).toHaveURL(/\/sessions\//);
   await expect(page.locator('.window[data-window="sessions"]')).toBeVisible();
   await expect(page.locator(".detail-panel")).toContainText("결과 정리");

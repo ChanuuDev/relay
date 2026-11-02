@@ -13,6 +13,26 @@ export interface OfficeLayout {
   hall: { center: Point; spawn: Point[]; wander: Point[] };
   nodes: Record<string, Point>;
   edges: [string, string][];
+  /** 퇴근하는 세션이 걸어 나가는 출구 노드(로비의 EXIT 문). 없으면 홀 가운데에서 사라진다. */
+  exit?: string | null;
+  /** 구역마다 바닥 넓이(다각형). 끌어 놓은 자리가 어느 구역인지 가린다. */
+  areas?: Partial<Record<Zone, Point[]>>;
+}
+
+/** 점이 다각형 안에 있는지(짝홀 규칙). */
+export function inside(polygon: readonly Point[], x: number, y: number) {
+  let hit = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]!, [xj, yj] = polygon[j]!;
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
+/** 배경 좌표가 어느 구역 바닥인지. 벽·바깥이면 null. */
+export function zoneAt(layout: OfficeLayout, x: number, y: number): Zone | null {
+  for (const [zone, polygon] of Object.entries(layout.areas ?? {}) as [Zone, Point[]][]) if (inside(polygon, x, y)) return zone;
+  return null;
 }
 
 export const HALL_CENTER = "hall:center";

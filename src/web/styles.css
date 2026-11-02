@@ -1545,7 +1545,8 @@ form.files-path { flex: 1; min-width: 140px; }
 .window[data-window="office"] .window-frame { container: office / inline-size; }
 .office-body { background: #0b1020; }
 .office-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #0b1020; touch-action: none; user-select: none; -webkit-user-select: none; }
-.office-stage[data-hovering] { cursor: pointer; }
+.office-stage[data-hovering] { cursor: grab; }
+.office-stage[data-dragging] { cursor: grabbing; }
 .office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .office-legend { display: flex; align-items: center; gap: 12px; font-size: var(--fs-12); color: var(--glass-text-muted); white-space: nowrap; }
 .office-legend-item { display: inline-flex; align-items: center; gap: 5px; }
@@ -1583,3 +1584,27 @@ form.files-path { flex: 1; min-width: 140px; }
 .office-overlay svg { width: 16px; height: 16px; flex-shrink: 0; }
 .office-overlay code { font-family: var(--font-mono); font-size: .92em; padding: 1px 6px; border-radius: 6px; background: rgba(255, 255, 255, .1); }
 .office-spin { animation: browser-spin 1s linear infinite; }
+
+/* 말풍선 숨쉬기: 위치는 매 프레임 transform으로 잡고, 위아래 흔들림은 translate 속성으로 따로 준다(둘이 겹쳐 적용된다). */
+.office-float { animation: office-float 2.8s ease-in-out infinite; }
+@keyframes office-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+/* 작업 중인 세션이 머리 위로 지금 하는 일을 말한다. 퇴근하는 세션은 따뜻한 종이색으로 인사한다. */
+.office-talk { position: absolute; left: 0; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 5px; max-width: 220px; padding: 3px 8px 4px;
+  background: #f7f8fc; color: #151a2c; border: 2px solid #151a2c; border-radius: 6px; pointer-events: none; visibility: hidden; will-change: transform;
+  box-shadow: 0 2px 0 rgba(5, 8, 20, .5); font-size: 11px; line-height: 1.35; letter-spacing: -.01em; white-space: nowrap; }
+.office-talk::after { content: ""; position: absolute; left: var(--tail-x, 50%); bottom: -6px; width: 8px; height: 8px; background: inherit;
+  border-right: 2px solid #151a2c; border-bottom: 2px solid #151a2c; transform: translateX(-50%) rotate(45deg); }
+.office-talk time { font-weight: 600; color: #1f7a94; font-variant-numeric: tabular-nums; }
+.office-talk span { overflow: hidden; text-overflow: ellipsis; }
+.office-talk[data-kind="home"] { background: #fff2cf; font-weight: 600; }
+.office-bubble-hint { margin-top: 6px; font-size: 10.5px; color: #7a8199; }
+.office-legend-item[data-tally="home"] { opacity: .85; }
+.office-toast { position: absolute; left: 50%; bottom: 60px; z-index: 4; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 32px); padding: 5px 5px 5px 14px; border-radius: 12px; font-size: var(--fs-12); white-space: nowrap; animation: notes-rise .22s cubic-bezier(.2, .8, .2, 1); }
+.office-toast > span { overflow: hidden; text-overflow: ellipsis; }
+/* 안내가 캐릭터 위에 떠도 잡기·누르기를 막지 않는다. 닫기 단추만 포인터를 받는다. */
+.office-toast { pointer-events: none; }
+.office-toast [data-slot="button"] { pointer-events: auto; }
+.office-toast[data-tone="error"] > span { color: var(--destructive); }
+.office-toast > svg { width: 14px; height: 14px; color: var(--system-yellow); flex-shrink: 0; }
+.office-toast [data-slot="button"] svg { width: 13px; height: 13px; }

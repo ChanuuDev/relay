@@ -1,8 +1,13 @@
-import type { WorkZone } from "./layout";
 import { lookKey, recolor, REGIONS, type Look, type Region } from "./look";
-import type { Agent, OfficeSim } from "./sim";
+import { HALL_CENTER } from "./layout";
+import { HOME_SECONDS, type Agent, type OfficeSim, type Tally } from "./sim";
 
-export type AnimName = "front_idle" | "back_idle" | "front_walk" | "back_walk" | "sit" | "type" | "seat";
+/** 잡아 올릴 때는 빠르게 솟았다 살짝 넘치고, 내려놓을 때는 툭 떨어진다. */
+const liftCurve = (t: number) => (t >= 1 ? 1 : t <= 0 ? 0 : 1 - (1 - t) ** 3);
+
+export type AnimName = "front_idle" | "back_idle" | "front_walk" | "back_walk" | "sit" | "type" | "seat" | "grab";
+/** 등을 잡혀 들렸을 때 바닥에서 떠오르는 높이(배경 픽셀) */
+export const LIFT_PX = 26;
 export type Rect = readonly [number, number, number, number];
 export interface Anim {
   frames: Rect[];
@@ -33,8 +38,8 @@ export interface BadgeSheet { scale: number; icons: Record<BadgeName, Rect> }
 export interface Camera { zoom: number; cx: number; cy: number }
 export interface View { width: number; height: number; dpr: number }
 
-export const ZONE_COLORS: Record<WorkZone | "hall", string> = {
-  working: "#3ee6f0", blocked: "#ffb43b", handoff: "#c77dff", done: "#5ee38a", hall: "#9fb3d9",
+export const ZONE_COLORS: Record<Tally, string> = {
+  working: "#3ee6f0", blocked: "#ffb43b", handoff: "#c77dff", done: "#5ee38a", hall: "#9fb3d9", home: "#7d86a8",
 };
 
 export function loadImage(url: string) {
@@ -58,10 +63,11 @@ export function pose(agent: Agent, time: number, sheet: SpriteSheet, sitSeconds:
   const sit = anims.sit.frames.length;
   const progress = Math.min(sit - 1, Math.floor((agent.t / sitSeconds) * sit));
   switch (agent.mode) {
-    case "walk": return loop(agent.view === "front" ? "front_walk" : "back_walk");
+    case "walk": return loop(agent.view === "front" ? "front_walk" : "back_walk", agent.hurry ? 1.8 : 1);
     case "sitdown": return { anim: "sit", index: progress };
     case "standup": return { anim: "sit", index: sit - 1 - progress };
     case "seated": return loop(agent.zone === "working" && !agent.session.endedAt ? "type" : "seat");
+    case "held": case "land": return loop("grab");
     default: return loop(agent.view === "front" ? "front_idle" : "back_idle");
   }
 }
@@ -120,13 +126,16 @@ export class OfficeRenderer {
   }
 
   /** 배경 크기 그대로 장면을 그린다. 화면에 맞춘 확대·축소는 blit이 한 번에 한다. */
-  draw(sim: OfficeSim, time: number, hovered: string | null, selected: string | null) {
+  /** talking: 머리 위에 말풍선이 떠 있는 캐릭터. 말풍선이 작업 중 표시를 대신하므로 배지를 그리지 않는다. */
+  draw(sim: OfficeSim, time: number, hovered: string | null, selected: string | null, talking: ReadonlySet<string> = new Set()) {
     const context = this.sceneContext;
     const { scale } = this.sheet;
     context.imageSmoothingEnabled = false;
     context.globalAlpha = 1;
     context.drawImage(this.background, 0, 0);
-    const agents = sim.agents().sort((a, b) => a.y - b.y || a.x - b.x);
+    // 들린 캐릭터는 다른 모든 것보다 앞에 그린다.
+    const raised = (agent: Agent) => (agent.mode === "held" || agent.mode === "land" ? 1 : 0);
+    const agents = sim.agents().sort((a, b) => raised(a) - raised(b) || a.y - b.y || a.x - b.x);
     this.boxes = [];
     for (const agent of agents) {
       const { anim, index } = pose(agent, time, this.sheet, this.sitSeconds);
@@ -135,29 +144,33 @@ export class OfficeRenderer {
       const [ax, ay] = meta.anchors?.[index] ?? meta.anchor;
       const w = sw * scale, h = sh * scale;
       const left = agent.flip ? agent.x - (sw - ax) * scale : agent.x - ax * scale;
-      const top = agent.y - ay * scale;
-      const head = agent.y - (ay - meta.top) * scale;
+      const lifted = Math.round(liftCurve(agent.lift) * LIFT_PX);
+      const top = agent.y - ay * scale - lifted;
+      const head = agent.y - (ay - meta.top) * scale - lifted;
       context.globalAlpha = agent.alpha;
       const seated = agent.mode === "seated" || agent.mode === "sitdown" || agent.mode === "standup";
-      if (agent.id === selected || agent.id === hovered) this.ring(agent, agent.id === selected);
+      if (lifted > 0) this.shadow(agent, 1 - agent.lift * 0.45);
+      else if (agent.id === selected || agent.id === hovered) this.ring(agent, agent.id === selected);
       else if (!seated) this.shadow(agent);
-      if (agent.mode === "appear") this.beam(agent, head);
+      if (agent.mode === "appear") this.beam(agent, head, agent.t / 0.6);
+      else if (agent.mode === "vanish" && agent.leaving === "home" && agent.node === HALL_CENTER) this.beam(agent, head, agent.t / HOME_SECONDS);
       context.save();
       if (agent.flip) { context.translate(left + w, top); context.scale(-1, 1); context.drawImage(this.variant(agent.look), sx, sy, sw, sh, 0, 0, w, h); }
       else context.drawImage(this.variant(agent.look), sx, sy, sw, sh, left, top, w, h);
       context.restore();
       this.boxes.push({ id: agent.id, x: left, y: top, w, h, head });
-      const badge = badgeFor(agent);
+      const badge = talking.has(agent.id) ? null : badgeFor(agent);
       if (badge && this.badges) this.badge(badge, agent, head, time);
     }
     context.globalAlpha = 1;
   }
 
-  private shadow(agent: Agent) {
+  /** 발밑 그림자. 들린 동안에는 작고 옅어져 높이를 알려 준다. */
+  private shadow(agent: Agent, size = 1) {
     const context = this.sceneContext;
-    context.fillStyle = "rgba(4, 8, 20, 0.32)";
+    context.fillStyle = `rgba(4, 8, 20, ${0.32 * size})`;
     context.beginPath();
-    context.ellipse(agent.x, agent.y, 9, 3.5, 0, 0, Math.PI * 2);
+    context.ellipse(agent.x, agent.y, 9 * size, 3.5 * size, 0, 0, Math.PI * 2);
     context.fill();
   }
 
@@ -177,10 +190,10 @@ export class OfficeRenderer {
     context.restore();
   }
 
-  /** 홀에 새 세션이 나타날 때 바닥에서 솟는 빛기둥. */
-  private beam(agent: Agent, head: number) {
+  /** 홀에 새 세션이 나타날 때, 퇴근하는 세션이 사라질 때 바닥에서 솟는 빛기둥. progress는 0→1. */
+  private beam(agent: Agent, head: number, progress: number) {
     const context = this.sceneContext;
-    const strength = Math.sin(Math.min(1, agent.t / 0.6) * Math.PI);
+    const strength = Math.sin(Math.min(1, Math.max(0, progress)) * Math.PI);
     context.save();
     context.globalAlpha = strength * 0.85;
     const gradient = context.createLinearGradient(0, head - 18, 0, agent.y);

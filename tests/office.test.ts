@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { HALL_CENTER, seatNode, WalkGraph, type OfficeLayout } from "../src/web/lib/office/layout";
+import { HALL_CENTER, inside, seatNode, WalkGraph, zoneAt, type OfficeLayout } from "../src/web/lib/office/layout";
 import { hash, hslToRgb, lookFor, lookKey, recolor, rgbToHsl, seeded, shift } from "../src/web/lib/office/look";
-import { OfficeSim, WALK_SPEED, type OfficeSession } from "../src/web/lib/office/sim";
-import { bubbleLines, clip, shortId, stamp } from "../src/web/lib/office/bubble";
+import { HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type OfficeSession } from "../src/web/lib/office/sim";
+import { bubbleLines, clip, shortId, stamp, talkLine } from "../src/web/lib/office/bubble";
 import { badgeFor } from "../src/web/lib/office/render";
 import { LAYOUT } from "../src/web/lib/office/office-data";
 
@@ -114,10 +114,98 @@ describe("office simulation", () => {
     sim.sync([session("a", "handoff")]);
     sim.sync([]);
     const agent = sim.agent("a")!;
-    expect(agent.leaving).toBe(true);
+    expect(agent.leaving).toBe("out");
     expect(agent.spot).toBeNull();
     run(sim, 0.6 + 400 / WALK_SPEED + 1);
     expect(sim.agent("a")).toBeUndefined();
+  });
+
+  test("a finished session that ended waits in the lobby for ten minutes, then walks out; ones gone longer never come in", () => {
+    let now = Date.parse("2026-11-02T12:00:00.000Z");
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(8), clock: () => now });
+    const a = session("a", "working");
+    const longAgo = new Date(now - LINGER_MS - 1000).toISOString();
+    sim.sync([a, session("gone", "done", { endedAt: longAgo })]);
+    expect(sim.agent("gone")).toBeUndefined();
+    expect(sim.counts().home).toEqual({ shown: 0, total: 1 });
+    // 작업을 마치고 세션이 끝나면 먼저 로비(완료 구역)로 서둘러 간다.
+    sim.sync([{ ...a, status: "done", endedAt: new Date(now).toISOString() }]);
+    const agent = sim.agent("a")!;
+    expect(agent).toMatchObject({ zone: "done", leaving: false, hurry: true, homeAt: now + LINGER_MS });
+    run(sim, 0.6 + 600 / (WALK_SPEED * HURRY));
+    expect(["sitdown", "seated"]).toContain(agent.mode);
+    run(sim, 1);
+    expect(agent.leaving).toBe(false);
+    // 10분이 지나면 스스로 일어나 나가서 사라진다(출구가 없는 배치는 홀 가운데로).
+    now += LINGER_MS;
+    run(sim, 0.05);
+    expect(agent).toMatchObject({ leaving: "home", spot: null });
+    expect(sim.counts().home.total).toBe(1);
+    run(sim, 0.6 + 400 / WALK_SPEED);
+    expect(agent.mode).toBe("vanish");
+    expect(agent.node).toBe(HALL_CENTER);
+    run(sim, HOME_SECONDS + 0.1);
+    expect(sim.agent("a")).toBeUndefined();
+  });
+
+  test("grabbing lifts the agent off its seat; dropped in place it lands and hurries back to its own seat", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(10) });
+    sim.sync([session("a", "working")]);
+    expect(sim.grab("a")).toBe(true);
+    const agent = sim.agent("a")!;
+    expect(agent.mode).toBe("held");
+    run(sim, 0.3);
+    expect(agent.lift).toBe(1);
+    sim.hold("a", 150, 150);
+    expect(agent).toMatchObject({ x: 150, y: 150, loose: true, flip: true });
+    sim.drop("a");
+    expect(agent.mode).toBe("land");
+    run(sim, 0.3);
+    expect(agent).toMatchObject({ mode: "walk", hurry: true, lift: 0 });
+    run(sim, 600 / (WALK_SPEED * HURRY));
+    expect(agent).toMatchObject({ spot: seatNode("w1"), hurry: false });
+    expect(["sitdown", "seated"]).toContain(agent.mode);
+    expect([agent.x, agent.y]).toEqual([200, 40]);
+  });
+
+  test("a status change while held waits for the drop, then walks from the drop point to the new zone", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(11) });
+    const a = session("a", "working");
+    sim.sync([a]);
+    sim.grab("a");
+    sim.hold("a", 60, 150);
+    sim.sync([{ ...a, status: "blocked" }]);
+    const agent = sim.agent("a")!;
+    expect(agent).toMatchObject({ mode: "held", zone: "blocked", spot: seatNode("b1") });
+    sim.drop("a");
+    run(sim, 0.3 + 200 / (WALK_SPEED * HURRY));
+    expect(agent).toMatchObject({ zone: "blocked" });
+    expect(["sitdown", "seated"]).toContain(agent.mode);
+    expect(sim.grab("missing")).toBe(false);
+  });
+
+  test("a drop point maps to the zone whose floor polygon holds it", () => {
+    const withAreas: OfficeLayout = { ...layout, areas: { working: [[150, 0], [250, 0], [250, 90], [150, 90]], hall: [[150, 100], [250, 100], [250, 200], [150, 200]] } };
+    expect(zoneAt(withAreas, 200, 40)).toBe("working");
+    expect(zoneAt(withAreas, 200, 150)).toBe("hall");
+    expect(zoneAt(withAreas, 10, 10)).toBeNull();
+    expect(inside([[0, 0], [10, 0], [0, 10]], 2, 2)).toBe(true);
+    expect(inside([[0, 0], [10, 0], [0, 10]], 8, 8)).toBe(false);
+  });
+
+  test("a status change hurries the agent to its new zone at the quick pace; it walks normally again once seated", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(9) });
+    const a = session("a", "working");
+    sim.sync([a]);
+    sim.sync([{ ...a, status: "handoff" }]);
+    const agent = sim.agent("a")!;
+    expect(agent.hurry).toBe(true);
+    run(sim, 0.6);
+    expect(agent.mode).toBe("walk");
+    // 보통 걸음으로는 닿지 못할 시간 안에 도착한다.
+    const path = 15 + 30 + 30 + 50 + 50 + 45 + 15;
+    run(sim, (path / (WALK_SPEED * HURRY)) * 1.3);
+    expect(agent).toMatchObject({ mode: "sitdown", zone: "handoff", hurry: false });
   });
 
   test("with reduced motion agents go straight to their seats without walking", () => {
@@ -132,10 +220,11 @@ describe("office simulation", () => {
 
   test("badges follow the zone, sleep for ended sessions and hide while walking", () => {
     const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(6) });
-    sim.sync([session("a", "blocked"), session("b", "working", { endedAt: "2026-11-02T00:00:00.000Z" }), session("c", "done", { endedAt: "2026-11-02T00:00:00.000Z" }), session("d", null)]);
+    sim.sync([session("a", "blocked"), session("b", "working", { endedAt: "2026-11-02T00:00:00.000Z" }), session("c", "done"), session("e", "done", { endedAt: "2026-11-02T00:00:00.000Z" }), session("d", null)]);
     expect(badgeFor(sim.agent("a")!)).toBe("blocked");
     expect(badgeFor(sim.agent("b")!)).toBe("ended");
     expect(badgeFor(sim.agent("c")!)).toBe("done");
+    expect(sim.agent("e")).toBeUndefined();
     expect(badgeFor(sim.agent("d")!)).toBeNull();
   });
 });
@@ -176,5 +265,12 @@ describe("office bubble", () => {
       createdAt: new Date(2026, 10, 2, 11, sequence).toISOString() }));
     expect(bubbleLines(s, updates, now)).toEqual([{ time: "11:02", text: "기록 2" }, { time: "11:03", text: "기록 3" }, { time: "11:04", text: "기록 4" }]);
     expect(bubbleLines(s, [], now)).toEqual([{ time: stamp(s.updatedAt, now), text: "s 요약" }]);
+  });
+
+  test("the over-the-head line keeps the gist of the latest summary", () => {
+    expect(talkLine("진행: 사무실 앱(AppId office) 추가 중. 다음은 테스트")).toBe("사무실 앱(AppId offic…");
+    expect(talkLine("후속 요청 작업 시작: (1) 완료+종료 세션은 퇴근")).toBe("후속 요청 작업 시작");
+    expect(talkLine("API 응답 검증 중. 그다음 정리")).toBe("API 응답 검증 중");
+    expect(talkLine(["테스트 통과", "둘째 줄"].join("\n"))).toBe("테스트 통과");
   });
 });
