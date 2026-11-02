@@ -339,7 +339,8 @@ export class OfficeSim {
     agent.hurry = false;
     if (agent.leaving) { this.setMode(agent, "vanish"); return; }
     if (!agent.spot) { this.meet(agent); return; }
-    const stand = this.seats.get(agent.spot)?.stand;
+    const seat = this.seats.get(agent.spot);
+    const stand = seat?.stand;
     if (stand) {
       agent.view = stand.view; agent.flip = Boolean(stand.flip);
       // 로비에 선 세션은 잠시 뒤 다른 자리로 옮기거나 누군가와 이야기한다. 인계 방은 그 자리에 머문다.
@@ -348,7 +349,8 @@ export class OfficeSim {
       return;
     }
     if (agent.spot?.startsWith("seat:")) {
-      agent.view = "back"; agent.flip = false;
+      // 앉으면 등을 보이고 책상을 본다. 모니터가 왼쪽 위에 있는 자리는 좌우를 뒤집는다.
+      agent.view = "back"; agent.flip = Boolean(seat?.flip);
       this.setMode(agent, instant ? "seated" : "sitdown");
       return;
     }

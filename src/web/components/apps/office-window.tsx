@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Maximize2, Minus, Plus, TriangleAlert, X } from "lucide-react";
+import { LoaderCircle, Maximize2, Minus, Moon, Plus, Sun, Sunset, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { DesktopMenu, type MenuEntry } from "../desktop/menu";
@@ -11,10 +11,11 @@ import { navigate, sessionUrl } from "../../lib/store";
 import { reduced } from "../../lib/motion";
 import { sendAction, STATUS_TO } from "../../lib/session-actions";
 import { SESSION_STATUSES, STATUS_LABELS, type Session, type SessionAction } from "../../../session/session.types";
-import { BADGE_URL, BACKGROUND_URL, BADGES, LAYOUT, SIT_SECONDS, SPRITES, WORKER_URL } from "../../lib/office/office-data";
+import { BADGE_URL, BADGES, SIT_SECONDS, SPRITES, WORKER_URL } from "../../lib/office/office-data";
+import { BUILDINGS, buildingOf, storeBuilding, storedBuilding, type BuildingId } from "../../lib/office/buildings";
 import { OfficeSim, TALLIES, type Agent, type OfficeSession, type Tally } from "../../lib/office/sim";
 import { blit, clampCamera, LIFT_PX, loadImage, OfficeRenderer, toScene, toScreen, ZONE_COLORS, type Camera, type View } from "../../lib/office/render";
-import { zoneAt } from "../../lib/office/layout";
+import { zoneAt, type OfficeLayout } from "../../lib/office/layout";
 import { bubbleLines, clip, shortId, stamp, talkLine, zoneLabel } from "../../lib/office/bubble";
 import { hash } from "../../lib/office/look";
 
@@ -32,6 +33,8 @@ const talking = (agent: Agent | undefined, kind: "work" | "home") => Boolean(age
 const HOLD_OFFSET = 30 + LIFT_PX;
 /** 말풍선마다 숨쉬기 박자를 어긋나게 한다. */
 const floatDelay = (id: string) => `${-(hash(id) % 2800)}ms`;
+/** 사옥 단추 아이콘: 밤·낮·노을 */
+const BUILDING_ICONS: Record<BuildingId, LucideIcon> = { night: Moon, birch: Sun, oak: Sunset };
 
 const toOffice = (session: Session): OfficeSession => ({
   id: session.id, provider: session.provider, agent: session.agent, providerSessionId: session.providerSessionId,
@@ -67,7 +70,10 @@ export function OfficeWindow() {
   const talkRefs = useRef(new Map<string, HTMLDivElement>());
   const talkingNow = useRef<ReadonlySet<string>>(new Set());
   const engine = useRef<{ sim: OfficeSim; renderer: OfficeRenderer } | null>(null);
-  const camera = useRef<Camera>({ zoom: 1, cx: LAYOUT.image.width / 2, cy: LAYOUT.image.height / 2 });
+  const [building, setBuilding] = useState<BuildingId>(storedBuilding);
+  /** 그리고 있는 사옥의 좌석·길. 사옥 그림을 다 받기 전에는 고르기 전 사옥 그대로다. */
+  const layoutOf = (): OfficeLayout => engine.current?.sim.layout ?? buildingOf(building).layout;
+  const camera = useRef<Camera>({ zoom: 1, cx: buildingOf(building).layout.image.width / 2, cy: buildingOf(building).layout.image.height / 2 });
   const view = useRef<View>({ width: 1, height: 1, dpr: 1 });
   const pointer = useRef<{ x: number; y: number; id: number; panned: boolean; cx: number; cy: number; agent: string | null; dragging: boolean } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -83,6 +89,8 @@ export function OfficeWindow() {
   const [menuLeaving, setMenuLeaving] = useState(false);
   const menuLeavingRef = useRef(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  /** 사옥 그림을 받아 엔진을 새로 만들 때마다 오른다. 새 시뮬레이션에 목록을 다시 넣고 캔버스를 한 번 떠오르게 한다. */
+  const [generation, setGeneration] = useState(0);
   const selected = menu && !menuLeaving ? menu.sessionId : null;
   const marks = useRef({ hovered: hovered as string | null, selected });
   marks.current = { hovered: hovered ?? focused, selected };
@@ -94,19 +102,28 @@ export function OfficeWindow() {
   // 홀(대기)과 로비(완료)의 세션은 가끔 마주 보고 이야기한다. 말은 시뮬레이션이 정하고 여기서는 자리만 둔다.
   const chatters = useMemo(() => roster.filter((session) => session.status === null || session.status === "done"), [roster]);
 
-  // 그림을 모두 받은 뒤 시뮬레이션과 그리기 준비를 한다.
+  // 사옥 그림과 캐릭터 그림을 모두 받은 뒤 그 사옥의 좌석·길로 시뮬레이션과 그리기 준비를 한다.
+  // 사옥을 바꾸면 새 사옥 그림을 다 받을 때까지 지금 사옥을 그대로 그리다가, 모두를 새 사옥 제자리에 앉힌다.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadImage(BACKGROUND_URL), loadImage(WORKER_URL), loadImage(BADGE_URL)]).then(([background, atlas, badges]) => {
+    const plan = buildingOf(building);
+    Promise.all([loadImage(plan.url), loadImage(WORKER_URL), loadImage(BADGE_URL)]).then(([background, atlas, badges]) => {
       if (cancelled) return;
       engine.current = {
-        sim: new OfficeSim(LAYOUT, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length }),
+        sim: new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length }),
         renderer: new OfficeRenderer(background, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES }),
       };
+      const { width, height } = plan.layout.image;
+      camera.current = clampCamera({ zoom: 1, cx: width / 2, cy: height / 2 }, view.current, width, height);
+      pointer.current = null;
+      setDragging(null);
+      setHovered(null);
+      setZoomed(false);
+      setGeneration((value) => value + 1);
       setReady(true);
     }).catch((error: unknown) => { if (!cancelled) setFailed(error instanceof Error ? error.message : String(error)); });
     return () => { cancelled = true; };
-  }, []);
+  }, [building]);
 
   // 목록이 바뀔 때마다 누가 어디로 가야 하는지 다시 정한다.
   useEffect(() => {
@@ -121,7 +138,7 @@ export function OfficeWindow() {
     setRoster(sessions.filter((session) => visible.has(session.id)));
     // 로비에 머무는 완료+종료 세션과 지금 퇴근하는 세션은 나갈 때 인사 말풍선을 띄운다.
     setFarewells(agents.filter((agent) => agent.leaving === "home" || agent.homeAt !== null).map((agent) => agent.session));
-  }, [ready, list.data]);
+  }, [ready, list.data, generation]);
 
   // 메뉴를 연 캐릭터가 사무실을 떠나면(퇴근·목록에서 빠짐) 메뉴도 닫는다.
   useEffect(() => {
@@ -144,7 +161,7 @@ export function OfficeWindow() {
       view.current = { width: Math.max(1, stage.clientWidth), height: Math.max(1, stage.clientHeight), dpr };
       canvas.width = Math.round(view.current.width * dpr);
       canvas.height = Math.round(view.current.height * dpr);
-      camera.current = clampCamera(camera.current, view.current, LAYOUT.image.width, LAYOUT.image.height);
+      camera.current = clampCamera(camera.current, view.current, layoutOf().image.width, layoutOf().image.height);
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -195,7 +212,7 @@ export function OfficeWindow() {
     return () => query.removeEventListener("change", change);
   }, []);
 
-  const screenOf = (x: number, y: number) => toScreen(camera.current, view.current, LAYOUT.image.width, LAYOUT.image.height, x, y);
+  const screenOf = (x: number, y: number) => toScreen(camera.current, view.current, layoutOf().image.width, layoutOf().image.height, x, y);
 
   /** 기록 말풍선을 먼저 달고, 작업 중·퇴근 한마디 말풍선은 서로·기록 말풍선과 겹치지 않는 자리에만 단다(겹치면 한 칸 위로, 그래도 겹치면 숨긴다). */
   function placeBubbles(current: { sim: OfficeSim; renderer: OfficeRenderer }) {
@@ -255,7 +272,7 @@ export function OfficeWindow() {
   }
 
   function zoomAt(zoom: number, x = view.current.width / 2, y = view.current.height / 2) {
-    const { width, height } = LAYOUT.image;
+    const { width, height } = layoutOf().image;
     const before = toScene(camera.current, view.current, width, height, x, y);
     const next = clampCamera({ ...camera.current, zoom }, view.current, width, height);
     const after = toScene(next, view.current, width, height, x, y);
@@ -267,7 +284,7 @@ export function OfficeWindow() {
     const stage = stageRef.current!;
     const rect = stage.getBoundingClientRect();
     const ratio = stage.clientWidth / Math.max(1, rect.width);
-    return toScene(camera.current, view.current, LAYOUT.image.width, LAYOUT.image.height, (event.clientX - rect.left) * ratio, (event.clientY - rect.top) * ratio);
+    return toScene(camera.current, view.current, layoutOf().image.width, layoutOf().image.height, (event.clientX - rect.left) * ratio, (event.clientY - rect.top) * ratio);
   };
   const hit = (event: ReactPointerEvent) => {
     const point = scenePoint(event);
@@ -346,7 +363,7 @@ export function OfficeWindow() {
       if (!drag.panned && Math.hypot(dx, dy) > 4 && camera.current.zoom > 1.01) drag.panned = true;
       if (drag.panned) {
         const scale = screenOf(0, 0).scale;
-        camera.current = clampCamera({ zoom: camera.current.zoom, cx: drag.cx - dx / scale, cy: drag.cy - dy / scale }, view.current, LAYOUT.image.width, LAYOUT.image.height);
+        camera.current = clampCamera({ zoom: camera.current.zoom, cx: drag.cx - dx / scale, cy: drag.cy - dy / scale }, view.current, layoutOf().image.width, layoutOf().image.height);
         return;
       }
     }
@@ -374,11 +391,29 @@ export function OfficeWindow() {
     const agent = sim?.agent(id);
     setDragging(null);
     if (!sim || !agent) return;
-    const zone = zoneAt(LAYOUT, agent.x, agent.y);
+    const zone = zoneAt(layoutOf(), agent.x, agent.y);
     sim.drop(id);
     const session = roster.find((entry) => entry.id === id);
     if (!session || !zone || zone === "hall" || zone === agent.zone) return;
     void run(session, [{ action: "status", status: zone }], `‘${clip(nameOf(session), 20)}’ 세션을 ${STATUS_TO[zone]} 옮깁니다.`);
+  }
+
+  function chooseBuilding(id: BuildingId) {
+    if (id === building) return;
+    if (menu) { setMenu(null); setMenuLeaving(false); menuLeavingRef.current = false; }
+    setBuilding(id);
+    storeBuilding(id);
+  }
+  /** 사옥 단추 묶음은 라디오 그룹이라 방향키로 고르고 초점도 함께 옮긴다. */
+  function buildingKey(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+    const edge = event.key === "Home" ? 0 : event.key === "End" ? BUILDINGS.length - 1 : null;
+    if (!step && edge === null) return;
+    event.preventDefault();
+    const index = BUILDINGS.findIndex((entry) => entry.id === building);
+    const next = BUILDINGS[edge ?? (index + step + BUILDINGS.length) % BUILDINGS.length]!;
+    chooseBuilding(next.id);
+    event.currentTarget.parentElement?.querySelector<HTMLElement>(`[data-building="${next.id}"]`)?.focus();
   }
 
   const legend = <div className="office-legend" aria-label="구역별 세션 수">
@@ -397,11 +432,11 @@ export function OfficeWindow() {
   };
 
   return <Window id="office" bodyClassName="office-body" header={<WindowTitleBar id="office" right={legend} />}>
-    <div ref={stageRef} className="office-stage" data-ready={ready ? "" : undefined} data-hovering={hovered ? "" : undefined} data-dragging={dragging ? "" : undefined}
+    <div ref={stageRef} className="office-stage" data-building={building} data-ready={ready ? "" : undefined} data-hovering={hovered ? "" : undefined} data-dragging={dragging ? "" : undefined}
       onPointerMove={onPointerMove} onPointerDown={onPointerDown} onPointerUp={onPointerUp}
       onPointerCancel={() => { const drag = pointer.current; pointer.current = null; if (drag?.dragging && drag.agent) dropAgent(drag.agent); }}
       onPointerLeave={() => { if (!pointer.current) setHovered(null); }}>
-      <canvas ref={canvasRef} className="office-canvas" role="img"
+      <canvas ref={canvasRef} className="office-canvas" role="img" data-fade={generation > 1 ? (generation % 2 ? "odd" : "even") : undefined}
         aria-label={`도트 사무실: ${TALLIES.map((tally) => `${zoneLabel(tally)} ${counts[tally].total}`).join(", ")}`} />
       {talkers.map((session) => <div key={session.id} ref={talkRef(`work:${session.id}`)} className="office-talk office-float" data-kind="work" data-talk={session.id}
         style={{ animationDelay: floatDelay(session.id) }} aria-hidden="true">
@@ -425,6 +460,16 @@ export function OfficeWindow() {
         <ol className="office-bubble-lines">{lines.map((line, index) => <li key={index}><time>{line.time}</time><span>{line.text}</span></li>)}</ol>
         <div className="office-bubble-hint">눌러서 상태 바꾸기·퇴근 · 끌어서 다른 방에 놓기</div>
       </div> : null}
+      <div className="office-buildings" role="radiogroup" aria-label="사옥" onPointerDown={(event) => event.stopPropagation()}>
+        {BUILDINGS.map((entry) => {
+          const Icon = BUILDING_ICONS[entry.id];
+          const checked = entry.id === building;
+          return <button key={entry.id} type="button" role="radio" aria-checked={checked} tabIndex={checked ? 0 : -1} data-building={entry.id}
+            title={entry.hint} onClick={() => chooseBuilding(entry.id)} onKeyDown={buildingKey}>
+            <Icon aria-hidden="true" /><span>{entry.name}</span>
+          </button>;
+        })}
+      </div>
       <div className="office-zoom" onPointerDown={(event) => event.stopPropagation()}>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="축소" disabled={!zoomed} onClick={() => zoomAt(camera.current.zoom / 1.4)}><Minus /></Button>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="전체 보기" disabled={!zoomed} onClick={() => zoomAt(1)}><Maximize2 /></Button>

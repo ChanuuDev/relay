@@ -4,8 +4,9 @@ export type WorkZone = "working" | "blocked" | "handoff" | "done";
 export type Zone = WorkZone | "hall";
 export const WORK_ZONES: readonly WorkZone[] = ["working", "blocked", "handoff", "done"];
 
-/** 앉는 자리. stand가 있으면 의자 대신 그 방향을 보고 서서 머문다(인계 방의 서서 나누는 자리). chair는 발이 닿는 바닥이다. */
-export interface Seat { id: string; chair: Point; approach: string; stand?: { view: "front" | "back"; flip?: boolean } }
+/** 앉는 자리. stand가 있으면 의자 대신 그 방향을 보고 서서 머문다(인계 방의 서서 나누는 자리). chair는 발이 닿는 바닥이다.
+ *  앉으면 등을 보이고 오른쪽 위 책상을 보며, flip이면 왼쪽 위 책상을 본다. */
+export interface Seat { id: string; chair: Point; approach: string; flip?: boolean; stand?: { view: "front" | "back"; flip?: boolean } }
 export interface ZoneLayout { seats: Seat[]; door: string }
 export interface OfficeLayout {
   image: { width: number; height: number };
