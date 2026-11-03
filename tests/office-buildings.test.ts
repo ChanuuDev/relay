@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { cellCenter, cellNode, HALL_CENTER, nearestOpenCell, seatNode, WalkGraph, WORK_ZONES, zoneAt, type OfficeLayout } from "../src/web/lib/office/layout";
 import { planWorld, type Kit, type MapDef } from "../src/web/lib/office/iso";
-import { drawBefore, sortDrawables, type Drawable } from "../src/web/lib/office/world";
+import { drawBefore, frontStatics, hidden, sortDrawables, type Drawable } from "../src/web/lib/office/world";
 import { OfficeSim, type OfficeSession } from "../src/web/lib/office/sim";
 import { BUILDING_KEY, BUILDINGS, buildingOf, DEFAULT_BUILDING, isBuilding, storeBuilding, storedBuilding } from "../src/web/lib/office/buildings";
 
@@ -311,4 +311,54 @@ describe("모든 사옥의 격자", () => {
       expect(stranded).toEqual([]);
     });
   }
+});
+
+describe("끌기 미리 보기와 가림", () => {
+  const plan = planWorld(MAP, KIT);
+  const { layout: grid } = plan;
+
+  test("끄는 동안의 표시는 놓을 때와 같은 답이다: 좌석 칸이면 그 좌석과 맞바꿀 동료, 빈 좌석 곁이면 그 좌석, 홀 빈 칸이면 머물 칸", () => {
+    const sim = new OfficeSim(grid, { sitSeconds: 0.2, random: () => 0.5 });
+    sim.sync([session("a", "working"), session("b", "working"), session("h", null)]);
+    // a가 b의 좌석(1,1) 위에 있으면 b와 맞바꾼다.
+    const onSeat = sim.dropTarget("a", ...cellCenter(grid.grid!, 1, 1))!;
+    expect(onSeat).toMatchObject({ seat: seatNode("w2"), cell: [1, 1], zone: "working", swap: "b", stay: null });
+    // 자기 좌석이면 맞바꿀 사람이 없다.
+    expect(sim.dropTarget("a", ...cellCenter(grid.grid!, 0, 1))!.swap).toBeNull();
+    // 홀 사람은 홀 빈 칸에 머물고, 다른 구역 좌석이면 맞바꾸지 않는다(상태가 바뀐 뒤 빈자리를 받는다).
+    expect(sim.dropTarget("h", ...cellCenter(grid.grid!, 7, 5))).toMatchObject({ seat: null, cell: [7, 5], zone: "hall", stay: cellNode(7, 5) });
+    expect(sim.dropTarget("h", ...cellCenter(grid.grid!, 1, 1))).toMatchObject({ seat: seatNode("w2"), swap: null });
+    // 빈 좌석 곁(한 칸 반 안)의 바닥이면 그 좌석을 고른다. 좌석이 차 있으면 바닥 칸 그대로다.
+    const free = new OfficeSim(grid, { sitSeconds: 0.2, random: () => 0.5 });
+    free.sync([session("c", "working")]);
+    expect(free.dropTarget("c", ...cellCenter(grid.grid!, 1, 2))).toMatchObject({ seat: seatNode("w2"), cell: [1, 1], land: [1, 2] });
+    expect(sim.dropTarget("h", ...cellCenter(grid.grid!, 2, 2))).toMatchObject({ seat: null, cell: [2, 2], zone: "working", stay: null });
+  });
+
+  test("정적인 층 위에 다시 그릴 것은 캐릭터 앞에서 겹치는 것과 그 앞의 것뿐이다", () => {
+    const wall = box(0, 1, 2.99, 3.01, 0, { solid: true });
+    const desk = box(0.04, 1.96, 3.5, 3.96, 1);
+    const plant = box(0.04, 0.96, 4.04, 4.96, 1);
+    const far = box(5, 6, 5, 6, 1, { rect: [500, 500, 600, 600] });
+    const statics = [wall, desk, plant, far];
+    const outs = [[1, 2], [2], [], []];
+    // 벽 뒤 사람: 벽 앞의 책상·화분까지 이어서 다시 그린다. 화면에서 떨어진 것은 그리지 않는다.
+    expect(frontStatics(statics, outs, [person(0.5, 2.5)])).toEqual([0, 1, 2]);
+    // 벽과 책상 사이 사람: 책상과 화분만
+    expect(frontStatics(statics, outs, [person(0.5, 3.25)])).toEqual([1, 2]);
+    // 맨 앞 사람: 다시 그릴 것이 없다.
+    expect(frontStatics(statics, outs, [person(0.5, 5.5)])).toEqual([]);
+  });
+
+  test("단단한 벽에 몸 절반 넘게 가린 캐릭터만 실루엣을 덧그린다", () => {
+    const behind = { ...person(0.5, 2.5), rect: [0, 0, 20, 40] as const };
+    const tall = box(0, 1, 2.99, 3.01, 0, { solid: true, rect: [0, 0, 40, 60] });
+    const glass = box(0, 1, 2.99, 3.01, 0, { rect: [0, 0, 40, 60] });
+    const short = box(0, 1, 2.99, 3.01, 0, { solid: true, rect: [0, 30, 40, 60] });
+    expect(hidden(behind, [tall])).toBe(true);
+    expect(hidden(behind, [glass])).toBe(false);
+    expect(hidden(behind, [short])).toBe(false);
+    // 벽 앞에 선 사람은 가리지 않는다.
+    expect(hidden({ ...person(0.5, 3.5), rect: [0, 0, 20, 40] }, [tall])).toBe(false);
+  });
 });

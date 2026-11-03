@@ -81,7 +81,7 @@ export const NIGHT_MAP: MapDef = {
     { sprite: "plant", x: 14, y: 0 }, { sprite: "lamp", x: 11, y: 0 }, { sprite: "planter", x: 9, y: 23 },
     { sprite: "fig", x: 12, y: 15 }, { sprite: "plant", x: 19, y: 12 },
     // DONE 로비
-    { sprite: "reception", x: 19, y: 14 }, { sprite: "coatrack", x: 13, y: 13 },
+    { sprite: "reception", x: 19, y: 14 }, { sprite: "coatrack", x: 13, y: 21 },
     { sprite: "sofa", x: 17, y: 17, flip: true }, { sprite: "armchair", x: 18, y: 16 }, { sprite: "coffee", x: 18, y: 17 },
     { sprite: "fig", x: 23, y: 13 }, { sprite: "plant", x: 20, y: 13 }, { sprite: "lamp", x: 23, y: 23 }, { sprite: "planter", x: 14, y: 23 },
   ],
@@ -120,4 +120,5 @@ export const NIGHT_THEME: Theme = {
   shade: 1,
   sign: "neon",
   logo: "rgba(140, 170, 255, 0.3)",
+  ghost: "rgba(150, 190, 255, 0.85)",
 };

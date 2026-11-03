@@ -410,25 +410,42 @@ export class OfficeSim {
     agent.hurry = true;
     this.setMode(agent, "land");
     const grid = this.layout.grid;
-    if (!grid) return;
-    const at: Point = [agent.x, agent.y];
-    const seat = this.seatNear(at);
-    const cell = nearestOpenCell(grid, at[0], at[1]);
-    if (cell) {
-      [agent.x, agent.y] = cellCenter(grid, cell[0], cell[1]);
-      agent.node = cellNode(cell[0], cell[1]);
-      agent.loose = false;
-    }
+    const target = this.dropTarget(id, agent.x, agent.y);
+    if (!grid || !target) return;
+    [agent.x, agent.y] = cellCenter(grid, target.land[0], target.land[1]);
+    agent.node = cellNode(target.land[0], target.land[1]);
+    agent.loose = false;
     if (agent.leaving) return;
-    if (seat) { this.pin(agent, seat); return; }
+    if (target.seat) { this.pin(agent, target.seat); return; }
     // 홀·로비의 빈 바닥에 놓으면 그 칸에 머문다.
-    const zone = cell ? zoneAt(this.layout, agent.x, agent.y) : null;
-    const node = cell ? cellNode(cell[0], cell[1]) : null;
-    if (node && zone === agent.zone && roams(zone) && !this.taken.has(node) && !this.agents().some((other) => other !== agent && other.spot === node)) {
+    if (target.stay) {
       this.release(agent);
-      this.taken.set(node, agent.id);
-      agent.spot = node;
+      this.taken.set(target.stay, agent.id);
+      agent.spot = target.stay;
     }
+  }
+
+  /**
+   * 들고 있는 캐릭터를 (x, y) 바닥에 놓으면 어떻게 되는지. 끄는 동안 보여 주는 표시와 실제로 놓을 때 같은 답을 쓴다.
+   * land: 내려앉을 걷는 칸, seat: 고를 좌석(좌석 칸 위이거나 같은 구역의 빈 좌석 곁), cell: 빛낼 칸(좌석이면 좌석 칸),
+   * zone: 그 칸의 구역, swap: 그 좌석에 앉아 있어 자리를 맞바꿀 동료, stay: 홀·로비에서 머물 칸 노드.
+   */
+  dropTarget(id: string, x: number, y: number) {
+    const grid = this.layout.grid;
+    const agent = this.byId.get(id);
+    if (!grid || !agent) return null;
+    const land = nearestOpenCell(grid, x, y);
+    if (!land) return null;
+    const seat = this.seatNear([x, y]);
+    const seatCell = seat ? this.seats.get(seat)?.cell : undefined;
+    const cell = seatCell ?? land;
+    const zone = grid.zones[cell[1] * grid.cols + cell[0]] ?? null;
+    const holder = seat ? this.taken.get(seat) : undefined;
+    const swap = holder && holder !== id && this.seatZone.get(seat!) === agent.zone ? holder : null;
+    const node = cellNode(land[0], land[1]);
+    const stay = !seat && zone === agent.zone && roams(agent.zone) && !this.taken.has(node)
+      && !this.agents().some((other) => other !== agent && other.spot === node) ? node : null;
+    return { land, cell, seat, zone, swap, stay };
   }
 
   /** 놓은 자리가 가리키는 좌석: 좌석 칸 위이거나, 그 구역의 빈 좌석이 한 칸 반 안에 있으면 가장 가까운 것 */

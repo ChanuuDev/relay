@@ -19,6 +19,8 @@ export interface Theme {
   sign: "neon" | "plate";
   /** 바닥 글자 색 */
   logo: string;
+  /** 벽 뒤에 가린 캐릭터 실루엣 색 */
+  ghost: string;
 }
 
 /** 구역 색(간판·끌어 놓을 칸 표시) */
@@ -34,7 +36,11 @@ export interface Drawable {
   layer: 0 | 1 | 2;
   /** 가구: 앉은 사람보다 앞에 그린다(책상 의자) */
   cover?: boolean;
+  /** 사람 키보다 높은 불투명 벽(뒤에 선 캐릭터를 실루엣으로 보인다) */
+  solid?: boolean;
   paint: (context: CanvasRenderingContext2D, time: number) => void;
+  /** 캐릭터: 단단한 벽에 가렸을 때 그 위에 그리는 실루엣 */
+  ghost?: (context: CanvasRenderingContext2D) => void;
 }
 
 const EPS = 1e-3;
@@ -132,6 +138,38 @@ export function sortDrawables(items: readonly Drawable[], base?: { outs: readonl
   return order;
 }
 
+/**
+ * 캐릭터마다 다시 그려야 할 정적인 것: 캐릭터와 화면에서 겹치고 그보다 앞인 것, 그리고 그것보다 앞에서 겹치는 것(이어서).
+ * 정적인 층을 통째로 깔고 캐릭터를 그린 뒤 이것들만 다시 그리면, 전부를 매 프레임 앞뒤 순서로 그린 것과 같은 그림이 된다.
+ */
+export function frontStatics(statics: readonly Drawable[], outs: readonly (readonly number[])[], agents: readonly Drawable[]) {
+  const picked = new Set<number>();
+  const queue: number[] = [];
+  for (const agent of agents) {
+    statics.forEach((item, index) => {
+      if (picked.has(index) || !overlaps(agent.rect, item.rect) || drawBefore(agent, item) !== true) return;
+      picked.add(index);
+      queue.push(index);
+    });
+  }
+  while (queue.length) for (const next of outs[queue.pop()!]!) if (!picked.has(next)) { picked.add(next); queue.push(next); }
+  return [...picked].sort((a, b) => a - b);
+}
+
+/** 캐릭터가 앞에 선 단단한 벽에 몸의 절반 넘게 가렸는지(화면 상자 기준) */
+export function hidden(agent: Drawable, statics: readonly Drawable[]) {
+  const [left, top, right, bottom] = agent.rect;
+  const area = Math.max(1, (right - left) * (bottom - top));
+  let covered = 0;
+  for (const item of statics) {
+    if (!item.solid || !overlaps(agent.rect, item.rect) || drawBefore(agent, item) !== true) continue;
+    const w = Math.min(right, item.rect[2]) - Math.max(left, item.rect[0]);
+    const h = Math.min(bottom, item.rect[3]) - Math.max(top, item.rect[1]);
+    covered += Math.max(0, w) * Math.max(0, h);
+  }
+  return covered / area > 0.5;
+}
+
 /** 정적인 것끼리의 앞뒤(한 번만 잰다) */
 function staticOrder(items: readonly Drawable[]) {
   const outs: number[][] = items.map(() => []);
@@ -150,6 +188,9 @@ export class World {
   readonly floor: HTMLCanvasElement;
   private readonly statics: Drawable[];
   private readonly base: ReturnType<typeof staticOrder>;
+  /** 바닥 위에 벽·장식·가구를 앞뒤 순서로 한 번 그려 둔 층. 출구 유리문이 열리고 닫힐 때만 다시 그린다. */
+  private readonly layer: HTMLCanvasElement;
+  private layerOpen: boolean | null = null;
   /** 출구 유리문이 열려 있는지(누가 가까이 오면 열린다) */
   private exitOpen = false;
 
@@ -159,6 +200,20 @@ export class World {
     this.floor = this.paintFloor(floors);
     this.statics = this.buildStatics();
     this.base = staticOrder(this.statics);
+    this.layer = document.createElement("canvas");
+    this.layer.width = this.width;
+    this.layer.height = this.height;
+  }
+
+  /** 정적인 층(바닥 + 벽·장식·가구)을 (다시) 그린다. */
+  private paintLayer() {
+    const context = this.layer.getContext("2d")!;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, this.width, this.height);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(this.floor, 0, 0);
+    for (const item of sortDrawables(this.statics, this.base)) item.paint(context, 0);
+    this.layerOpen = this.exitOpen;
   }
 
   /** 격자 좌표 → 장면 픽셀 */
@@ -169,11 +224,10 @@ export class World {
     const [sx, sy, sw, sh] = sprite.r;
     const [ax, ay] = sprite.a;
     if (!flip) { context.drawImage(this.atlas, sx, sy, sw, sh, Math.round(x - ax), Math.round(y - ay), sw, sh); return; }
-    context.save();
-    context.translate(Math.round(x + ax), Math.round(y - ay));
-    context.scale(-1, 1);
+    // save/restore는 프레임마다 쌓이면 비싸다. 뒤집기 변환만 걸었다가 되돌린다.
+    context.setTransform(-1, 0, 0, 1, Math.round(x + ax), Math.round(y - ay));
     context.drawImage(this.atlas, sx, sy, sw, sh, 0, 0, sw, sh);
-    context.restore();
+    context.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   private spriteRect(sprite: KitSprite, x: number, y: number, flip = false): Drawable["rect"] {
@@ -191,13 +245,13 @@ export class World {
       const sprite = kit.walls[wall.kind]![wall.side];
       const [x, y] = this.point(wall.x, wall.y);
       const box: Drawable["box"] = wall.side === "n" ? [wall.x, wall.x + 1, wall.y - THIN, wall.y + THIN] : [wall.x - THIN, wall.x + THIN, wall.y, wall.y + 1];
-      list.push({ box, layer: 0, rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
+      list.push({ box, layer: 0, solid: wall.kind === "wall" || wall.kind === "header", rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
     }
     for (const post of plan.posts) {
       const sprite = kit.posts[post.kind];
       if (!sprite) continue;
       const [x, y] = this.point(post.x, post.y);
-      list.push({ box: [post.x - THIN, post.x + THIN, post.y - THIN, post.y + THIN], layer: 0, rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
+      list.push({ box: [post.x - THIN, post.x + THIN, post.y - THIN, post.y + THIN], layer: 0, solid: post.kind === "wall", rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
     }
     for (const decor of plan.map.decor ?? []) {
       const entry = kit.decor[decor.sprite];
@@ -446,12 +500,34 @@ export class World {
     context.restore();
   }
 
-  /** 정적인 것과 캐릭터를 앞뒤 순서로 그린다. near: 출구 유리문 근처에 누가 있는지 */
-  drawObjects(context: CanvasRenderingContext2D, agents: readonly Drawable[], time: number, near: (point: Point, radius: number) => boolean) {
+  /** 정적인 층(바닥과 벽·장식·가구)을 깐다. 프레임마다 장면 크기 그림을 한 번만 옮긴다. near: 출구 유리문 근처에 누가 있는지 */
+  drawBase(context: CanvasRenderingContext2D, near: (point: Point, radius: number) => boolean) {
     const exit = this.plan.layout.exit ? this.plan.layout.nodes[this.plan.layout.exit] : null;
     this.exitOpen = Boolean(exit && near(exit, HALF_W * 2.4));
-    const order = agents.length ? sortDrawables([...this.statics, ...agents], this.base) : sortDrawables(this.statics, this.base);
-    for (const item of order) item.paint(context, time);
+    if (this.layerOpen !== this.exitOpen) this.paintLayer();
+    context.drawImage(this.layer, 0, 0);
+  }
+
+  /** 캐릭터와, 그보다 앞에 와야 할 정적인 것만 앞뒤 순서로 다시 그린다. marks: 바닥에 이미 그린 표시(놓을 칸)처럼
+   *  앞의 가구가 덮어야 하는 것. 그리지는 않고 앞의 가구를 다시 그리게만 한다. */
+  drawFront(context: CanvasRenderingContext2D, agents: readonly Drawable[], time: number, marks: readonly Drawable[] = []) {
+    if (!agents.length && !marks.length) return;
+    const front = frontStatics(this.statics, this.base.outs, [...agents, ...marks]).map((index) => this.statics[index]!);
+    for (const item of sortDrawables([...front, ...agents])) item.paint(context, time);
+    // 단단한 벽 뒤에 가린 캐릭터는 실루엣을 덧그린다.
+    for (const agent of agents) {
+      if (agent.ghost && hidden(agent, front)) agent.ghost(context);
+    }
+  }
+
+  /** 칸 하나를 바닥 표시로 본 앞뒤 가리기용 상자(그리지 않는다) */
+  cellMark(cell: readonly [number, number]): Drawable {
+    const [x, y] = cell;
+    const corners = [this.point(x, y), this.point(x + 1, y), this.point(x + 1, y + 1), this.point(x, y + 1)];
+    return {
+      box: [x + 0.05, x + 0.95, y + 0.05, y + 0.95], layer: 2, paint: () => {},
+      rect: [corners[3]![0] - 8, corners[0]![1] - 8, corners[1]![0] + 8, corners[2]![1] + 8],
+    };
   }
 
   /** 장면 픽셀 → 격자 좌표 */

@@ -15,7 +15,7 @@ import { BADGE_URL, BADGES, SIT_SECONDS, SPRITES, WORKER_URL } from "../../lib/o
 import { BUILDINGS, buildingOf, storeBuilding, storedBuilding, storedSeats, storeSeats, type BuildingId } from "../../lib/office/buildings";
 import { OfficeSim, TALLIES, type Agent, type OfficeSession, type Tally } from "../../lib/office/sim";
 import { blit, clampCamera, LIFT_PX, loadImage, OfficeRenderer, toScene, toScreen, ZONE_COLORS, type Camera, type DropMark, type View } from "../../lib/office/render";
-import { cellAt, nearestOpenCell, zoneAt, type OfficeLayout } from "../../lib/office/layout";
+import { zoneAt, type OfficeLayout } from "../../lib/office/layout";
 import { SIGN_COLORS, World } from "../../lib/office/world";
 import { bubbleLines, clip, shortId, stamp, talkLine, zoneLabel } from "../../lib/office/bubble";
 import { hash } from "../../lib/office/look";
@@ -216,18 +216,14 @@ export function OfficeWindow() {
     return () => query.removeEventListener("change", change);
   }, []);
 
-  /** 끌고 있는 캐릭터를 놓을 칸: 발밑 칸(벽·가구면 가장 가까운 걷는 칸)을 그 구역 색으로 빛낸다. 좌석 칸이면 좌석을 빛낸다. */
+  /** 끌고 있는 캐릭터를 놓을 칸: 놓으면 앉을 좌석(없으면 내려앉을 칸)을 그 구역 색으로 빛내고, 자리를 맞바꿀 동료에게 고리를 두른다. */
   function dropMark(current: { sim: OfficeSim }): DropMark | null {
     const id = pointer.current?.dragging ? pointer.current.agent : null;
     const agent = id ? current.sim.agent(id) : undefined;
-    const grid = current.sim.layout.grid;
-    if (!agent || agent.mode !== "held" || !grid) return null;
-    const seat = Object.values(current.sim.layout.zones).flatMap((zone) => zone.seats)
-      .find((entry) => { const cell = cellAt(grid, agent.x, agent.y); return entry.cell && cell && entry.cell[0] === cell[0] && entry.cell[1] === cell[1]; });
-    const cell = seat?.cell ?? nearestOpenCell(grid, agent.x, agent.y);
-    if (!cell) return null;
-    const zone = grid.zones[cell[1] * grid.cols + cell[0]] ?? "hall";
-    return { cell, color: SIGN_COLORS[zone] };
+    if (!id || !agent || agent.mode !== "held") return null;
+    const target = current.sim.dropTarget(id, agent.x, agent.y);
+    if (!target) return null;
+    return { cell: target.cell, color: SIGN_COLORS[target.zone ?? "hall"], swap: target.swap };
   }
 
   const screenOf = (x: number, y: number) => toScreen(camera.current, view.current, layoutOf().image.width, layoutOf().image.height, x, y);

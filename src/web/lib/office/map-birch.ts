@@ -123,5 +123,6 @@ export const BIRCH_THEME: Theme = {
   grid: "rgba(70, 50, 20, 0.07)",
   shade: 0.85,
   sign: "plate",
-  logo: "rgba(120, 88, 46, 0.26)",
+  logo: "rgba(120, 88, 46, 0.34)",
+  ghost: "rgba(70, 96, 150, 0.85)",
 };

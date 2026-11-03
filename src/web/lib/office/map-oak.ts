@@ -122,4 +122,5 @@ export const OAK_THEME: Theme = {
   shade: 1,
   sign: "neon",
   logo: "rgba(176, 120, 52, 0.32)",
+  ghost: "rgba(255, 196, 140, 0.85)",
 };

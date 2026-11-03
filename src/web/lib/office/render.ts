@@ -84,14 +84,16 @@ export function badgeFor(agent: Agent): BadgeName | null {
   return agent.zone;
 }
 
-/** 끌어 놓을 칸 표시 */
-export interface DropMark { cell: readonly [number, number]; color: string }
+/** 끌어 놓을 칸 표시. swap: 놓으면 자리를 맞바꿀 동료 */
+export interface DropMark { cell: readonly [number, number]; color: string; swap?: string | null }
 
 export class OfficeRenderer {
   readonly scene: HTMLCanvasElement;
   private readonly sceneContext: CanvasRenderingContext2D;
   /** 좌석 노드 → 좌석(앉은 사람의 앞뒤를 좌석 칸으로 잰다) */
   private readonly seats: Map<string, PlannedSeat>;
+  /** 벽 뒤 실루엣을 물들이는 작은 그림판 */
+  private readonly silhouette = document.createElement("canvas");
   private readonly variants = new Map<string, HTMLCanvasElement>();
   private readonly palette: Map<number, Region>;
   /** 화면에 그린 캐릭터 상자(배경 좌표). 뒤에 그린 것이 위에 있으므로 거꾸로 찾는다. */
@@ -146,11 +148,13 @@ export class OfficeRenderer {
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.imageSmoothingEnabled = false;
     context.globalAlpha = 1;
-    context.clearRect(0, 0, this.scene.width, this.scene.height);
-    context.drawImage(this.world.floor, 0, 0);
-    if (target) this.world.drawTarget(context, target.cell, target.color, time);
     const raised = (agent: Agent) => agent.mode === "held" || agent.mode === "land";
     const agents = sim.agents();
+    const near = (point: Point, radius: number) => agents.some((agent) => Math.hypot(agent.x - point[0], agent.y - point[1]) < radius);
+    // 바닥과 벽·가구를 한 번에 깐다. 장면 바깥(하늘)은 비워 둔다.
+    context.clearRect(0, 0, this.scene.width, this.scene.height);
+    this.world.drawBase(context, near);
+    if (target) this.world.drawTarget(context, target.cell, target.color, time);
     this.boxes = [];
     const frames = agents.map((agent) => {
       const { anim, index } = pose(agent, time, this.sheet, this.sitSeconds);
@@ -180,10 +184,11 @@ export class OfficeRenderer {
       context.globalAlpha = agent.alpha;
       if (agent.mode === "appear") this.beam(agent, head, agent.t / 0.6);
       else if (agent.mode === "vanish" && agent.leaving === "home" && agent.node === HALL_CENTER) this.beam(agent, head, agent.t / HOME_SECONDS);
-      context.save();
-      if (agent.flip) { context.translate(left + w, top); context.scale(-1, 1); context.drawImage(this.variant(agent.look), sx, sy, sw, sh, 0, 0, w, h); }
-      else context.drawImage(this.variant(agent.look), sx, sy, sw, sh, left, top, w, h);
-      context.restore();
+      if (agent.flip) {
+        context.setTransform(-1, 0, 0, 1, left + w, top);
+        context.drawImage(this.variant(agent.look), sx, sy, sw, sh, 0, 0, w, h);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      } else context.drawImage(this.variant(agent.look), sx, sy, sw, sh, left, top, w, h);
       context.globalAlpha = 1;
     };
     const standing: Drawable[] = [];
@@ -192,18 +197,40 @@ export class OfficeRenderer {
       if (raised(frame.agent)) { lifted.push(frame); continue; }
       const [gx, gy] = this.groundOf(frame.agent);
       const r = 0.2;
-      standing.push({ box: [gx - r, gx + r, gy - r, gy + r], rect: [frame.left, frame.head - 4, frame.left + frame.w, frame.top + frame.h], layer: 2, paint: () => paint(frame) });
+      standing.push({ box: [gx - r, gx + r, gy - r, gy + r], rect: [frame.left, frame.head - 4, frame.left + frame.w, frame.top + frame.h], layer: 2,
+        paint: () => paint(frame), ghost: () => this.ghost(frame, frame.agent.id === selected || frame.agent.id === hovered || frame.agent.id === target?.swap) });
     }
-    const near = (point: Point, radius: number) => agents.some((agent) => Math.hypot(agent.x - point[0], agent.y - point[1]) < radius);
-    this.world.drawObjects(context, standing, time, near);
+    this.world.drawFront(context, standing, time, target ? [this.world.cellMark(target.cell)] : []);
     for (const frame of lifted) paint(frame);
     // 상자(고르기용)와 배지는 그린 순서와 상관없이 맨 위에 둔다. 앞에 그린 것이 위이므로 들린 캐릭터를 맨 끝에 둔다.
     for (const frame of [...frames.filter((entry) => !raised(entry.agent)).sort((a, b) => a.agent.y - b.agent.y), ...lifted]) {
       const { agent, left, top, w, h, head } = frame;
       this.boxes.push({ id: agent.id, x: left, y: top, w, h, head });
+      if (agent.id === target?.swap) { this.swapBadge(agent.x, head, target.color, time); continue; }
       const badge = talking.has(agent.id) ? null : badgeFor(agent);
       if (badge && this.badges) { context.globalAlpha = agent.alpha; this.badge(badge, agent, head, time); context.globalAlpha = 1; }
     }
+    context.globalAlpha = 1;
+  }
+
+  /** 벽 뒤에 가린 캐릭터의 실루엣. 게임처럼 벽 너머에서도 누가 어디 있는지 보이고, 고른 캐릭터는 더 진하다. */
+  private ghost(frame: { agent: Agent; sx: number; sy: number; sw: number; sh: number; w: number; h: number; left: number; top: number }, strong: boolean) {
+    const { agent, sx, sy, sw, sh, w, h, left, top } = frame;
+    const canvas = this.silhouette;
+    if (canvas.width < w || canvas.height < h) { canvas.width = Math.max(canvas.width, Math.ceil(w)); canvas.height = Math.max(canvas.height, Math.ceil(h)); }
+    const scratch = canvas.getContext("2d")!;
+    scratch.globalCompositeOperation = "source-over";
+    scratch.clearRect(0, 0, canvas.width, canvas.height);
+    scratch.imageSmoothingEnabled = false;
+    if (agent.flip) { scratch.setTransform(-1, 0, 0, 1, w, 0); scratch.drawImage(this.variant(agent.look), sx, sy, sw, sh, 0, 0, w, h); scratch.setTransform(1, 0, 0, 1, 0, 0); }
+    else scratch.drawImage(this.variant(agent.look), sx, sy, sw, sh, 0, 0, w, h);
+    // 원래 색을 옅게 남기고 사옥 빛깔로 물들인다.
+    scratch.globalCompositeOperation = "source-atop";
+    scratch.fillStyle = this.world.theme.ghost;
+    scratch.fillRect(0, 0, w, h);
+    const context = this.sceneContext;
+    context.globalAlpha = agent.alpha * (strong ? 0.7 : 0.42);
+    context.drawImage(canvas, 0, 0, w, h, left, top, w, h);
     context.globalAlpha = 1;
   }
 
@@ -214,6 +241,31 @@ export class OfficeRenderer {
     context.beginPath();
     context.ellipse(agent.x, agent.y, 9 * size, 3.5 * size, 0, 0, Math.PI * 2);
     context.fill();
+  }
+
+  /** 놓으면 자리를 맞바꿀 동료 머리 위의 구역 색 맞바꾸기(⇄) 표시. 살짝 통통 뛰어 눈에 띈다. */
+  private swapBadge(x: number, head: number, color: string, time: number) {
+    const context = this.sceneContext;
+    const r = 8;
+    const cx = Math.round(x), cy = Math.round(head - r - 5 - Math.abs(Math.sin(time * 5)) * 2);
+    context.save();
+    context.shadowColor = color;
+    context.shadowBlur = 8;
+    context.fillStyle = color;
+    context.beginPath();
+    context.arc(cx, cy, r, 0, Math.PI * 2);
+    context.fill();
+    context.shadowBlur = 0;
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1.6;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    // 위 화살표는 오른쪽, 아래 화살표는 왼쪽
+    context.moveTo(cx - 4, cy - 2.5); context.lineTo(cx + 4, cy - 2.5); context.lineTo(cx + 1.5, cy - 5);
+    context.moveTo(cx + 4, cy + 2.5); context.lineTo(cx - 4, cy + 2.5); context.lineTo(cx - 1.5, cy + 5);
+    context.stroke();
+    context.restore();
   }
 
   /** 고른 캐릭터는 컨셉처럼 발밑에 빛나는 청록 고리, 올려 둔 캐릭터는 옅은 흰 고리. */
