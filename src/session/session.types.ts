@@ -2,6 +2,8 @@
 export const SESSION_STATUSES = ["working", "blocked", "handoff", "done"] as const;
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
 export const STATUS_LABELS: Record<SessionStatus, string> = { working: "작업 중", blocked: "막힘", handoff: "인계 대기", done: "완료" };
+/** The end reason a session closed from the web screen carries, so it reads apart from a host's own close. */
+export const WEB_END_REASON = "web";
 
 /** What the repository looked like when the record was last written: enough to find the commit, never the diff. */
 export interface GitClue { branch: string | null; commit: string | null; dirty: number; at: string }

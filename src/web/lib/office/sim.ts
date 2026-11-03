@@ -1,4 +1,4 @@
-import type { SessionStatus } from "../../../session/session.types";
+import { WEB_END_REASON, type SessionStatus } from "../../../session/session.types";
 import { agentName, pickScript, resolveLines, ROLES, SCRIPTS, speaks, taskName, timeline, type ChatContext, type ChatKind, type Line } from "./chat";
 import { cellAt, cellCenter, cellNode, HALL_CENTER, nearestOpenCell, seatNode, spawnNode, WalkGraph, wanderNode, WORK_ZONES, zoneAt, type OfficeLayout, type Point, type Seat, type Zone } from "./layout";
 import { lookFor, type Look } from "./look";
@@ -6,7 +6,7 @@ import { lookFor, type Look } from "./look";
 /** 사무실이 쓰는 세션 정보. 목록 API의 세션에서 이것만 읽는다. */
 export interface OfficeSession {
   id: string; provider: string; agent: string; providerSessionId: string; sessionName: string | null;
-  summary: string; status: SessionStatus | null; createdAt: string; updatedAt: string; endedAt: string | null;
+  summary: string; status: SessionStatus | null; createdAt: string; updatedAt: string; endedAt: string | null; endReason: string | null;
 }
 
 /** held: 마우스로 등을 잡혀 들린 채 버둥거림. land: 내려놓아 바닥에 닿는 중. */
@@ -25,7 +25,7 @@ export interface Agent {
   leaving: false | "out" | "home";
   /** 작업 상태가 바뀌어 새 구역으로 서둘러 가는 중(빠른 걸음) */
   hurry: boolean;
-  /** 완료하고 세션도 끝나 로비에 머무는 세션이 스스로 퇴근할 시각(ms). 아니면 null. */
+  /** 완료해 로비에 머무는 세션이 스스로 퇴근할 시각(ms). 아니면 null. */
   homeAt: number | null;
   /** 노드가 아닌 곳에 서 있다(내려놓은 자리). 다음 걸음은 가장 가까운 노드부터 잡는다. */
   loose: boolean;
@@ -95,14 +95,19 @@ const RECENT_SCRIPTS = 12;
 /** 신나서 말할 때 콩콩 뛰는 시간과 높이 */
 const HOP_SECONDS = 0.5;
 const HOP_PX = 4;
-/** 완료하고 세션도 끝난 뒤 로비에 머무는 시간. 그 뒤에는 스스로 퇴근해 보이지 않는다. */
+/** 완료하고 세션도 끝난 뒤 로비에 머무는 시간. 그 뒤에는 스스로 퇴근해 보이지 않는다. 다른 방에서 로비로 옮겨 온 세션도 적어도 이만큼은 머문다. */
 export const LINGER_MS = 60 * 1000;
-/** 완료+종료 후 머무는 시간이 지났으면 퇴근한 것이다. 사무실에 남지 않는다. */
-export const wentHome = (session: Pick<OfficeSession, "status" | "endedAt">, now: number) =>
-  session.status === "done" && Boolean(session.endedAt) && now - Date.parse(session.endedAt!) >= LINGER_MS;
-/** 로비에서 스스로 퇴근할 시각. 완료+종료가 아니면 null. */
-export const homeTime = (session: Pick<OfficeSession, "status" | "endedAt">) =>
-  session.status === "done" && session.endedAt ? Date.parse(session.endedAt) + LINGER_MS : null;
+/** 완료했지만 세션은 열려 있을 때, 마지막 기록부터 로비에서 쉬는 시간. 그동안 새 기록이 없으면 퇴근한다. */
+export const IDLE_HOME_MS = 10 * 60 * 1000;
+/**
+ * 로비에서 스스로 퇴근할 시각. 완료가 아니면 null.
+ * 세션이 끝났으면 종료 1분 뒤(웹 화면에서 끝냈으면 곧바로), 열려 있으면 마지막 기록 10분 뒤다.
+ */
+export function homeTime(session: Pick<OfficeSession, "status" | "updatedAt" | "endedAt" | "endReason">) {
+  if (session.status !== "done") return null;
+  if (!session.endedAt) return Date.parse(session.updatedAt) + IDLE_HOME_MS;
+  return Date.parse(session.endedAt) + (session.endReason === WEB_END_REASON ? 0 : LINGER_MS);
+}
 /** 범례가 세는 묶음: 구역들과 퇴근 */
 export type Tally = Zone | "home";
 export const TALLIES: readonly Tally[] = [...WORK_ZONES, "hall", "home"];
@@ -162,6 +167,13 @@ export class OfficeSim {
   private readonly met = new Map<string, number>();
   /** 최근에 나온 대본 ID(새것부터) */
   private recent: string[] = [];
+  /**
+   * 메뉴에서 퇴근시킨 세션 → 그때의 마지막 기록 시각. 서버가 완료·종료를 받기 전에도 곧바로 나가며,
+   * 세션이 새 기록을 남기거나 완료가 아니게 되기 전까지는 다시 들어오지 않는다. confirmed: 목록에서 완료로 한 번 보였다.
+   */
+  private readonly dismissed = new Map<string, { updatedAt: string; confirmed: boolean }>();
+  /** 보는 동안 다른 방에서 로비로 옮겨 온 세션 → 들어온 시각(ms). 오래 쉬던 세션도 로비에 와서 잠시 머문 뒤 나간다. */
+  private readonly entered = new Map<string, number>();
   private totals: Record<Tally, number> = { hall: 0, working: 0, blocked: 0, handoff: 0, done: 0, home: 0 };
 
   constructor(readonly layout: OfficeLayout, private readonly options: SimOptions) {
@@ -195,8 +207,13 @@ export class OfficeSim {
     const totals: Record<Tally, number> = { hall: 0, working: 0, blocked: 0, handoff: 0, done: 0, home: 0 };
     const chosen = new Map<string, { session: OfficeSession; zone: Zone }>();
     const home = new Map<string, OfficeSession>();
+    const listed = new Set(sessions.map((session) => session.id));
+    for (const id of [...this.dismissed.keys(), ...this.entered.keys()]) if (!listed.has(id)) { this.dismissed.delete(id); this.entered.delete(id); }
     for (const session of sessions) {
-      if (wentHome(session, now)) { totals.home += 1; home.set(session.id, session); continue; }
+      const agent = this.byId.get(session.id);
+      if (session.status !== "done") this.entered.delete(session.id);
+      else if (this.synced && agent && !agent.leaving && agent.zone !== "done" && !this.entered.has(session.id)) this.entered.set(session.id, now);
+      if (this.wentHome(session, now)) { totals.home += 1; home.set(session.id, session); continue; }
       const zone = zoneOf(session.status);
       totals[zone] += 1;
       if (totals[zone] <= this.capacity[zone]) chosen.set(session.id, { session, zone });
@@ -214,7 +231,7 @@ export class OfficeSim {
         continue;
       }
       agent.session = next.session;
-      agent.homeAt = homeTime(next.session);
+      agent.homeAt = this.homeAt(next.session);
       if (agent.zone !== next.zone || agent.leaving) {
         this.dropChat(agent);
         // 작업 상태가 바뀌면 새 구역으로 서둘러 간다. 처음 들어오거나 다시 돌아온 세션은 보통 걸음이다.
@@ -230,11 +247,47 @@ export class OfficeSim {
     }
   }
 
+  /** 로비에서 스스로 퇴근할 시각. 보는 동안 로비로 옮겨 온 세션은 들어온 뒤 적어도 1분은 머문다(웹에서 끝낸 세션은 곧바로 나간다). */
+  private homeAt(session: OfficeSession) {
+    const due = homeTime(session);
+    const entered = this.entered.get(session.id);
+    return due === null || entered === undefined || session.endReason === WEB_END_REASON ? due : Math.max(due, entered + LINGER_MS);
+  }
+
+  /** 이미 퇴근했는가: 메뉴에서 퇴근시켰거나 로비에 머무는 시간이 지났다. 퇴근시킨 세션이 새 기록을 남기거나 완료가 아니게 되면 다시 출근한다. */
+  private wentHome(session: OfficeSession, now: number) {
+    const dismissal = this.dismissed.get(session.id);
+    if (dismissal) {
+      // 서버가 아직 완료를 받기 전의 목록은 기다리고, 완료로 한 번 보인 뒤 다른 상태가 되면 사용자가 다시 일을 맡긴 것이다.
+      if (dismissal.updatedAt !== session.updatedAt || (dismissal.confirmed && session.status !== "done")) this.dismissed.delete(session.id);
+      else { if (session.status === "done") dismissal.confirmed = true; return true; }
+    }
+    const due = this.homeAt(session);
+    return due !== null && now >= due;
+  }
+
+  /** 메뉴에서 퇴근시킨다. 로비에서 머물지 않고 지금 자리에서 곧바로 EXIT 문으로 서둘러 나간다. */
+  sendHome(id: string) {
+    const agent = this.byId.get(id);
+    if (agent) this.dismissed.set(id, { updatedAt: agent.session.updatedAt, confirmed: false });
+    if (agent && !agent.leaving) this.goHome(agent);
+    if (agent?.leaving === "home") agent.hurry = true;
+  }
+
+  /** 퇴근을 서버에 보내지 못했다. 다음 동기화에서 원래 구역으로 돌아온다. */
+  recall(id: string) { this.dismissed.delete(id); }
+
+  private goHome(agent: Agent) {
+    this.leave(agent, "home");
+    this.totals.home += 1;
+    this.totals[agent.zone] = Math.max(0, this.totals[agent.zone] - 1);
+  }
+
   private add(session: OfficeSession, zone: Zone, placeAtSpot: boolean) {
     const spot = this.claim(zone, session.id);
     const agent: Agent = {
       id: session.id, session, look: lookFor(session.id, this.options.bodies), zone, spot, leaving: false, hurry: false,
-      homeAt: homeTime(session), loose: false, lift: 0, goal: null, chat: null, hush: 0,
+      homeAt: this.homeAt(session), loose: false, lift: 0, goal: null, chat: null, hush: 0,
       node: spot, x: 0, y: 0, path: [], mode: "appear", t: 0, view: "front", flip: false, alpha: 0,
       phase: this.random() * 4, rest: 2 + this.random() * 6,
     };
@@ -497,11 +550,7 @@ export class OfficeSim {
     for (const agent of [...this.byId.values()]) {
       agent.t += dt;
       // 로비에서 머무는 시간이 다 되면 스스로 출구로 나간다.
-      if (agent.homeAt !== null && now >= agent.homeAt && !agent.leaving && agent.mode !== "held" && agent.mode !== "land") {
-        this.leave(agent, "home");
-        this.totals.home += 1;
-        this.totals[agent.zone] = Math.max(0, this.totals[agent.zone] - 1);
-      }
+      if (agent.homeAt !== null && now >= agent.homeAt && !agent.leaving && agent.mode !== "held" && agent.mode !== "land") this.goHome(agent);
       switch (agent.mode) {
         case "appear":
           agent.alpha = Math.min(1, agent.alpha + dt / APPEAR_SECONDS);
@@ -640,7 +689,8 @@ export class OfficeSim {
   private context(members: readonly Agent[]): ChatContext {
     const date = new Date(this.clock());
     const [a, b] = members as [Agent, Agent];
-    const ending = (agent: Agent) => agent.homeAt !== null || agent.leaving === "home";
+    // 곧 퇴근: 세션이 끝나 1분 안에 나가거나 이미 나가는 중. 열린 채 로비에서 쉬는 세션은 아직 아니다.
+    const ending = (agent: Agent) => (agent.homeAt !== null && Boolean(agent.session.endedAt)) || agent.leaving === "home";
     return {
       hour: date.getHours(), day: date.getDay(),
       met: (this.met.get(pairKey(a.id, b.id)) ?? 0) > 0,

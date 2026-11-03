@@ -7,7 +7,7 @@ import { BUILDING_KEY, BUILDINGS, buildingOf, DEFAULT_BUILDING, isBuilding, stor
 
 const session = (id: string, status: OfficeSession["status"]): OfficeSession => ({
   id, provider: "anthropic", agent: "claude-code", providerSessionId: `${id}-provider`, sessionName: id, summary: `${id} 요약`, status,
-  createdAt: "2026-11-02T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z", endedAt: null,
+  createdAt: "2026-11-02T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z", endedAt: null, endReason: null,
 });
 
 describe("사옥", () => {

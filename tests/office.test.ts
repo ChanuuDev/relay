@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HALL_CENTER, inside, seatNode, WalkGraph, zoneAt, type OfficeLayout } from "../src/web/lib/office/layout";
 import { hash, hslToRgb, lookFor, lookKey, recolor, rgbToHsl, seeded, shift } from "../src/web/lib/office/look";
-import { CHAT_GAP, HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type Agent, type OfficeSession, type Talk } from "../src/web/lib/office/sim";
+import { CHAT_GAP, HOME_SECONDS, homeTime, HURRY, IDLE_HOME_MS, LINGER_MS, OfficeSim, WALK_SPEED, type Agent, type OfficeSession, type Talk } from "../src/web/lib/office/sim";
 import { agentName, CHAT_TAIL, fits, LINE_GAP, lineSeconds, pickScript, resolveLines, SCRIPTS, speaks, taskName, timeline, type ChatContext, type Cond } from "../src/web/lib/office/chat";
 import { bubbleLines, clip, shortId, stamp, talkLine } from "../src/web/lib/office/bubble";
 import { badgeFor } from "../src/web/lib/office/render";
@@ -26,14 +26,15 @@ const layout: OfficeLayout = {
     ["hall-s", "d-door"], ["d-door", "d-a"], ["hall-n", "hall-w"], ["hall-n", "hall-e"], ["hall-s", "hall-w"], ["hall-s", "hall-e"]],
 };
 
+/** 대화 대본이 형편(시각)에 따라 달라지지 않게 고정한 평일 오후. 시험 세션은 모두 이 시각 바로 뒤에 기록된다(완료 세션은 마지막 기록 10분 뒤 퇴근한다). */
+const AFTERNOON = new Date(2026, 10, 4, 15, 0).getTime();
+const atAfternoon = () => AFTERNOON;
 let clock = 0;
 const session = (id: string, status: OfficeSession["status"], extra: Partial<OfficeSession> = {}): OfficeSession => ({
   id, provider: "anthropic", agent: "claude-code", providerSessionId: `${id}-provider`, sessionName: id, summary: `${id} 요약`, status,
-  createdAt: new Date(2026, 10, 2, 9, clock).toISOString(), updatedAt: new Date(2026, 10, 2, 9, clock++).toISOString(), endedAt: null, ...extra,
+  createdAt: new Date(AFTERNOON + clock * 1000).toISOString(), updatedAt: new Date(AFTERNOON + clock++ * 1000).toISOString(), endedAt: null, endReason: null, ...extra,
 });
 const run = (sim: OfficeSim, seconds: number) => { for (let t = 0; t < seconds; t += 0.05) sim.step(0.05); };
-/** 대화 대본이 형편(시각)에 따라 달라지지 않게 고정한 평일 오후 */
-const AFTERNOON = new Date(2026, 10, 4, 15, 0).getTime();
 /** 서서 머무는 자리가 셋인 로비 */
 const lobby3: OfficeLayout = { ...layout, zones: { ...layout.zones, done: { door: "d-door", seats: [
   { id: "l1", chair: [190, 250], approach: "d-a", stand: { view: "front" } }, { id: "l2", chair: [215, 250], approach: "d-a", stand: { view: "back" } },
@@ -96,7 +97,7 @@ describe("office walk graph", () => {
 
 describe("office simulation", () => {
   test("the first list seats everyone at once; a new session appears in the hall and walks to its zone", () => {
-    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(1) });
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(1), clock: atAfternoon });
     sim.sync([session("a", "working"), session("b", "done"), session("c", null)]);
     expect(sim.agent("a")).toMatchObject({ mode: "seated", zone: "working", spot: seatNode("w1"), alpha: 1 });
     expect(sim.agent("b")).toMatchObject({ mode: "seated", spot: seatNode("d1") });
@@ -114,7 +115,7 @@ describe("office simulation", () => {
   });
 
   test("a status change stands the agent up, walks it to the new zone and sits it down", () => {
-    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(2) });
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(2), clock: atAfternoon });
     const a = session("a", "working");
     sim.sync([a]);
     sim.sync([{ ...a, status: "done" }]);
@@ -342,12 +343,90 @@ describe("office simulation", () => {
   test("lobby agents do not stand still: after a rest they move to another free spot", () => {
     const lobby: OfficeLayout = { ...layout, zones: { ...layout.zones, done: { door: "d-door", seats: [
       { id: "l1", chair: [190, 250], approach: "d-a", stand: { view: "front" } }, { id: "l2", chair: [215, 250], approach: "d-a", stand: { view: "back" } }] } } };
-    const sim = new OfficeSim(lobby, { sitSeconds: 0.5, random: () => 0.9 });
+    const sim = new OfficeSim(lobby, { sitSeconds: 0.5, random: () => 0.9, clock: atAfternoon });
     sim.sync([session("a", "done")]);
     const agent = sim.agent("a")!;
     expect(agent).toMatchObject({ mode: "stand", spot: seatNode("l1") });
     run(sim, 12);
     expect(agent.spot).toBe(seatNode("l2"));
+  });
+
+  test("a finished session left open rests in the lobby for ten minutes after its last record, then goes home; a new record brings it back", () => {
+    let now = AFTERNOON + 60 * 60 * 1000;
+    const sim = new OfficeSim(lobby3, { sitSeconds: 0.5, random: seeded(12), clock: () => now });
+    const fresh = session("fresh", "done", { updatedAt: new Date(now - 60 * 1000).toISOString() });
+    const stale = session("stale", "done", { updatedAt: new Date(now - IDLE_HOME_MS - 1000).toISOString() });
+    sim.sync([fresh, stale]);
+    expect(sim.agent("stale")).toBeUndefined();
+    expect(sim.agent("fresh")).toMatchObject({ zone: "done", leaving: false, homeAt: Date.parse(fresh.updatedAt) + IDLE_HOME_MS });
+    expect(sim.counts().home).toEqual({ shown: 0, total: 1 });
+    now = Date.parse(fresh.updatedAt) + IDLE_HOME_MS;
+    run(sim, 0.05);
+    expect(sim.agent("fresh")).toMatchObject({ leaving: "home", spot: null });
+    expect(sim.counts().home.total).toBe(2);
+    run(sim, 0.6 + 400 / WALK_SPEED + HOME_SECONDS + 0.2);
+    expect(sim.agent("fresh")).toBeUndefined();
+    // 같은 세션이 새 기록을 남기면 다시 출근해 로비로 들어온다.
+    sim.sync([{ ...stale, updatedAt: new Date(now).toISOString() }]);
+    expect(sim.agent("stale")).toMatchObject({ zone: "done", leaving: false, mode: "appear" });
+  });
+
+  test("a session long quiet that is moved to the lobby by hand still walks in and rests a minute before it leaves", () => {
+    let now = AFTERNOON + 60 * 60 * 1000;
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(13), clock: () => now });
+    const old = session("old", "working", { updatedAt: new Date(now - 2 * 60 * 60 * 1000).toISOString() });
+    sim.sync([old]);
+    now += 5000;
+    sim.sync([{ ...old, status: "done" }]);
+    const agent = sim.agent("old")!;
+    expect(agent).toMatchObject({ zone: "done", leaving: false, hurry: true, homeAt: now + LINGER_MS });
+    now += LINGER_MS;
+    run(sim, 0.05);
+    expect(agent.leaving).toBe("home");
+  });
+
+  test("home from the menu leaves at once from wherever the agent is, hurrying to the exit, and stays gone until there is new work", () => {
+    const now = AFTERNOON + 60 * 60 * 1000;
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(14), clock: () => now });
+    const a = session("a", "working", { updatedAt: new Date(now - 30 * 1000).toISOString() });
+    sim.sync([a]);
+    sim.sendHome("a");
+    const agent = sim.agent("a")!;
+    expect(agent).toMatchObject({ leaving: "home", hurry: true, spot: null });
+    expect(sim.counts().home.total).toBe(1);
+    expect(sim.counts().working.total).toBe(0);
+    // 서버가 완료·종료를 받기 전의 목록이 와도 돌아오지 않고, 받은 뒤의 목록(웹에서 끝냄)에서도 그대로 나간다.
+    sim.sync([a]);
+    expect(agent.leaving).toBe("home");
+    const ended = { ...a, status: "done" as const, endedAt: new Date(now).toISOString(), endReason: "web" };
+    sim.sync([ended]);
+    expect(agent).toMatchObject({ leaving: "home", hurry: true });
+    run(sim, 0.6 + 600 / (WALK_SPEED * HURRY) + HOME_SECONDS + 0.2);
+    expect(sim.agent("a")).toBeUndefined();
+    sim.sync([ended]);
+    expect(sim.agent("a")).toBeUndefined();
+    expect(sim.counts().home.total).toBe(1);
+    // 사용자가 다시 일을 맡기면(완료가 아닌 상태) 출근한다.
+    sim.sync([{ ...ended, status: "working" }]);
+    expect(sim.agent("a")).toMatchObject({ zone: "working", leaving: false });
+  });
+
+  test("a menu send-off that fails comes back to its desk on the next list", () => {
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(15), clock: atAfternoon });
+    const a = session("a", "blocked");
+    sim.sync([a]);
+    sim.sendHome("a");
+    sim.recall("a");
+    sim.sync([a]);
+    expect(sim.agent("a")).toMatchObject({ zone: "blocked", leaving: false, spot: seatNode("b1") });
+  });
+
+  test("home time: an ended session lingers a minute (none if ended on the web screen), an open one ten minutes after its last record", () => {
+    const at = "2026-11-02T12:00:00.000Z", base = Date.parse(at);
+    expect(homeTime({ status: "working", updatedAt: at, endedAt: null, endReason: null })).toBeNull();
+    expect(homeTime({ status: "done", updatedAt: at, endedAt: null, endReason: null })).toBe(base + IDLE_HOME_MS);
+    expect(homeTime({ status: "done", updatedAt: at, endedAt: at, endReason: "prompt_input_exit" })).toBe(base + LINGER_MS);
+    expect(homeTime({ status: "done", updatedAt: at, endedAt: at, endReason: "web" })).toBe(base);
   });
 
   test("a drop point maps to the zone whose floor polygon holds it", () => {
@@ -375,7 +454,7 @@ describe("office simulation", () => {
   });
 
   test("with reduced motion agents go straight to their seats without walking", () => {
-    const sim = new OfficeSim(layout, { sitSeconds: 0.5, reduced: true, random: seeded(5) });
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, reduced: true, random: seeded(5), clock: atAfternoon });
     sim.sync([session("a", "working")]);
     const a = session("b", "blocked");
     sim.sync([a, session("a", "working")]);
@@ -385,7 +464,7 @@ describe("office simulation", () => {
   });
 
   test("badges follow the zone, sleep for ended sessions and hide while walking", () => {
-    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(6) });
+    const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: seeded(6), clock: atAfternoon });
     sim.sync([session("a", "blocked"), session("b", "working", { endedAt: "2026-11-02T00:00:00.000Z" }), session("c", "done"), session("e", "done", { endedAt: "2026-11-02T00:00:00.000Z" }), session("d", null)]);
     expect(badgeFor(sim.agent("a")!)).toBe("blocked");
     expect(badgeFor(sim.agent("b")!)).toBe("ended");

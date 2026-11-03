@@ -40,7 +40,7 @@ const BUILDING_ICONS: Record<BuildingId, LucideIcon> = { night: Moon, birch: Sun
 const toOffice = (session: Session): OfficeSession => ({
   id: session.id, provider: session.provider, agent: session.agent, providerSessionId: session.providerSessionId,
   sessionName: session.sessionName, summary: session.summary, status: session.status,
-  createdAt: session.createdAt, updatedAt: session.updatedAt, endedAt: session.endedAt,
+  createdAt: session.createdAt, updatedAt: session.updatedAt, endedAt: session.endedAt, endReason: session.endReason,
 });
 
 function openSession(id: string) {
@@ -92,6 +92,8 @@ export function OfficeWindow() {
   const [notice, setNotice] = useState<Notice | null>(null);
   /** 사옥 그림을 받아 엔진을 새로 만들 때마다 오른다. 새 시뮬레이션에 목록을 다시 넣고 캔버스를 한 번 떠오르게 한다. */
   const [generation, setGeneration] = useState(0);
+  /** 마지막으로 받은 목록. 메뉴에서 퇴근시킨 뒤 목록을 다시 받기 전에도 자리·말풍선을 곧바로 고친다. */
+  const sessionsRef = useRef<OfficeSession[]>([]);
   const selected = menu && !menuLeaving ? menu.sessionId : null;
   const marks = useRef({ hovered: hovered as string | null, selected });
   marks.current = { hovered: hovered ?? focused, selected };
@@ -132,25 +134,31 @@ export function OfficeWindow() {
     return () => { cancelled = true; };
   }, [building]);
 
+  /** 시뮬레이션이 정한 자리를 범례·키보드 목록·인사 말풍선에 옮긴다. */
+  function showSim(sim: OfficeSim) {
+    const next = sim.counts();
+    setCounts((previous) => (sameCounts(previous, next) ? previous : next));
+    const agents = sim.agents();
+    const visible = new Set(agents.filter((agent) => !agent.leaving).map((agent) => agent.id));
+    setRoster(sessionsRef.current.filter((session) => visible.has(session.id)));
+    // 로비에 머무는 완료 세션과 지금 퇴근하는 세션은 나갈 때 인사 말풍선을 띄운다.
+    setFarewells(agents.filter((agent) => agent.leaving === "home" || agent.homeAt !== null).map((agent) => agent.session));
+  }
+
   // 목록이 바뀔 때마다 누가 어디로 가야 하는지 다시 정한다.
   useEffect(() => {
     const current = engine.current;
     if (!ready || !current || !list.data) return;
-    const sessions = list.data.items.map(toOffice);
-    current.sim.sync(sessions);
-    const next = current.sim.counts();
-    setCounts((previous) => (sameCounts(previous, next) ? previous : next));
-    const agents = current.sim.agents();
-    const visible = new Set(agents.filter((agent) => !agent.leaving).map((agent) => agent.id));
-    setRoster(sessions.filter((session) => visible.has(session.id)));
-    // 로비에 머무는 완료+종료 세션과 지금 퇴근하는 세션은 나갈 때 인사 말풍선을 띄운다.
-    setFarewells(agents.filter((agent) => agent.leaving === "home" || agent.homeAt !== null).map((agent) => agent.session));
+    sessionsRef.current = list.data.items.map(toOffice);
+    current.sim.sync(sessionsRef.current);
+    showSim(current.sim);
   }, [ready, list.data, generation]);
 
-  // 메뉴를 연 캐릭터가 사무실을 떠나면(퇴근·목록에서 빠짐) 메뉴도 닫는다.
+  // 메뉴를 연 캐릭터가 사무실을 떠나면(퇴근·목록에서 빠짐) 메뉴도 닫는다. 메뉴는 그 세션이 있어야 그려지므로
+  // 닫히는 중(메뉴에서 퇴근을 고른 직후)이었어도 닫힘 끝 알림을 기다리지 않고 바로 치운다.
   useEffect(() => {
-    if (menu && !menuLeaving && !roster.some((session) => session.id === menu.sessionId)) { setMenu(null); menuLeavingRef.current = false; }
-  }, [menu, menuLeaving, roster]);
+    if (menu && !roster.some((session) => session.id === menu.sessionId)) { setMenu(null); setMenuLeaving(false); menuLeavingRef.current = false; }
+  }, [menu, roster]);
 
   useEffect(() => {
     if (notice?.tone !== "done") return;
@@ -338,14 +346,29 @@ export function OfficeWindow() {
   }
 
   /** 상태 바꾸기·퇴근을 서버에 보내고 목록을 곧바로 다시 읽는다. 캐릭터는 다음 동기화에서 새 구역으로 서둘러 걸어간다. */
-  async function run(session: OfficeSession, actions: SessionAction[], done: string) {
+  async function run(session: OfficeSession, actions: SessionAction[], done: string, failed?: () => void) {
     try {
       for (const action of actions) await sendAction(session.id, action);
       await queryClient.invalidateQueries({ predicate: (query) => isSessionQuery(query.queryKey) });
       setNotice({ tone: "done", text: done, id: Date.now() });
     } catch (error) {
+      failed?.();
       setNotice({ tone: "error", text: `처리하지 못했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류입니다."}`, id: Date.now() });
     }
+  }
+
+  /** 퇴근은 서버의 답을 기다리지 않고 곧바로 EXIT 문으로 나가게 한다. 보내지 못하면 제자리로 돌려놓는다. */
+  function sendHome(session: OfficeSession, actions: SessionAction[]) {
+    const sim = engine.current?.sim;
+    sim?.sendHome(session.id);
+    if (sim) showSim(sim);
+    void run(session, actions, `‘${clip(nameOf(session), 20)}’ 세션이 작업을 마치고 퇴근합니다.`, () => {
+      const current = engine.current?.sim;
+      if (!current) return;
+      current.recall(session.id);
+      current.sync(sessionsRef.current);
+      showSim(current);
+    });
   }
 
   function menuEntries(session: OfficeSession): MenuEntry[] {
@@ -360,7 +383,7 @@ export function OfficeWindow() {
         onSelect: () => { if (session.status !== status) void run(session, [{ action: "status", status }], `‘${clip(name, 20)}’ 세션을 ${STATUS_TO[status]} 옮깁니다.`); },
       })),
       { kind: "separator", id: "sep-home" },
-      { kind: "item", id: "home", label: "퇴근 (작업 종료)", onSelect: () => void run(session, home, `‘${clip(name, 20)}’ 세션이 작업을 마치고 로비로 갑니다. 1분 뒤 퇴근합니다.`) },
+      { kind: "item", id: "home", label: "퇴근 (작업 종료)", onSelect: () => sendHome(session, home) },
       { kind: "item", id: "detail", label: "세션 상세 열기", onSelect: () => openSession(session.id) },
     ];
   }
@@ -437,7 +460,7 @@ export function OfficeWindow() {
 
   const legend = <div className="office-legend" aria-label="구역별 세션 수">
     {TALLIES.map((tally) => <span key={tally} className="office-legend-item" data-tally={tally}
-      title={tally === "home" ? "작업을 마치고 세션이 끝나 퇴근한 세션" : counts[tally].total > counts[tally].shown ? `최근 ${counts[tally].shown}개만 자리에 있습니다` : undefined}>
+      title={tally === "home" ? "퇴근한 세션: 완료하고 세션이 끝났거나, 완료한 뒤 10분 넘게 새 기록이 없는 세션" : counts[tally].total > counts[tally].shown ? `최근 ${counts[tally].shown}개만 자리에 있습니다` : undefined}>
       <i style={{ background: ZONE_COLORS[tally], boxShadow: tally === "home" ? "none" : `0 0 6px ${ZONE_COLORS[tally]}` }} aria-hidden="true" />
       <span className="office-legend-label">{zoneLabel(tally)}</span><b>{counts[tally].total}</b>
     </span>)}

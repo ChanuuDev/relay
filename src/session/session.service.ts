@@ -3,13 +3,10 @@ import { checkVersion } from "../db/database";
 import { invalid, RelayError, storageError } from "../errors";
 import { directory, flag, identifier, optionalText, pagination, sessionStatus, text } from "../validation";
 import { SessionRepository } from "./session.repository";
-import { brief, type ChainNode, type Filters, type GitClue, type NewSession, type Session, type SessionAction, type SessionStatus } from "./session.types";
+import { brief, WEB_END_REASON, type ChainNode,type Filters, type GitClue, type NewSession, type Session, type SessionAction, type SessionStatus } from "./session.types";
 
 /** The note a session hook stores before the agent has said anything about the work. */
 export const HOOK_SUMMARY = "세션 첫 기록 (훅 자동 기록)";
-
-/** The end reason a session closed from the web screen carries, so it reads apart from a host's own close. */
-export const WEB_END_REASON = "web";
 
 /** How many sessions a chain lists before it stops; a store this deep is beyond what anyone reads. */
 export const CHAIN_LIMIT = 200;

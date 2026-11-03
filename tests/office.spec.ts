@@ -89,12 +89,14 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   await expect(agent(page, "막 시작한 세션")).toContainText("인계 대기");
   await expect(legend).toContainText("홀0");
 
-  // 퇴근(작업 종료)은 완료로 표시하고 세션을 끝낸다. 캐릭터는 로비로 가서 1분 머문다.
+  // 퇴근(작업 종료)은 완료로 표시하고 세션을 끝낸다. 캐릭터는 로비에 머물지 않고 곧바로 EXIT 문으로 나가며 인사한다.
   await agent(page, "API 응답 검증").focus();
   await page.keyboard.press("Enter");
   await menu.getByRole("menuitem", { name: "퇴근 (작업 종료)" }).click();
-  await expect(win(page).locator(".office-toast")).toContainText("로비로 갑니다");
-  await expect(agent(page, "API 응답 검증")).toContainText("완료, 종료됨");
+  await expect(agent(page, "API 응답 검증")).toHaveCount(0);
+  await expect(win(page).locator(".office-toast")).toContainText("작업을 마치고 퇴근합니다");
+  await expect(legend).toContainText("퇴근1");
+  await expect(legend).toContainText("작업 중0");
   const ended = cli(["show", "office-working", "--provider", "anthropic"]);
   expect(ended.session.status).toBe("done");
   expect(ended.session.endedAt).not.toBeNull();
