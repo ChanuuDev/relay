@@ -21,13 +21,13 @@ import iconViewer from "./public/icons/viewer.png" with { type: "file" };
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs" with { type: "file" };
 import iconCalculator from "./public/icons/calculator.png" with { type: "file" };
 import iconOffice from "./public/icons/office.png" with { type: "file" };
-import officeBackground from "./public/office/background.webp" with { type: "file" };
-import officeBirch from "./public/office/hq-birch.webp" with { type: "file" };
-import officeOak from "./public/office/hq-oak.webp" with { type: "file" };
-import officeChairNight from "./public/office/chair-night.png" with { type: "file" };
-import officeChairBirch from "./public/office/chair-birch.png" with { type: "file" };
-import officeChairOak from "./public/office/chair-oak.png" with { type: "file" };
 import officeWorker from "./public/office/worker.png" with { type: "file" };
+import officeKitNight from "./public/office/kit-night.png" with { type: "file" };
+import officeFloorsNight from "./public/office/floors-night.png" with { type: "file" };
+import officeKitBirch from "./public/office/kit-birch.png" with { type: "file" };
+import officeFloorsBirch from "./public/office/floors-birch.png" with { type: "file" };
+import officeKitOak from "./public/office/kit-oak.png" with { type: "file" };
+import officeFloorsOak from "./public/office/floors-oak.png" with { type: "file" };
 import officeBadges from "./public/office/badges.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
 import iconApp512 from "./public/icons/app-512.png" with { type: "file" };
@@ -77,14 +77,14 @@ export const assets = new Map<string, Asset>([
   ["/pdf.worker.mjs", { file: pdfWorker, type: "text/javascript; charset=utf-8", cache: "public, max-age=86400" }],
   ["/icons/calculator.png", image(iconCalculator, "image/png")],
   ["/icons/office.png", image(iconOffice, "image/png")],
-  // 사무실 앱: 사옥 배경 그림(야간 본사·자작나무·오크)과 사옥별 책상 의자, 캐릭터 스프라이트 아틀라스, 상태 배지
-  ["/office/background.webp", image(officeBackground, "image/webp")],
-  ["/office/hq-birch.webp", image(officeBirch, "image/webp")],
-  ["/office/hq-oak.webp", image(officeOak, "image/webp")],
-  ["/office/chair-night.png", image(officeChairNight, "image/png")],
-  ["/office/chair-birch.png", image(officeChairBirch, "image/png")],
-  ["/office/chair-oak.png", image(officeChairOak, "image/png")],
+  // 사무실 앱: 사옥마다 그림 묶음(가구·벽 조각·벽 장식 아틀라스)과 바닥 재질, 캐릭터 스프라이트 아틀라스, 상태 배지
   ["/office/worker.png", image(officeWorker, "image/png")],
+  ["/office/kit-night.png", image(officeKitNight, "image/png")],
+  ["/office/floors-night.png", image(officeFloorsNight, "image/png")],
+  ["/office/kit-birch.png", image(officeKitBirch, "image/png")],
+  ["/office/floors-birch.png", image(officeFloorsBirch, "image/png")],
+  ["/office/kit-oak.png", image(officeKitOak, "image/png")],
+  ["/office/floors-oak.png", image(officeFloorsOak, "image/png")],
   ["/office/badges.png", image(officeBadges, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],
   ["/icons/app-512.png", image(iconApp512, "image/png")],

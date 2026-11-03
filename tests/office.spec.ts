@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { cli, ready, record, useRelayServer } from "./web-helpers";
+import { buildingOf } from "../src/web/lib/office/buildings";
+import { cellCenter } from "../src/web/lib/office/layout";
 
 useRelayServer();
 
@@ -98,9 +100,13 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   expect(ended.session.endedAt).not.toBeNull();
 
   // 캐릭터를 끌어 다른 방에 놓으면 그 방의 작업 상태가 된다. 끄는 동안 커서는 잡은 손이다.
+  // 야간 본사 격자에서 WORKING 방 통로 칸(5, 3). 잡은 손에서 발밑 바닥까지 56px(옷깃 30 + 들린 높이 26)이다.
+  const night = buildingOf("night").layout;
+  const { width, height } = night.image;
   const area = await win(page).locator(".office-stage").boundingBox();
-  const fitScale = Math.min(area!.width / 1676, area!.height / 938);
-  const screen = (x: number, y: number) => ({ x: area!.x + (area!.width - 1676 * fitScale) / 2 + x * fitScale, y: area!.y + (area!.height - 938 * fitScale) / 2 + y * fitScale });
+  const fitScale = Math.min(area!.width / width, area!.height / height);
+  const screen = (x: number, y: number) => ({ x: area!.x + (area!.width - width * fitScale) / 2 + x * fitScale, y: area!.y + (area!.height - height * fitScale) / 2 + y * fitScale });
+  const floor = cellCenter(night.grid!, 5, 3);
   // 인계 방 책상에 앉은 세션을 잡아 작업 중 방에 놓는다(로비·홀 세션은 돌아다니므로 앉아 있는 세션으로 본다).
   await agent(page, "막 시작한 세션").focus();
   const detail = win(page).locator(".office-bubble");
@@ -120,7 +126,7 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   await page.mouse.move(start.x, start.y);
   await expect(win(page).locator(".office-stage")).toHaveAttribute("data-hovering", "");
   await page.mouse.down();
-  const target = screen(820, 200);
+  const target = screen(floor[0], floor[1] - 56);
   for (let step = 1; step <= 12; step++) await page.mouse.move(start.x + ((target.x - start.x) * step) / 12, start.y + ((target.y - start.y) * step) / 12);
   await expect(win(page).locator(".office-stage")).toHaveAttribute("data-dragging", "");
   await page.mouse.up();

@@ -13,7 +13,14 @@ export function cleanup(dir: string) {
   const target = realpathSync(dir);
   const parent = realpathSync(tmpdir());
   if (path.dirname(target).toLowerCase() !== parent.toLowerCase() || !path.basename(target).startsWith("relay-test-")) throw new Error("Unsafe test cleanup target");
-  rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  // Windows는 막 끝난 서버 프로세스·백신 검사가 relay.db를 잠시 붙잡는다. Bun의 rmSync는 maxRetries를 따르지 않으므로 직접 다시 시도한다.
+  for (let attempt = 0; ; attempt++) {
+    try { rmSync(target, { recursive: true, force: true }); return; } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 40 || (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY")) throw error;
+      Bun.sleepSync(100);
+    }
+  }
 }
 export function fixture(retentionDays = 0) {
   const dir = temporary(); const config = loadConfig(dir); const db = openDatabase(config);

@@ -12,10 +12,11 @@ import { reduced } from "../../lib/motion";
 import { sendAction, STATUS_TO } from "../../lib/session-actions";
 import { SESSION_STATUSES, STATUS_LABELS, type Session, type SessionAction } from "../../../session/session.types";
 import { BADGE_URL, BADGES, SIT_SECONDS, SPRITES, WORKER_URL } from "../../lib/office/office-data";
-import { BUILDINGS, buildingOf, storeBuilding, storedBuilding, type BuildingId } from "../../lib/office/buildings";
+import { BUILDINGS, buildingOf, storeBuilding, storedBuilding, storedSeats, storeSeats, type BuildingId } from "../../lib/office/buildings";
 import { OfficeSim, TALLIES, type Agent, type OfficeSession, type Tally } from "../../lib/office/sim";
-import { blit, clampCamera, LIFT_PX, loadImage, OfficeRenderer, toScene, toScreen, ZONE_COLORS, type Camera, type View } from "../../lib/office/render";
-import { zoneAt, type OfficeLayout } from "../../lib/office/layout";
+import { blit, clampCamera, LIFT_PX, loadImage, OfficeRenderer, toScene, toScreen, ZONE_COLORS, type Camera, type DropMark, type View } from "../../lib/office/render";
+import { cellAt, nearestOpenCell, zoneAt, type OfficeLayout } from "../../lib/office/layout";
+import { SIGN_COLORS, World } from "../../lib/office/world";
 import { bubbleLines, clip, shortId, stamp, talkLine, zoneLabel } from "../../lib/office/bubble";
 import { hash } from "../../lib/office/look";
 
@@ -102,19 +103,19 @@ export function OfficeWindow() {
   // 홀(대기)과 로비(완료)의 세션은 가끔 마주 보고 이야기한다. 말은 시뮬레이션이 정하고 여기서는 자리만 둔다.
   const chatters = useMemo(() => roster.filter((session) => session.status === null || session.status === "done"), [roster]);
 
-  // 사옥 그림과 캐릭터 그림을 모두 받은 뒤 그 사옥의 좌석·길로 시뮬레이션과 그리기 준비를 한다.
+  // 사옥 그림 묶음(가구·벽 조각·바닥 재질)과 캐릭터 그림을 모두 받은 뒤 그 사옥의 격자 지도로 시뮬레이션과 그리기 준비를 한다.
   // 사옥을 바꾸면 새 사옥 그림을 다 받을 때까지 지금 사옥을 그대로 그리다가, 모두를 새 사옥 제자리에 앉힌다.
   useEffect(() => {
     let cancelled = false;
     const plan = buildingOf(building);
-    // 책상 의자 그림을 받지 못해도 사무실은 연다(의자 없이 앉아 있을 뿐이다).
-    const chair = plan.chair ? loadImage(plan.chair.url).catch(() => null) : Promise.resolve(null);
-    Promise.all([loadImage(plan.url), loadImage(WORKER_URL), loadImage(BADGE_URL), chair]).then(([background, atlas, badges, chairImage]) => {
+    Promise.all([loadImage(plan.kit.atlas), loadImage(plan.kit.floors), loadImage(WORKER_URL), loadImage(BADGE_URL)]).then(([kit, floors, atlas, badges]) => {
       if (cancelled) return;
+      // 끌어 놓아 고른 자리는 사옥마다 이 브라우저에 남는다.
+      const pins = storedSeats(building);
+      const world = new World(plan.plan, kit, floors, plan.theme);
       engine.current = {
-        sim: new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length }),
-        renderer: new OfficeRenderer(background, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES },
-          chairImage && plan.chair ? { image: chairImage, anchor: plan.chair.anchor, offset: plan.chair.offset } : null),
+        sim: new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length, pins, onPin: () => storeSeats(building, pins) }),
+        renderer: new OfficeRenderer(world, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES }),
       };
       const { width, height } = plan.layout.image;
       camera.current = clampCamera({ zoom: 1, cx: width / 2, cy: height / 2 }, view.current, width, height);
@@ -184,8 +185,8 @@ export function OfficeWindow() {
       last = now;
       time += Math.min(dt, 0.1);
       current.sim.step(dt);
-      current.renderer.draw(current.sim, time, marks.current.hovered, marks.current.selected, talkingNow.current);
-      blit(context, current.renderer.scene, camera.current, view.current, current.renderer.backdrop);
+      current.renderer.draw(current.sim, time, marks.current.hovered, marks.current.selected, talkingNow.current, dropMark(current));
+      blit(context, current.renderer.scene, camera.current, view.current, current.renderer.theme);
       placeBubbles(current);
       frame = requestAnimationFrame(tick);
     };
@@ -215,6 +216,20 @@ export function OfficeWindow() {
     return () => query.removeEventListener("change", change);
   }, []);
 
+  /** 끌고 있는 캐릭터를 놓을 칸: 발밑 칸(벽·가구면 가장 가까운 걷는 칸)을 그 구역 색으로 빛낸다. 좌석 칸이면 좌석을 빛낸다. */
+  function dropMark(current: { sim: OfficeSim }): DropMark | null {
+    const id = pointer.current?.dragging ? pointer.current.agent : null;
+    const agent = id ? current.sim.agent(id) : undefined;
+    const grid = current.sim.layout.grid;
+    if (!agent || agent.mode !== "held" || !grid) return null;
+    const seat = Object.values(current.sim.layout.zones).flatMap((zone) => zone.seats)
+      .find((entry) => { const cell = cellAt(grid, agent.x, agent.y); return entry.cell && cell && entry.cell[0] === cell[0] && entry.cell[1] === cell[1]; });
+    const cell = seat?.cell ?? nearestOpenCell(grid, agent.x, agent.y);
+    if (!cell) return null;
+    const zone = grid.zones[cell[1] * grid.cols + cell[0]] ?? "hall";
+    return { cell, color: SIGN_COLORS[zone] };
+  }
+
   const screenOf = (x: number, y: number) => toScreen(camera.current, view.current, layoutOf().image.width, layoutOf().image.height, x, y);
 
   /** 기록 말풍선을 먼저 달고, 작업 중·퇴근 한마디 말풍선은 서로·기록 말풍선과 겹치지 않는 자리에만 단다(겹치면 한 칸 위로, 그래도 겹치면 숨긴다). */
@@ -241,6 +256,8 @@ export function OfficeWindow() {
       const head = id === target || !say ? null : current.renderer.headOf(id);
       if (!head) { element.style.visibility = "hidden"; continue; }
       const point = screenOf(head.x, head.y);
+      // 확대해서 머리가 화면 밖으로 나간 캐릭터의 말풍선은 가장자리에 몰리지 않게 숨긴다.
+      if (point.x < 0 || point.x > view.current.width || point.y < 0 || point.y > view.current.height + 40) { element.style.visibility = "hidden"; continue; }
       const w = element.offsetWidth, h = element.offsetHeight;
       const left = Math.min(Math.max(point.x - w / 2, edge), Math.max(edge, view.current.width - w - edge));
       let spot: Rect | null = null;

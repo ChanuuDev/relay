@@ -5,7 +5,7 @@ import { CHAT_GAP, HOME_SECONDS, HURRY, LINGER_MS, OfficeSim, WALK_SPEED, type A
 import { agentName, CHAT_TAIL, fits, LINE_GAP, lineSeconds, pickScript, resolveLines, SCRIPTS, speaks, taskName, timeline, type ChatContext, type Cond } from "../src/web/lib/office/chat";
 import { bubbleLines, clip, shortId, stamp, talkLine } from "../src/web/lib/office/bubble";
 import { badgeFor } from "../src/web/lib/office/render";
-import { LAYOUT } from "../src/web/lib/office/office-data";
+import { BUILDINGS } from "../src/web/lib/office/buildings";
 
 /** 홀 가운데에서 네 방으로 문이 하나씩 난 작은 사무실 */
 const layout: OfficeLayout = {
@@ -79,15 +79,17 @@ describe("office walk graph", () => {
     expect(graph.route(seatNode("b1"), seatNode("h1"))).toContain("h-door");
   });
 
-  test("the shipped office layout reaches every seat from the hall", () => {
-    const graph = new WalkGraph(LAYOUT);
-    for (const zone of Object.values(LAYOUT.zones)) {
-      expect(zone.seats.length).toBeGreaterThan(0);
-      for (const seat of zone.seats) expect(graph.route(HALL_CENTER, seatNode(seat.id))).not.toBeNull();
-    }
-    for (const [x, y] of Object.values(LAYOUT.nodes)) {
-      expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(LAYOUT.image.width);
-      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(LAYOUT.image.height);
+  test("every shipped building reaches every seat from the hall", () => {
+    for (const { layout: shipped } of BUILDINGS) {
+      const graph = new WalkGraph(shipped);
+      for (const zone of Object.values(shipped.zones)) {
+        expect(zone.seats.length).toBeGreaterThan(0);
+        for (const seat of zone.seats) expect(graph.route(HALL_CENTER, seatNode(seat.id))).not.toBeNull();
+      }
+      for (const [x, y] of Object.values(shipped.nodes)) {
+        expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(shipped.image.width);
+        expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(shipped.image.height);
+      }
     }
   });
 });

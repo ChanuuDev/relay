@@ -1,6 +1,6 @@
 import type { SessionStatus } from "../../../session/session.types";
 import { agentName, pickScript, resolveLines, ROLES, SCRIPTS, speaks, taskName, timeline, type ChatContext, type ChatKind, type Line } from "./chat";
-import { HALL_CENTER, seatNode, spawnNode, WalkGraph, wanderNode, WORK_ZONES, type OfficeLayout, type Point, type Seat, type Zone } from "./layout";
+import { cellAt, cellCenter, cellNode, HALL_CENTER, nearestOpenCell, seatNode, spawnNode, WalkGraph, wanderNode, WORK_ZONES, zoneAt, type OfficeLayout, type Point, type Seat, type Zone } from "./layout";
 import { lookFor, type Look } from "./look";
 
 /** 사무실이 쓰는 세션 정보. 목록 API의 세션에서 이것만 읽는다. */
@@ -126,6 +126,10 @@ export interface SimOptions {
   sitSeconds: number;
   /** 움직임 줄이기: 걷지 않고 바로 자리로 간다. */
   reduced?: boolean;
+  /** 세션마다 끌어 놓아 고른 좌석 노드. 그 좌석이 비어 있고 같은 구역이면 먼저 준다. */
+  pins?: Map<string, string>;
+  /** 끌어 놓아 좌석을 고르면 알린다(이 브라우저에 남긴다). */
+  onPin?: (id: string, seat: string) => void;
   /** 스프라이트 몸체(머리 모양) 수 */
   bodies?: number;
   random?: () => number;
@@ -143,6 +147,10 @@ export class OfficeSim {
   private readonly taken = new Map<string, string>();
   private readonly capacity: Record<Zone, number>;
   private readonly seats = new Map<string, Seat>();
+  /** 좌석 노드 → 구역 */
+  private readonly seatZone = new Map<string, Zone>();
+  /** 세션 → 끌어 놓아 고른 좌석 노드 */
+  private readonly pins: Map<string, string>;
   private readonly random: () => number;
   private readonly clock: () => number;
   private synced = false;
@@ -160,7 +168,8 @@ export class OfficeSim {
     this.graph = new WalkGraph(layout);
     this.random = options.random ?? Math.random;
     this.clock = options.clock ?? Date.now;
-    for (const zone of Object.values(layout.zones)) for (const seat of zone.seats) this.seats.set(seatNode(seat.id), seat);
+    for (const [zone, entry] of Object.entries(layout.zones)) for (const seat of entry.seats) { this.seats.set(seatNode(seat.id), seat); this.seatZone.set(seatNode(seat.id), zone as Zone); }
+    this.pins = options.pins ?? new Map();
     this.capacity = {
       hall: Math.min(HALL_LIMIT, layout.hall.wander.length),
       working: layout.zones.working.seats.length, blocked: layout.zones.blocked.seats.length,
@@ -245,12 +254,14 @@ export class OfficeSim {
     agent.node = node; agent.x = x; agent.y = y; agent.path = []; agent.loose = false;
   }
 
-  /** 구역의 빈자리 중 문에서 가까운 것부터 준다. 홀은 비어 있는 배회 지점을 고루 쓴다. */
+  /** 구역의 빈자리 중 문에서 가까운 것부터 준다. 홀은 비어 있는 배회 지점을 고루 쓴다. 끌어 놓아 고른 좌석이 비어 있으면 그 자리를 먼저 준다. */
   private claim(zone: Zone, id: string): string {
     const candidates = zone === "hall"
       ? this.shuffle(this.layout.hall.wander.map((_, index) => wanderNode(index)))
       : this.layout.zones[zone].seats.map((seat) => seatNode(seat.id));
-    const free = candidates.find((node) => !this.taken.has(node)) ?? candidates[0]!;
+    const pinned = this.pins.get(id);
+    const free = (pinned && candidates.includes(pinned) && !this.taken.has(pinned) ? pinned : undefined)
+      ?? candidates.find((node) => !this.taken.has(node)) ?? candidates[0]!;
     this.taken.set(free, id);
     return free;
   }
@@ -310,8 +321,13 @@ export class OfficeSim {
 
   private setMode(agent: Agent, mode: Mode) { agent.mode = mode; agent.t = 0; }
 
-  /** 내려놓은 자리처럼 노드가 아닌 곳에서는 가장 가까운 길 노드를 첫걸음으로 삼는다. */
+  /** 내려놓은 자리처럼 노드가 아닌 곳에서는 가장 가까운 길 노드를 첫걸음으로 삼는다. 격자 사무실은 벽 너머가 아닌 그 칸(가장 가까운 걷는 칸)이다. */
   private nearestNode(x: number, y: number) {
+    const grid = this.layout.grid;
+    if (grid) {
+      const cell = nearestOpenCell(grid, x, y);
+      if (cell && this.graph.points.has(cellNode(cell[0], cell[1]))) return cellNode(cell[0], cell[1]);
+    }
     let best = HALL_CENTER, score = Infinity;
     for (const [id, [px, py]] of this.graph.points) {
       if (id.startsWith("seat:")) continue;
@@ -384,12 +400,76 @@ export class OfficeSim {
     agent.x = x; agent.y = y; agent.loose = true;
   }
 
-  /** 내려놓는다. 바닥에 닿은 뒤 제자리(상태가 바뀌었으면 새 구역)로 서둘러 걸어간다. */
+  /** 내려놓는다. 바닥에 닿은 뒤 제자리(상태가 바뀌었으면 새 구역)로 서둘러 걸어간다.
+   *  격자 사무실이면 놓은 칸(벽·가구면 가장 가까운 걷는 칸)에 내려앉는다. 놓은 칸이 좌석이거나 같은 구역의 빈 좌석 곁이면
+   *  그 좌석으로 자리를 옮기고(차지한 사람이 있으면 서로 맞바꾼다), 홀·로비의 빈 바닥이면 그 자리에 머문다.
+   *  다른 구역이면 그 구역으로 상태가 바뀐 뒤 그 좌석을 먼저 받는다. */
   drop(id: string) {
     const agent = this.byId.get(id);
     if (!agent || agent.mode !== "held") return;
     agent.hurry = true;
     this.setMode(agent, "land");
+    const grid = this.layout.grid;
+    if (!grid) return;
+    const at: Point = [agent.x, agent.y];
+    const seat = this.seatNear(at);
+    const cell = nearestOpenCell(grid, at[0], at[1]);
+    if (cell) {
+      [agent.x, agent.y] = cellCenter(grid, cell[0], cell[1]);
+      agent.node = cellNode(cell[0], cell[1]);
+      agent.loose = false;
+    }
+    if (agent.leaving) return;
+    if (seat) { this.pin(agent, seat); return; }
+    // 홀·로비의 빈 바닥에 놓으면 그 칸에 머문다.
+    const zone = cell ? zoneAt(this.layout, agent.x, agent.y) : null;
+    const node = cell ? cellNode(cell[0], cell[1]) : null;
+    if (node && zone === agent.zone && roams(zone) && !this.taken.has(node) && !this.agents().some((other) => other !== agent && other.spot === node)) {
+      this.release(agent);
+      this.taken.set(node, agent.id);
+      agent.spot = node;
+    }
+  }
+
+  /** 놓은 자리가 가리키는 좌석: 좌석 칸 위이거나, 그 구역의 빈 좌석이 한 칸 반 안에 있으면 가장 가까운 것 */
+  private seatNear(at: Point): string | null {
+    const grid = this.layout.grid!;
+    const cell = cellAt(grid, at[0], at[1]);
+    const zone = zoneAt(this.layout, at[0], at[1]);
+    let best: string | null = null, score = Infinity;
+    for (const [node, seat] of this.seats) {
+      if (!seat.cell) continue;
+      const [cx, cy] = seat.cell;
+      const center = cellCenter(grid, cx, cy);
+      if (cell && cell[0] === cx && cell[1] === cy) return node;
+      const value = Math.hypot(center[0] - at[0], center[1] - at[1]);
+      if (zone !== this.seatZone.get(node) || this.taken.has(node)) continue;
+      if (value < score && value < grid.halfW * 1.7) { score = value; best = node; }
+    }
+    return best;
+  }
+
+  /** 끌어 놓아 좌석을 고른다. 같은 구역이면 바로 옮기고(앉은 사람이 있으면 맞바꾼다), 다른 구역이면 상태가 바뀐 뒤 받는다. */
+  private pin(agent: Agent, seat: string) {
+    this.pins.set(agent.id, seat);
+    this.options.onPin?.(agent.id, seat);
+    if (this.seatZone.get(seat) !== agent.zone || agent.spot === seat) return;
+    const holder = this.taken.get(seat);
+    const other = holder ? this.byId.get(holder) : undefined;
+    const previous = agent.spot;
+    this.release(agent);
+    if (other && other !== agent) {
+      // 맞바꾸기: 앉아 있던 사람은 옮긴 사람의 옛 자리로 간다.
+      this.release(other);
+      if (previous && this.seatZone.get(previous) === other.zone) { this.taken.set(previous, other.id); other.spot = previous; }
+      else other.spot = this.claim(other.zone, other.id);
+      this.pins.set(other.id, other.spot);
+      this.options.onPin?.(other.id, other.spot);
+      this.dropChat(other);
+      this.retarget(other);
+    }
+    this.taken.set(seat, agent.id);
+    agent.spot = seat;
   }
 
   step(seconds: number) {
@@ -481,11 +561,33 @@ export class OfficeSim {
     const partner = partners[Math.floor(this.random() * partners.length)]!;
     const thirds = partners.filter((other) => other !== partner && distance(other.x, other.y, partner.x, partner.y) < 260);
     const third = thirds.length && this.random() < GROUP_CHANCE ? thirds[Math.floor(this.random() * thirds.length)]! : null;
-    if (!this.begin(third ? [agent, partner, third] : [agent, partner], third ? "group" : "pair")) return false;
     const side = agent.x < partner.x ? -1 : 1;
-    this.approach(agent, [partner.x + side * CHAT_GAP, partner.y + 2]);
-    if (third) this.approach(third, [partner.x - side * CHAT_GAP, partner.y - 2]);
+    const spot = this.besides(partner, side, [agent]);
+    if (!spot) return false;
+    const other = third ? this.besides(partner, -side, [agent, third], spot) : null;
+    if (!this.begin(third && other ? [agent, partner, third] : [agent, partner], third && other ? "group" : "pair")) return false;
+    this.approach(agent, spot);
+    if (third && other) this.approach(third, other);
     return true;
+  }
+
+  /** 상대 곁에 설 자리. 격자 사무실이면 상대 칸 둘레의 빈 걷는 칸 중 side쪽(화면 왼쪽 -1, 오른쪽 1)을 먼저 고른다. */
+  private besides(partner: Agent, side: number, movers: readonly Agent[], taken?: Point): Point | null {
+    const grid = this.layout.grid;
+    if (!grid) return [partner.x + side * CHAT_GAP, partner.y + side * 2];
+    const cell = cellAt(grid, partner.x, partner.y);
+    if (!cell) return null;
+    const busy = (point: Point) => (taken && Math.hypot(taken[0] - point[0], taken[1] - point[1]) < 4)
+      || this.agents().some((other) => other !== partner && !movers.includes(other) && Math.hypot(other.x - point[0], other.y - point[1]) < 12);
+    const options = [[1, 0], [0, -1], [-1, 0], [0, 1], [1, -1], [-1, 1]]
+      .map(([dx, dy]) => [cell[0] + dx!, cell[1] + dy!] as const)
+      .filter(([cx, cy]) => cx >= 0 && cy >= 0 && cx < grid.cols && cy < grid.rows && grid.open[cy * grid.cols + cx]
+        && zoneAt(this.layout, ...cellCenter(grid, cx, cy)) === partner.zone)
+      .map(([cx, cy]) => cellCenter(grid, cx, cy))
+      .filter((point) => !busy(point))
+      .sort((a, b) => (Math.sign(b[0] - partner.x) === side ? 1 : 0) - (Math.sign(a[0] - partner.x) === side ? 1 : 0)
+        || Math.abs(a[1] - partner.y) - Math.abs(b[1] - partner.y));
+    return options[0] ?? null;
   }
 
   /** 대화할 자리(길 노드가 아닌 곳)로 걸어간다. 자리는 비워 두고, 대화가 끝나면 빈자리를 다시 찾는다. */

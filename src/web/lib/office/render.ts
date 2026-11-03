@@ -1,6 +1,8 @@
 import { lookKey, recolor, REGIONS, type Look, type Region } from "./look";
-import { deskSeat, HALL_CENTER, type Seat } from "./layout";
+import { HALL_CENTER, type Point } from "./layout";
 import { HOME_SECONDS, type Agent, type OfficeSim, type Tally } from "./sim";
+import type { PlannedSeat } from "./iso";
+import type { Drawable, Theme, World } from "./world";
 
 /** 잡아 올릴 때는 빠르게 솟았다 살짝 넘치고, 내려놓을 때는 툭 떨어진다. */
 const liftCurve = (t: number) => (t >= 1 ? 1 : t <= 0 ? 0 : 1 - (1 - t) ** 3);
@@ -33,8 +35,6 @@ export interface SpriteSheet {
   bases: Record<Region, readonly [number, number, number]>;
 }
 export type BadgeName = "working" | "blocked" | "handoff" | "done" | "ended";
-/** 책상 의자 그림(등을 보이고 오른쪽 위를 향함). anchor는 그림 안 받침 가운데 바닥, offset은 좌석 점에서 그 바닥까지(flip이면 x를 뒤집는다). */
-export interface ChairSprite { image: HTMLImageElement; anchor: readonly [number, number]; offset: readonly [number, number] }
 export interface BadgeSheet { scale: number; icons: Record<BadgeName, Rect> }
 
 export interface Camera { zoom: number; cx: number; cy: number }
@@ -84,32 +84,32 @@ export function badgeFor(agent: Agent): BadgeName | null {
   return agent.zone;
 }
 
+/** 끌어 놓을 칸 표시 */
+export interface DropMark { cell: readonly [number, number]; color: string }
+
 export class OfficeRenderer {
   readonly scene: HTMLCanvasElement;
-  /** 화면 비율이 그림과 다를 때 남는 가장자리를 채우는, 배경을 아주 작게 줄인 그림. 키우면 저절로 흐려진다. */
-  readonly backdrop: HTMLCanvasElement;
   private readonly sceneContext: CanvasRenderingContext2D;
+  /** 좌석 노드 → 좌석(앉은 사람의 앞뒤를 좌석 칸으로 잰다) */
+  private readonly seats: Map<string, PlannedSeat>;
   private readonly variants = new Map<string, HTMLCanvasElement>();
   private readonly palette: Map<number, Region>;
   /** 화면에 그린 캐릭터 상자(배경 좌표). 뒤에 그린 것이 위에 있으므로 거꾸로 찾는다. */
   private boxes: { id: string; x: number; y: number; w: number; h: number; head: number }[] = [];
 
-  /** chair: 책상 자리마다 그 의자 깊이에 그릴 의자. 앉은 사람보다 앞에 그려 등받이가 등을 가린다. */
-  constructor(private readonly background: HTMLImageElement, private readonly atlas: HTMLImageElement,
+  /** world: 격자 사무실(바닥·벽·가구). 캐릭터는 그 사이에 바닥 넓이로 앞뒤를 가려 그린다. */
+  constructor(readonly world: World, private readonly atlas: HTMLImageElement,
     private readonly sheet: SpriteSheet, private readonly sitSeconds: number,
-    private readonly badges?: { image: HTMLImageElement; sheet: BadgeSheet }, private readonly chair?: ChairSprite | null) {
+    private readonly badges?: { image: HTMLImageElement; sheet: BadgeSheet }) {
     this.scene = document.createElement("canvas");
-    this.scene.width = background.naturalWidth;
-    this.scene.height = background.naturalHeight;
+    this.scene.width = world.width;
+    this.scene.height = world.height;
     this.sceneContext = this.scene.getContext("2d")!;
-    this.backdrop = document.createElement("canvas");
-    this.backdrop.width = 48;
-    this.backdrop.height = Math.max(1, Math.round((48 * background.naturalHeight) / background.naturalWidth));
-    const backdrop = this.backdrop.getContext("2d")!;
-    backdrop.imageSmoothingQuality = "high";
-    backdrop.drawImage(background, 0, 0, this.backdrop.width, this.backdrop.height);
     this.palette = new Map(sheet.palette.map(([color, region]) => [color, REGIONS[region]!]));
+    this.seats = new Map(world.plan.seats.map((seat) => [`seat:${seat.id}`, seat]));
   }
+
+  get theme(): Theme { return this.world.theme; }
 
   get width() { return this.scene.width; }
   get height() { return this.scene.height; }
@@ -131,29 +131,28 @@ export class OfficeRenderer {
     return canvas;
   }
 
-  /** 배경 크기 그대로 장면을 그린다. 화면에 맞춘 확대·축소는 blit이 한 번에 한다. */
-  /** talking: 머리 위에 말풍선이 떠 있는 캐릭터. 말풍선이 작업 중 표시를 대신하므로 배지를 그리지 않는다. */
-  draw(sim: OfficeSim, time: number, hovered: string | null, selected: string | null, talking: ReadonlySet<string> = new Set()) {
+  /** 앞뒤를 가릴 바닥 자리(격자). 앉았거나 앉으러 가는 중이면 그 좌석 칸, 아니면 발밑을 격자로 되돌린다. */
+  private groundOf(agent: Agent): Point {
+    const seat = this.seats.get(agent.node) ?? (agent.path[0] ? this.seats.get(agent.path[0]) : undefined);
+    if (seat && Math.hypot(agent.x - seat.point[0], agent.y - seat.point[1]) < 24) return [seat.x + 0.5, seat.y + 0.5];
+    return this.world.toGrid(agent.x, agent.y);
+  }
+
+  /** 장면을 그린다: 바닥 → 끌어 놓을 칸 → 발밑 그림자 → 벽·가구·캐릭터(앞뒤 순) → 들린 캐릭터 → 머리 위 배지.
+   *  talking: 머리 위에 말풍선이 떠 있는 캐릭터. 말풍선이 작업 중 표시를 대신하므로 배지를 그리지 않는다. */
+  draw(sim: OfficeSim, time: number, hovered: string | null, selected: string | null, talking: ReadonlySet<string> = new Set(), target: DropMark | null = null) {
     const context = this.sceneContext;
     const { scale } = this.sheet;
+    context.setTransform(1, 0, 0, 1, 0, 0);
     context.imageSmoothingEnabled = false;
     context.globalAlpha = 1;
-    context.drawImage(this.background, 0, 0);
-    // 발 위치(y) 순으로 캐릭터와 책상 의자를 함께 그린다. 의자는 같은 깊이에 앉은 사람보다 나중에(앞에) 그려 등받이가 등을 가리고,
-    // 의자 뒤를 지나는 사람은 의자에 가려진다. 들린 캐릭터는 다른 모든 것보다 앞에 그린다.
-    const raised = (agent: Agent) => (agent.mode === "held" || agent.mode === "land" ? 1 : 0);
-    const items: { depth: number; order: number; agent?: Agent; seat?: Seat }[] =
-      sim.agents().map((agent) => ({ depth: raised(agent) ? Infinity : agent.y, order: agent.x, agent }));
-    if (this.chair) {
-      for (const zone of Object.values(sim.layout.zones)) for (const seat of zone.seats) {
-        if (deskSeat(seat)) items.push({ depth: seat.chair[1] + 0.5, order: 0, seat });
-      }
-    }
-    items.sort((a, b) => a.depth - b.depth || a.order - b.order);
+    context.clearRect(0, 0, this.scene.width, this.scene.height);
+    context.drawImage(this.world.floor, 0, 0);
+    if (target) this.world.drawTarget(context, target.cell, target.color, time);
+    const raised = (agent: Agent) => agent.mode === "held" || agent.mode === "land";
+    const agents = sim.agents();
     this.boxes = [];
-    for (const item of items) {
-      if (item.seat) { this.drawChair(item.seat); continue; }
-      const agent = item.agent!;
+    const frames = agents.map((agent) => {
       const { anim, index } = pose(agent, time, this.sheet, this.sitSeconds);
       const meta = (this.sheet.bodies[agent.look.body] ?? this.sheet.bodies[0]!)[anim];
       const [sx, sy, sw, sh] = meta.frames[index]!;
@@ -165,39 +164,47 @@ export class OfficeRenderer {
       const raise = lifted + Math.round(sim.chatHop(agent.id));
       const top = agent.y - ay * scale - raise;
       const head = agent.y - (ay - meta.top) * scale - raise;
+      return { agent, sx, sy, sw, sh, w, h, left, top, head, lifted };
+    });
+    // 발밑 그림자·고리는 바닥에 먼저 깐다. 앞에 선 가구·벽이 자연스럽게 가린다.
+    for (const { agent, lifted } of frames) {
       context.globalAlpha = agent.alpha;
       const seated = agent.mode === "seated" || agent.mode === "sitdown" || agent.mode === "standup";
       if (lifted > 0) this.shadow(agent, 1 - agent.lift * 0.45);
       else if (agent.id === selected || agent.id === hovered) this.ring(agent, agent.id === selected);
       else if (!seated) this.shadow(agent);
+    }
+    context.globalAlpha = 1;
+    const paint = (frame: (typeof frames)[number]) => {
+      const { agent, sx, sy, sw, sh, w, h, left, top, head } = frame;
+      context.globalAlpha = agent.alpha;
       if (agent.mode === "appear") this.beam(agent, head, agent.t / 0.6);
       else if (agent.mode === "vanish" && agent.leaving === "home" && agent.node === HALL_CENTER) this.beam(agent, head, agent.t / HOME_SECONDS);
       context.save();
       if (agent.flip) { context.translate(left + w, top); context.scale(-1, 1); context.drawImage(this.variant(agent.look), sx, sy, sw, sh, 0, 0, w, h); }
       else context.drawImage(this.variant(agent.look), sx, sy, sw, sh, left, top, w, h);
       context.restore();
+      context.globalAlpha = 1;
+    };
+    const standing: Drawable[] = [];
+    const lifted: (typeof frames)[number][] = [];
+    for (const frame of frames) {
+      if (raised(frame.agent)) { lifted.push(frame); continue; }
+      const [gx, gy] = this.groundOf(frame.agent);
+      const r = 0.2;
+      standing.push({ box: [gx - r, gx + r, gy - r, gy + r], rect: [frame.left, frame.head - 4, frame.left + frame.w, frame.top + frame.h], layer: 2, paint: () => paint(frame) });
+    }
+    const near = (point: Point, radius: number) => agents.some((agent) => Math.hypot(agent.x - point[0], agent.y - point[1]) < radius);
+    this.world.drawObjects(context, standing, time, near);
+    for (const frame of lifted) paint(frame);
+    // 상자(고르기용)와 배지는 그린 순서와 상관없이 맨 위에 둔다. 앞에 그린 것이 위이므로 들린 캐릭터를 맨 끝에 둔다.
+    for (const frame of [...frames.filter((entry) => !raised(entry.agent)).sort((a, b) => a.agent.y - b.agent.y), ...lifted]) {
+      const { agent, left, top, w, h, head } = frame;
       this.boxes.push({ id: agent.id, x: left, y: top, w, h, head });
       const badge = talking.has(agent.id) ? null : badgeFor(agent);
-      if (badge && this.badges) this.badge(badge, agent, head, time);
+      if (badge && this.badges) { context.globalAlpha = agent.alpha; this.badge(badge, agent, head, time); context.globalAlpha = 1; }
     }
     context.globalAlpha = 1;
-  }
-
-  /** 책상 의자 하나. 모니터가 왼쪽 위에 있는 자리(flip)는 좌우를 뒤집는다. */
-  private drawChair(seat: Seat) {
-    const { image, anchor, offset } = this.chair!;
-    const context = this.sceneContext;
-    const flip = Boolean(seat.flip);
-    const x = seat.chair[0] + (flip ? -offset[0] : offset[0]);
-    const y = seat.chair[1] + offset[1] - anchor[1];
-    context.globalAlpha = 1;
-    if (flip) {
-      context.save();
-      context.translate(x + anchor[0] + 1, y);
-      context.scale(-1, 1);
-      context.drawImage(image, 0, 0);
-      context.restore();
-    } else context.drawImage(image, x - anchor[0], y);
   }
 
   /** 발밑 그림자. 들린 동안에는 작고 옅어져 높이를 알려 준다. */
@@ -291,21 +298,26 @@ export function toScene(camera: Camera, view: View, width: number, height: numbe
   return { x: (x - view.width / 2) / scale + camera.cx, y: (y - view.height / 2) / scale + camera.cy };
 }
 
-/** 장면을 화면 캔버스에 옮긴다. 줄일 때는 부드럽게, 두 배 넘게 키울 때는 도트를 그대로 키운다. */
-export function blit(context: CanvasRenderingContext2D, scene: HTMLCanvasElement, camera: Camera, view: View, backdrop?: HTMLCanvasElement) {
+/** 장면을 화면 캔버스에 옮긴다. 바깥은 사옥의 하늘색으로 채우고, 줄일 때는 부드럽게, 두 배 넘게 키울 때는 도트를 그대로 키운다. */
+export function blit(context: CanvasRenderingContext2D, scene: HTMLCanvasElement, camera: Camera, view: View, theme?: Theme) {
   const { width, height } = scene;
   const scale = fitScale(view, width, height) * camera.zoom;
   const device = scale * view.dpr;
   const { width: canvasWidth, height: canvasHeight } = context.canvas;
   context.setTransform(1, 0, 0, 1, 0, 0);
-  context.fillStyle = "#0b1020";
-  context.fillRect(0, 0, canvasWidth, canvasHeight);
-  if (backdrop && (width * device < canvasWidth - 1 || height * device < canvasHeight - 1)) {
-    // 남는 가장자리는 배경을 흐리게 늘려 채우고 어둡게 눌러, 그림 테두리가 끊겨 보이지 않게 한다.
-    const cover = Math.max(canvasWidth / backdrop.width, canvasHeight / backdrop.height);
-    context.imageSmoothingEnabled = true;
-    context.drawImage(backdrop, (canvasWidth - backdrop.width * cover) / 2, (canvasHeight - backdrop.height * cover) / 2, backdrop.width * cover, backdrop.height * cover);
-    context.fillStyle = "rgba(6, 10, 24, 0.55)";
+  if (theme) {
+    const sky = context.createLinearGradient(0, 0, 0, canvasHeight);
+    sky.addColorStop(0, theme.sky[0]);
+    sky.addColorStop(1, theme.sky[1]);
+    context.fillStyle = sky;
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
+    const glow = context.createRadialGradient(canvasWidth / 2, canvasHeight * 0.45, 0, canvasWidth / 2, canvasHeight * 0.45, Math.max(canvasWidth, canvasHeight) * 0.6);
+    glow.addColorStop(0, theme.glow);
+    glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+    context.fillStyle = glow;
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
+  } else {
+    context.fillStyle = "#0b1020";
     context.fillRect(0, 0, canvasWidth, canvasHeight);
   }
   context.imageSmoothingEnabled = device < 1.75;

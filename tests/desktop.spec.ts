@@ -50,7 +50,7 @@ test("배경화면·Dock 아이콘·서체가 실행 파일에서 제공된다",
   record("assets", "자산 확인");
   await ready(page);
   for (const [path, type] of [["/wallpaper-dark.jpg", "image/jpeg"], ["/wallpaper-light.jpg", "image/jpeg"], ["/wallpapers/aurora.jpg", "image/jpeg"],
-    ["/icons/sessions.png", "image/png"], ["/icons/office.png", "image/png"], ["/office/background.webp", "image/webp"], ["/office/worker.png", "image/png"], ["/office/badges.png", "image/png"],
+    ["/icons/sessions.png", "image/png"], ["/icons/office.png", "image/png"], ["/office/kit-night.png", "image/png"], ["/office/floors-night.png", "image/png"], ["/office/worker.png", "image/png"], ["/office/badges.png", "image/png"],
     ["/fonts/PretendardVariable.woff2", "font/woff2"], ["/fonts/JetBrainsMono-latin.woff2", "font/woff2"], ["/fonts/JetBrainsMono-latin-italic.woff2", "font/woff2"]] as const) {
     const response = await page.request.get(env.url + path);
     expect(response.status(), path).toBe(200);
