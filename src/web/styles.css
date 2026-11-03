@@ -1618,6 +1618,9 @@ form.files-path { flex: 1; min-width: 140px; }
 .office-talk[data-kind="home"] { background: #fff2cf; font-weight: 600; }
 /* 홀·로비에서 마주 보고 나누는 잡담: 조금 작고 둥글게 */
 .office-talk[data-kind="chat"] { padding: 2px 8px 3px; border-radius: 9px; font-size: 10.5px; }
+/* 반려동물 울음소리: 더 작고 둥근 분홍 종이 */
+.office-talk[data-kind="pet"] { padding: 1px 6px 2px; border-radius: 8px; border-width: 1.5px; background: #ffe8ef; font-size: 10px; font-weight: 700; }
+.office-talk[data-kind="pet"]::after { bottom: -5px; width: 6px; height: 6px; border-right-width: 1.5px; border-bottom-width: 1.5px; }
 .office-bubble-hint { margin-top: 6px; font-size: 10.5px; color: #7a8199; }
 .office-legend-item[data-tally="home"] { opacity: .85; }
 .office-toast { position: absolute; left: 50%; bottom: 60px; z-index: 4; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;

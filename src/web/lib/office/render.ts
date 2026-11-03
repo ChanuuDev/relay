@@ -1,6 +1,7 @@
 import { lookKey, recolor, REGIONS, type Look, type Region } from "./look";
 import { HALL_CENTER, type Point } from "./layout";
 import { HOME_SECONDS, type Agent, type OfficeSim, type Tally } from "./sim";
+import { petHop, petPose, type Pet, type PetAnim, type PetSim, type Species } from "./pets";
 import type { PlannedSeat } from "./iso";
 import type { Drawable, Theme, World } from "./world";
 
@@ -24,16 +25,25 @@ export interface Anim {
   /** 되풀이할 칸 순서. 없으면 0부터 차례로. 대기 동작은 눈 감은 칸을 가끔만 넣는다. */
   sequence?: readonly number[];
 }
+/** 몸체 하나(옷차림·머리 모양): 아틀라스 안 자기 구역과 애니메이션 칸, 다시 칠할 색 */
+export interface Body {
+  name: string;
+  /** 아틀라스에서 이 몸체 칸들이 모인 상자 [x, y, w, h]. 색을 바꿀 때 이 상자만 칠한다. */
+  band: Rect;
+  anims: Record<AnimName, Anim>;
+  /** 바꿀 수 있는 색: [0xRRGGBB, 부위 번호(REGIONS 순서)] */
+  palette: readonly (readonly [number, number])[];
+  /** 부위마다 가운데 색(HSL). 그 몸체에 없는 부위(예: 츄리닝은 바지도 셔츠 색)는 빠진다. */
+  bases: Partial<Record<Region, readonly [number, number, number]>>;
+}
 export interface SpriteSheet {
   /** 배경 픽셀 하나에 그릴 스프라이트 픽셀 배율 */
   scale: number;
-  /** 몸체(머리 모양)마다 애니메이션 칸. 모두 한 아틀라스에 있다. */
-  bodies: Record<AnimName, Anim>[];
-  /** 바꿀 수 있는 색: [0xRRGGBB, 부위 번호(REGIONS 순서)] */
-  palette: readonly (readonly [number, number])[];
-  /** 부위마다 가운데 색(HSL) */
-  bases: Record<Region, readonly [number, number, number]>;
+  /** 몸체마다 애니메이션 칸. 모두 한 아틀라스에 있다. */
+  bodies: Body[];
 }
+/** 반려동물 아틀라스: 종마다 동작 칸. 색은 바꾸지 않는다. 그림이 아직 없는 종은 빠진다. */
+export interface PetSheet { scale: number; species: Partial<Record<Species, Record<PetAnim, Anim>>> }
 export type BadgeName = "working" | "blocked" | "handoff" | "done" | "ended";
 export interface BadgeSheet { scale: number; icons: Record<BadgeName, Rect> }
 
@@ -56,7 +66,7 @@ export function loadImage(url: string) {
 
 /** 지금 모드와 시각으로 그릴 애니메이션 칸을 고른다. */
 export function pose(agent: Agent, time: number, sheet: SpriteSheet, sitSeconds: number): { anim: AnimName; index: number } {
-  const anims = sheet.bodies[agent.look.body] ?? sheet.bodies[0]!;
+  const anims = (sheet.bodies[agent.look.body] ?? sheet.bodies[0]!).anims;
   const loop = (name: AnimName, speed = 1) => {
     const anim = anims[name];
     const step = Math.floor((time + agent.phase) * anim.fps * speed);
@@ -95,19 +105,23 @@ export class OfficeRenderer {
   /** 벽 뒤 실루엣을 물들이는 작은 그림판 */
   private readonly silhouette = document.createElement("canvas");
   private readonly variants = new Map<string, HTMLCanvasElement>();
-  private readonly palette: Map<number, Region>;
+  /** 몸체마다 바꿀 수 있는 색 → 부위 */
+  private readonly palettes: Map<number, Region>[];
   /** 화면에 그린 캐릭터 상자(배경 좌표). 뒤에 그린 것이 위에 있으므로 거꾸로 찾는다. */
   private boxes: { id: string; x: number; y: number; w: number; h: number; head: number }[] = [];
+  /** 화면에 그린 반려동물 상자(배경 좌표) */
+  private petBoxes: { id: string; x: number; y: number; w: number; h: number; head: number }[] = [];
 
   /** world: 격자 사무실(바닥·벽·가구). 캐릭터는 그 사이에 바닥 넓이로 앞뒤를 가려 그린다. */
   constructor(readonly world: World, private readonly atlas: HTMLImageElement,
     private readonly sheet: SpriteSheet, private readonly sitSeconds: number,
-    private readonly badges?: { image: HTMLImageElement; sheet: BadgeSheet }) {
+    private readonly badges?: { image: HTMLImageElement; sheet: BadgeSheet },
+    private readonly petArt?: { image: HTMLImageElement; sheet: PetSheet }) {
     this.scene = document.createElement("canvas");
     this.scene.width = world.width;
     this.scene.height = world.height;
     this.sceneContext = this.scene.getContext("2d")!;
-    this.palette = new Map(sheet.palette.map(([color, region]) => [color, REGIONS[region]!]));
+    this.palettes = sheet.bodies.map((body) => new Map(body.palette.map(([color, region]) => [color, REGIONS[region]!])));
     this.seats = new Map(world.plan.seats.map((seat) => [`seat:${seat.id}`, seat]));
   }
 
@@ -116,18 +130,25 @@ export class OfficeRenderer {
   get width() { return this.scene.width; }
   get height() { return this.scene.height; }
 
-  /** 모습마다 색을 바꾼 스프라이트 그림을 한 번 만들어 둔다. */
+  private bodyOf(look: Look) {
+    const index = this.sheet.bodies[look.body] ? look.body : 0;
+    return { index, body: this.sheet.bodies[index]! };
+  }
+
+  /** 모습마다 색을 바꾼 그 몸체 구역 그림을 한 번 만들어 둔다. 그림 칸 좌표는 구역 왼쪽 위만큼 빼고 쓴다. */
   private variant(look: Look) {
-    const key = lookKey(look);
+    const { index, body } = this.bodyOf(look);
+    const key = `${index}|${lookKey(look)}`;
     let canvas = this.variants.get(key);
     if (canvas) return canvas;
+    const [bx, by, bw, bh] = body.band;
     canvas = document.createElement("canvas");
-    canvas.width = this.atlas.naturalWidth;
-    canvas.height = this.atlas.naturalHeight;
+    canvas.width = bw;
+    canvas.height = bh;
     const context = canvas.getContext("2d", { willReadFrequently: true })!;
-    context.drawImage(this.atlas, 0, 0);
-    const image = context.getImageData(0, 0, canvas.width, canvas.height);
-    recolor(image.data, this.palette, this.sheet.bases as Record<Region, [number, number, number]>, look);
+    context.drawImage(this.atlas, bx, by, bw, bh, 0, 0, bw, bh);
+    const image = context.getImageData(0, 0, bw, bh);
+    recolor(image.data, this.palettes[index]!, body.bases as Record<Region, [number, number, number]>, look);
     context.putImageData(image, 0, 0);
     this.variants.set(key, canvas);
     return canvas;
@@ -142,7 +163,7 @@ export class OfficeRenderer {
 
   /** 장면을 그린다: 바닥 → 끌어 놓을 칸 → 발밑 그림자 → 벽·가구·캐릭터(앞뒤 순) → 들린 캐릭터 → 머리 위 배지.
    *  talking: 머리 위에 말풍선이 떠 있는 캐릭터. 말풍선이 작업 중 표시를 대신하므로 배지를 그리지 않는다. */
-  draw(sim: OfficeSim, time: number, hovered: string | null, selected: string | null, talking: ReadonlySet<string> = new Set(), target: DropMark | null = null) {
+  draw(sim: OfficeSim, time: number, hovered: string | null, selected: string | null, talking: ReadonlySet<string> = new Set(), target: DropMark | null = null, pets?: PetSim) {
     const context = this.sceneContext;
     const { scale } = this.sheet;
     context.setTransform(1, 0, 0, 1, 0, 0);
@@ -158,8 +179,10 @@ export class OfficeRenderer {
     this.boxes = [];
     const frames = agents.map((agent) => {
       const { anim, index } = pose(agent, time, this.sheet, this.sitSeconds);
-      const meta = (this.sheet.bodies[agent.look.body] ?? this.sheet.bodies[0]!)[anim];
-      const [sx, sy, sw, sh] = meta.frames[index]!;
+      const { body } = this.bodyOf(agent.look);
+      const meta = body.anims[anim];
+      const [fx, fy, sw, sh] = meta.frames[index]!;
+      const sx = fx - body.band[0], sy = fy - body.band[1];
       const [ax, ay] = meta.anchors?.[index] ?? meta.anchor;
       const w = sw * scale, h = sh * scale;
       const left = agent.flip ? agent.x - (sw - ax) * scale : agent.x - ax * scale;
@@ -193,6 +216,8 @@ export class OfficeRenderer {
     };
     const standing: Drawable[] = [];
     const lifted: (typeof frames)[number][] = [];
+    this.petBoxes = [];
+    if (pets && this.petArt) standing.push(...this.petDrawables(pets, time));
     for (const frame of frames) {
       if (raised(frame.agent)) { lifted.push(frame); continue; }
       const [gx, gy] = this.groundOf(frame.agent);
@@ -211,6 +236,79 @@ export class OfficeRenderer {
       if (badge && this.badges) { context.globalAlpha = agent.alpha; this.badge(badge, agent, head, time); context.globalAlpha = 1; }
     }
     context.globalAlpha = 1;
+  }
+
+  /** 반려동물을 바닥 그림자와 함께 앞뒤 순서에 끼운다. 뛰면 떠오르고, 반길 때는 하트가, 잘 때는 Z가 머리 위에 뜬다. */
+  private petDrawables(pets: PetSim, time: number): Drawable[] {
+    const { image, sheet } = this.petArt!;
+    const context = this.sceneContext;
+    const scale = sheet.scale;
+    return pets.all().flatMap((pet): Drawable[] => {
+      const anims = sheet.species[pet.species];
+      if (!anims) return [];
+      const anim = anims[petPose(pet)];
+      const step = Math.floor((time + pet.phase) * anim.fps);
+      const index = anim.sequence ? anim.sequence[step % anim.sequence.length]! : step % anim.frames.length;
+      const [sx, sy, sw, sh] = anim.frames[index % anim.frames.length]!;
+      const [ax, ay] = anim.anchor;
+      const w = sw * scale, h = sh * scale;
+      const hop = petHop(pet);
+      const left = pet.flip ? pet.x - (sw - ax) * scale : pet.x - ax * scale;
+      const top = pet.y - ay * scale - hop;
+      const head = pet.y - (ay - anim.top) * scale - hop;
+      this.petBoxes.push({ id: pet.id, x: left, y: top, w, h, head });
+      const [gx, gy] = this.world.toGrid(pet.x, pet.y);
+      const r = 0.18;
+      return [{
+        box: [gx - r, gx + r, gy - r, gy + r], rect: [left, head - 10, left + w, top + h], layer: 2,
+        paint: () => {
+          context.globalAlpha = pet.alpha;
+          context.fillStyle = `rgba(4, 8, 20, ${0.28 * (1 - hop / 14)})`;
+          context.beginPath();
+          context.ellipse(pet.x, pet.y, Math.max(5, sw * 0.28) * (1 - hop / 20), 2.5, 0, 0, Math.PI * 2);
+          context.fill();
+          if (pet.flip) {
+            context.setTransform(-1, 0, 0, 1, left + w, top);
+            context.drawImage(image, sx, sy, sw, sh, 0, 0, w, h);
+            context.setTransform(1, 0, 0, 1, 0, 0);
+          } else context.drawImage(image, sx, sy, sw, sh, left, top, w, h);
+          if (pet.mode === "interact") this.hearts(pet, head, time);
+          else if (pet.mode === "sleep") this.snore(pet, head, time);
+          context.globalAlpha = 1;
+        },
+      }];
+    });
+  }
+
+  /** 반길 때 머리 위로 떠오르는 작은 도트 하트 둘 */
+  private hearts(pet: Pet, head: number, time: number) {
+    const context = this.sceneContext;
+    const shape = ["01100110", "11111111", "11111111", "01111110", "00111100", "00011000"];
+    for (const lane of [0, 1]) {
+      const progress = ((time + pet.phase + lane * 0.6) % 1.2) / 1.2;
+      const x = Math.round(pet.x - 4 + (lane ? 6 : -6) + Math.sin(progress * Math.PI * 2) * 1.5);
+      const y = Math.round(head - 6 - progress * 12);
+      context.globalAlpha = pet.alpha * (1 - progress) * 0.95;
+      context.fillStyle = "#ff5c8a";
+      shape.forEach((row, dy) => { for (let dx = 0; dx < row.length; dx++) if (row[dx] === "1") context.fillRect(x + dx * 0.75, y + dy * 0.75, 0.75, 0.75); });
+    }
+    context.globalAlpha = pet.alpha;
+  }
+
+  /** 잘 때 머리 위로 천천히 오르는 Z 셋 */
+  private snore(pet: Pet, head: number, time: number) {
+    const context = this.sceneContext;
+    const z = ["1111", "0010", "0100", "1111"];
+    for (const lane of [0, 1, 2]) {
+      const progress = ((time * 0.45 + pet.phase + lane / 3) % 1);
+      const size = 0.6 + progress * 0.5;
+      const x = Math.round(pet.x + (pet.flip ? -4 : 4) + progress * (pet.flip ? -6 : 6));
+      const y = Math.round(head - 2 - progress * 12);
+      context.globalAlpha = pet.alpha * Math.sin(progress * Math.PI) * 0.9;
+      context.fillStyle = "#e8f1ff";
+      z.forEach((row, dy) => { for (let dx = 0; dx < row.length; dx++) if (row[dx] === "1") context.fillRect(x + dx * size, y + dy * size, size, size); });
+    }
+    context.globalAlpha = pet.alpha;
   }
 
   /** 벽 뒤에 가린 캐릭터의 실루엣. 게임처럼 벽 너머에서도 누가 어디 있는지 보이고, 고른 캐릭터는 더 진하다. */
@@ -319,6 +417,21 @@ export class OfficeRenderer {
       if (x >= box.x + inset && x <= box.x + box.w - inset && y >= box.head - 2 && y <= box.y + box.h) return box.id;
     }
     return null;
+  }
+
+  /** 배경 좌표에서 맨 위 반려동물을 찾는다. 작은 동물도 누르기 쉽게 상자를 조금 넓힌다. */
+  petHit(x: number, y: number) {
+    for (let index = this.petBoxes.length - 1; index >= 0; index--) {
+      const box = this.petBoxes[index]!;
+      if (x >= box.x - 2 && x <= box.x + box.w + 2 && y >= box.head - 4 && y <= box.y + box.h + 2) return box.id;
+    }
+    return null;
+  }
+
+  /** 반려동물 머리 위(배경 좌표). 울음소리 말풍선을 단다. */
+  petHeadOf(id: string) {
+    const box = this.petBoxes.find((entry) => entry.id === id);
+    return box ? { x: box.x + box.w / 2, y: box.head, foot: box.y + box.h } : null;
   }
 
   /** 캐릭터 머리 위와 발밑(배경 좌표). 말풍선을 머리 위에 달고, 위에 자리가 없으면 발밑에 단다. */

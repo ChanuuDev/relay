@@ -136,6 +136,15 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   await expect(agent(page, "막 시작한 세션")).toContainText("작업 중");
   expect(cli(["show", "office-new", "--provider", "openai"]).session.status).toBe("working");
 
+  // 반려동물 몇 마리가 서로 다른 종으로 돌아다니고, 부르면 제자리에서 뛰며 울음소리 말풍선을 띄운다.
+  const pets = win(page).locator("[data-office-pet]");
+  await expect.poll(() => pets.count()).toBeGreaterThanOrEqual(3);
+  const species = await pets.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-office-pet")));
+  expect(new Set(species).size).toBe(species.length);
+  await pets.first().focus();
+  await page.keyboard.press("Enter");
+  await expect(win(page).locator('.office-talk[data-kind="pet"]').filter({ visible: true }).first()).toBeVisible();
+
   // 메뉴의 세션 상세 열기는 세션 창에서 그 세션을 연다.
   await agent(page, "결과 정리").focus();
   await page.keyboard.press("Enter");

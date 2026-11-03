@@ -19,6 +19,8 @@ import { zoneAt, type OfficeLayout } from "../../lib/office/layout";
 import { SIGN_COLORS, World } from "../../lib/office/world";
 import { bubbleLines, clip, shortId, stamp, talkLine, zoneLabel } from "../../lib/office/bubble";
 import { hash } from "../../lib/office/look";
+import { PET_NAMES, PetSim, remarkFor, type Species } from "../../lib/office/pets";
+import { PET_URL, PETS } from "../../lib/office/pet-data";
 
 const LIST_URL = "/api/v1/sessions?limit=100";
 type Counts = Record<Tally, { shown: number; total: number }>;
@@ -34,6 +36,10 @@ const talking = (agent: Agent | undefined, kind: "work" | "home") => Boolean(age
 const HOLD_OFFSET = 30 + LIFT_PX;
 /** 말풍선마다 숨쉬기 박자를 어긋나게 한다. */
 const floatDelay = (id: string) => `${-(hash(id) % 2800)}ms`;
+/** 울음소리 말풍선을 띄울 수 있는 반려동물 수(말풍선 자리) */
+const PET_BUBBLES = 8;
+/** 반려동물이 곁에 와서 반길 때 사람이 한마디 할 확률 */
+const REMARK_CHANCE = 0.7;
 /** 사옥 단추 아이콘: 밤·낮·노을 */
 const BUILDING_ICONS: Record<BuildingId, LucideIcon> = { night: Moon, birch: Sun, oak: Sunset };
 
@@ -70,7 +76,8 @@ export function OfficeWindow() {
   const bubbleRef = useRef<HTMLDivElement>(null);
   const talkRefs = useRef(new Map<string, HTMLDivElement>());
   const talkingNow = useRef<ReadonlySet<string>>(new Set());
-  const engine = useRef<{ sim: OfficeSim; renderer: OfficeRenderer; backdrop: HTMLImageElement | null } | null>(null);
+  const engine = useRef<{ sim: OfficeSim; renderer: OfficeRenderer; backdrop: HTMLImageElement | null; pets: PetSim | null } | null>(null);
+  const petRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [building, setBuilding] = useState<BuildingId>(storedBuilding);
   /** 그리고 있는 사옥의 좌석·길. 사옥 그림을 다 받기 전에는 고르기 전 사옥 그대로다. */
   const layoutOf = (): OfficeLayout => engine.current?.sim.layout ?? buildingOf(building).layout;
@@ -81,6 +88,10 @@ export function OfficeWindow() {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  /** 마우스가 반려동물 위에 있다(누르면 부른다) */
+  const [petHovered, setPetHovered] = useState(false);
+  /** 키보드로 부를 수 있게 지금 사무실에 있는 반려동물 */
+  const [petRoster, setPetRoster] = useState<{ id: string; species: Species }[]>([]);
   const [focused, setFocused] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
@@ -112,15 +123,20 @@ export function OfficeWindow() {
     const plan = buildingOf(building);
     // 배경 그림을 받지 못해도 사무실은 연다(하늘색 그러데이션만 깐다).
     const backdrop = plan.theme.backdrop ? loadImage(plan.theme.backdrop).catch(() => null) : Promise.resolve(null);
-    Promise.all([loadImage(plan.kit.atlas), loadImage(plan.kit.floors), loadImage(WORKER_URL), loadImage(BADGE_URL), backdrop]).then(([kit, floors, atlas, badges, backdropImage]) => {
+    // 반려동물 그림을 받지 못해도 사무실은 연다(동물만 없다).
+    const petImage = loadImage(PET_URL).catch(() => null);
+    Promise.all([loadImage(plan.kit.atlas), loadImage(plan.kit.floors), loadImage(WORKER_URL), loadImage(BADGE_URL), backdrop, petImage]).then(([kit, floors, atlas, badges, backdropImage, pets]) => {
       if (cancelled) return;
       // 끌어 놓아 고른 자리는 사옥마다 이 브라우저에 남는다.
       const pins = storedSeats(building);
       const world = new World(plan.plan, kit, floors, plan.theme);
+      const sim = new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length, pins, onPin: () => storeSeats(building, pins) });
       engine.current = {
-        sim: new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length, pins, onPin: () => storeSeats(building, pins) }),
-        renderer: new OfficeRenderer(world, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES }),
+        sim,
+        renderer: new OfficeRenderer(world, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES }, pets ? { image: pets, sheet: PETS } : undefined),
         backdrop: backdropImage,
+        // 그림이 있는 종만 나온다.
+        pets: pets ? new PetSim(plan.layout, sim.graph, { reduced: reduced(), species: Object.keys(PETS.species) as Species[] }) : null,
       };
       const { width, height } = plan.layout.image;
       camera.current = clampCamera({ zoom: 1, cx: width / 2, cy: height / 2 }, view.current, width, height);
@@ -153,6 +169,18 @@ export function OfficeWindow() {
     current.sim.sync(sessionsRef.current);
     showSim(current.sim);
   }, [ready, list.data, generation]);
+
+  // 반려동물은 스스로 드나들므로 키보드로 부를 목록을 가끔 맞춘다.
+  useEffect(() => {
+    if (!ready || !active) return;
+    const refresh = () => {
+      const pets = engine.current?.pets?.all().filter((pet) => !pet.leaving).map((pet) => ({ id: pet.id, species: pet.species })) ?? [];
+      setPetRoster((previous) => (previous.length === pets.length && previous.every((pet, index) => pet.id === pets[index]!.id) ? previous : pets));
+    };
+    refresh();
+    const timer = setInterval(refresh, 1000);
+    return () => clearInterval(timer);
+  }, [ready, active, generation]);
 
   // 메뉴를 연 캐릭터가 사무실을 떠나면(퇴근·목록에서 빠짐) 메뉴도 닫는다. 메뉴는 그 세션이 있어야 그려지므로
   // 닫히는 중(메뉴에서 퇴근을 고른 직후)이었어도 닫힘 끝 알림을 기다리지 않고 바로 치운다.
@@ -196,7 +224,14 @@ export function OfficeWindow() {
       last = now;
       time += Math.min(dt, 0.1);
       current.sim.step(dt);
-      current.renderer.draw(current.sim, time, marks.current.hovered, marks.current.selected, talkingNow.current, dropMark(current));
+      if (current.pets) {
+        current.pets.step(dt, current.sim.agents());
+        // 반려동물이 곁에 와서 반기면 사람이 그 동물을 보고 한마디 한다.
+        for (const { pet, friend } of current.pets.takeGreetings()) {
+          if (Math.random() < REMARK_CHANCE) current.sim.remark(friend, remarkFor(pet.species), 2.6, pet.x);
+        }
+      }
+      current.renderer.draw(current.sim, time, marks.current.hovered, marks.current.selected, talkingNow.current, dropMark(current), current.pets ?? undefined);
       blit(context, current.renderer.scene, camera.current, view.current, current.renderer.theme, current.backdrop);
       placeBubbles(current);
       frame = requestAnimationFrame(tick);
@@ -222,7 +257,11 @@ export function OfficeWindow() {
   useEffect(() => {
     if (typeof matchMedia !== "function") return;
     const query = matchMedia("(prefers-reduced-motion: reduce)");
-    const change = () => { if (engine.current) engine.current.sim.reduced = query.matches; };
+    const change = () => {
+      if (!engine.current) return;
+      engine.current.sim.reduced = query.matches;
+      if (engine.current.pets) engine.current.pets.reduced = query.matches;
+    };
     query.addEventListener("change", change);
     return () => query.removeEventListener("change", change);
   }, []);
@@ -281,6 +320,27 @@ export function OfficeWindow() {
       element.style.visibility = "visible";
     }
     talkingNow.current = visible;
+    // 반려동물 울음소리는 사람 말풍선을 가리지 않는 자리에만 작게 띄운다.
+    const pets = engine.current?.pets?.all() ?? [];
+    petRefs.current.forEach((element, index) => {
+      if (!element) return;
+      const pet = pets[index];
+      const head = pet?.sound ? current.renderer.petHeadOf(pet.id) : null;
+      if (!pet || !head) { element.style.visibility = "hidden"; return; }
+      const text = element.firstElementChild;
+      if (text && text.textContent !== pet.sound) text.textContent = pet.sound;
+      const point = screenOf(head.x, head.y);
+      if (point.x < 0 || point.x > view.current.width || point.y < 0 || point.y > view.current.height + 40) { element.style.visibility = "hidden"; return; }
+      const w = element.offsetWidth, h = element.offsetHeight;
+      const left = Math.min(Math.max(point.x - w / 2, edge), Math.max(edge, view.current.width - w - edge));
+      const top = point.y - 6 - h;
+      const rect = { left, top, right: left + w, bottom: top + h };
+      if (top < edge || placed.some((other) => overlaps(rect, other))) { element.style.visibility = "hidden"; return; }
+      placed.push(rect);
+      element.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+      element.style.setProperty("--tail-x", `${Math.round(Math.min(Math.max(point.x - left, 8), w - 8))}px`);
+      element.style.visibility = "visible";
+    });
   }
 
   /** 기록 말풍선 꼬리가 머리를 가리키게 두되, 창 밖으로 나가지 않게 좌우를 당기고 위에 자리가 없으면 발밑으로 내린다. */
@@ -317,6 +377,12 @@ export function OfficeWindow() {
     const point = scenePoint(event);
     return engine.current?.renderer.hit(point.x, point.y) ?? null;
   };
+  const petHit = (event: ReactPointerEvent) => {
+    const point = scenePoint(event);
+    return engine.current?.renderer.petHit(point.x, point.y) ?? null;
+  };
+  /** 반려동물을 부른다: 제자리에서 뛰며 운다. */
+  function pokePet(id: string) { engine.current?.pets?.poke(id); }
 
   function openMenu(sessionId: string, left: number, top: number, keyboard: boolean) {
     menuLeavingRef.current = false;
@@ -412,6 +478,8 @@ export function OfficeWindow() {
     if (menu) return;
     const id = hit(event);
     if (id !== hovered) setHovered(id);
+    const overPet = !id && Boolean(petHit(event));
+    if (overPet !== petHovered) setPetHovered(overPet);
   }
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
@@ -425,7 +493,9 @@ export function OfficeWindow() {
     pointer.current = null;
     if (!drag || drag.id !== event.pointerId || drag.panned) return;
     if (drag.dragging && drag.agent) { dropAgent(drag.agent); return; }
-    if (drag.agent) openMenu(drag.agent, event.clientX + 6, event.clientY + 6, false);
+    if (drag.agent) { openMenu(drag.agent, event.clientX + 6, event.clientY + 6, false); return; }
+    const pet = petHit(event);
+    if (pet) pokePet(pet);
   }
   /** 내려놓은 자리가 다른 구역이면 그 구역의 작업 상태로 바꾼다. 같은 구역·홀·벽이면 제자리로 돌아간다. */
   function dropAgent(id: string) {
@@ -474,10 +544,10 @@ export function OfficeWindow() {
   };
 
   return <Window id="office" bodyClassName="office-body" header={<WindowTitleBar id="office" right={legend} />}>
-    <div ref={stageRef} className="office-stage" data-building={building} data-ready={ready ? "" : undefined} data-hovering={hovered ? "" : undefined} data-dragging={dragging ? "" : undefined}
+    <div ref={stageRef} className="office-stage" data-building={building} data-ready={ready ? "" : undefined} data-hovering={hovered || petHovered ? "" : undefined} data-dragging={dragging ? "" : undefined}
       onPointerMove={onPointerMove} onPointerDown={onPointerDown} onPointerUp={onPointerUp}
       onPointerCancel={() => { const drag = pointer.current; pointer.current = null; if (drag?.dragging && drag.agent) dropAgent(drag.agent); }}
-      onPointerLeave={() => { if (!pointer.current) setHovered(null); }}>
+      onPointerLeave={() => { if (!pointer.current) { setHovered(null); setPetHovered(false); } }}>
       <canvas ref={canvasRef} className="office-canvas" role="img" data-fade={generation > 1 ? (generation % 2 ? "odd" : "even") : undefined}
         aria-label={`도트 사무실: ${TALLIES.map((tally) => `${zoneLabel(tally)} ${counts[tally].total}`).join(", ")}`} />
       {talkers.map((session) => <div key={session.id} ref={talkRef(`work:${session.id}`)} className="office-talk office-float" data-kind="work" data-talk={session.id}
@@ -491,6 +561,10 @@ export function OfficeWindow() {
       {farewells.map((session) => <div key={session.id} ref={talkRef(`home:${session.id}`)} className="office-talk office-float" data-kind="home" data-talk={session.id}
         style={{ animationDelay: floatDelay(session.id) }} aria-hidden="true">
         <span>퇴근합니다! 수고하셨습니다</span>
+      </div>)}
+      {Array.from({ length: PET_BUBBLES }, (_, index) => <div key={`pet-${index}`} ref={(element) => { petRefs.current[index] = element; }}
+        className="office-talk office-float" data-kind="pet" style={{ visibility: "hidden", animationDelay: `${-index * 350}ms` }} aria-hidden="true">
+        <span />
       </div>)}
       {shownSession ? <div ref={bubbleRef} className="office-bubble office-float" data-agent={shownSession.id} role="status" aria-live="polite"
         style={{ visibility: "hidden", animationDelay: floatDelay(shownSession.id) }}>
@@ -531,6 +605,11 @@ export function OfficeWindow() {
             onClick={() => openMenuAt(session.id)}>
             {nameOf(session)}, {zoneLabel(session.status ?? "hall")}{session.endedAt ? ", 종료됨" : ""}
           </button>
+        </li>)}
+      </ul>
+      <ul className="sr-only" aria-label="사무실 반려동물. 고르면 불러서 뛰며 웁니다">
+        {petRoster.map((pet) => <li key={pet.id}>
+          <button type="button" data-office-pet={pet.species} onClick={() => pokePet(pet.id)}>{PET_NAMES[pet.species]} 부르기</button>
         </li>)}
       </ul>
     </div>

@@ -174,6 +174,8 @@ export class OfficeSim {
   private readonly dismissed = new Map<string, { updatedAt: string; confirmed: boolean }>();
   /** 보는 동안 다른 방에서 로비로 옮겨 온 세션 → 들어온 시각(ms). 오래 쉬던 세션도 로비에 와서 잠시 머문 뒤 나간다. */
   private readonly entered = new Map<string, number>();
+  /** 반려동물을 보고 하는 한마디: 세션 → 말과 끝 시각(시뮬레이션 초) */
+  private readonly remarks = new Map<string, { text: string; until: number }>();
   private totals: Record<Tally, number> = { hall: 0, working: 0, blocked: 0, handoff: 0, done: 0, home: 0 };
 
   constructor(readonly layout: OfficeLayout, private readonly options: SimOptions) {
@@ -810,10 +812,30 @@ export class OfficeSim {
     if (this.random() < (sendoff ? SENDOFF_CHANCE : PASS_CHANCE)) this.begin([agent, near], sendoff ? "sendoff" : "pass");
   }
 
-  /** 지금 이 세션이 말하는 한마디. 대화 중 자기 차례(또는 다 함께 말하는 줄)일 때만 준다. */
+  /**
+   * 반려동물이 곁에 와서 반기면 그 동물을 보고 한마디 한다. 대화 중이거나 떠나는 중이면 하지 않는다.
+   * x: 동물이 있는 곳. 서 있는 사람은 그쪽을 돌아보고, 말하는 동안은 자리를 뜨지 않는다.
+   */
+  remark(id: string, text: string, seconds = 2.6, x?: number) {
+    const agent = this.byId.get(id);
+    if (!agent || agent.leaving || agent.chat) return false;
+    this.remarks.set(id, { text, until: this.time + seconds });
+    if (agent.mode === "stand") {
+      agent.rest = Math.max(agent.rest, seconds + 1);
+      if (x !== undefined && Math.abs(x - agent.x) > 2) { agent.view = "front"; agent.flip = x < agent.x; }
+    }
+    return true;
+  }
+
+  /** 지금 이 세션이 말하는 한마디. 대화 중 자기 차례(또는 다 함께 말하는 줄)일 때, 대화 밖이면 반려동물에게 하는 말을 준다. */
   chatLine(id: string) {
     const talk = this.byId.get(id)?.chat;
-    if (!talk || talk.pending || this.time >= talk.until) return null;
+    if (!talk) {
+      const remark = this.remarks.get(id);
+      if (remark && this.time >= remark.until) this.remarks.delete(id);
+      return remark && this.time < remark.until ? remark.text : null;
+    }
+    if (talk.pending || this.time >= talk.until) return null;
     const line = talk.lines[this.lineIndex(talk)];
     return line && speaks(line, talk.members.indexOf(id)) ? line.text : null;
   }

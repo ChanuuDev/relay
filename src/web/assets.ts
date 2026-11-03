@@ -32,6 +32,7 @@ import officeBackdropNight from "./public/office/backdrop-night.webp" with { typ
 import officeBackdropBirch from "./public/office/backdrop-birch.webp" with { type: "file" };
 import officeBackdropOak from "./public/office/backdrop-oak.webp" with { type: "file" };
 import officeBadges from "./public/office/badges.png" with { type: "file" };
+import officePets from "./public/office/pets.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
 import iconApp512 from "./public/icons/app-512.png" with { type: "file" };
 import iconOpenAI from "./public/icons/providers/openai.png" with { type: "file" };
@@ -92,6 +93,7 @@ export const assets = new Map<string, Asset>([
   ["/office/backdrop-birch.webp", image(officeBackdropBirch, "image/webp")],
   ["/office/backdrop-oak.webp", image(officeBackdropOak, "image/webp")],
   ["/office/badges.png", image(officeBadges, "image/png")],
+  ["/office/pets.png", image(officePets, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],
   ["/icons/app-512.png", image(iconApp512, "image/png")],
   ["/icons/providers/openai.png", image(iconOpenAI, "image/png")],

@@ -328,6 +328,20 @@ describe("office simulation", () => {
     expect(b.chat).toBeNull();
   });
 
+  test("a person greeted by a pet turns to it and says a word, unless already talking or leaving", () => {
+    const sim = new OfficeSim(lobby3, { sitSeconds: 0.5, random: () => 0.9, clock: atAfternoon });
+    sim.sync([session("a", "done"), session("b", null)]);
+    const a = sim.agent("a")!;
+    expect(a.mode).toBe("stand");
+    expect(sim.remark("a", "귀여워!", 2, a.x - 20)).toBe(true);
+    expect(a).toMatchObject({ view: "front", flip: true });
+    expect(a.rest).toBeGreaterThanOrEqual(3);
+    expect(sim.chatLine("a")).toBe("귀여워!");
+    run(sim, 2.1);
+    expect(sim.chatLine("a")).toBeNull();
+    expect(sim.remark("missing", "안녕")).toBe(false);
+  });
+
   test("grabbing one side of a conversation ends it for both", () => {
     const sim = new OfficeSim(layout, { sitSeconds: 0.5, random: () => 0.1, clock: () => AFTERNOON });
     sim.sync([session("a", null), session("b", null)]);
