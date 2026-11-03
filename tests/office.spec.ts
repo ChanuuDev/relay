@@ -143,7 +143,18 @@ test("사무실: 상태 구역 책상에 앉고, 작업 중이면 말풍선으�
   expect(new Set(species).size).toBe(species.length);
   await pets.first().focus();
   await page.keyboard.press("Enter");
-  await expect(win(page).locator('.office-talk[data-kind="pet"]').filter({ visible: true }).first()).toBeVisible();
+  const cry = win(page).locator('.office-talk[data-kind="pet"]').filter({ visible: true }).first();
+  await expect(cry).toBeVisible();
+  // 부른 동물은 제자리에서 뛰므로, 울음 말풍선 바로 아래(머리)를 잡아 끌면 들려 따라오고 놓으면 내려앉는다.
+  const cryBox = (await cry.boundingBox())!;
+  await pets.first().blur();
+  const petAt = { x: cryBox.x + cryBox.width / 2, y: cryBox.y + cryBox.height + 14 };
+  await page.mouse.move(petAt.x, petAt.y);
+  await page.mouse.down();
+  for (let step = 1; step <= 10; step++) await page.mouse.move(petAt.x + step * 6, petAt.y + step * 3);
+  await expect(win(page).locator(".office-stage")).toHaveAttribute("data-dragging", "");
+  await page.mouse.up();
+  await expect(win(page).locator(".office-stage")).not.toHaveAttribute("data-dragging", "");
 
   // 메뉴의 세션 상세 열기는 세션 창에서 그 세션을 연다.
   await agent(page, "결과 정리").focus();

@@ -1,4 +1,4 @@
-import { cellAt, cellNode, type OfficeLayout, type WalkGraph } from "./layout";
+import { cellAt, cellCenter, cellNode, nearestOpenCell, type OfficeLayout, type WalkGraph } from "./layout";
 import type { Agent } from "./sim";
 
 /** 사무실을 돌아다니는 반려동물 */
@@ -9,9 +9,9 @@ export const PET_NAMES: Record<Species, string> = { rabbit: "토끼", squirrel: 
 export type PetAnim = "front_idle" | "back_idle" | "front_walk" | "back_walk" | "cry" | "jump" | "sleep" | "interact";
 /**
  * appear: 빛과 함께 나타남, idle: 서서 쉼, walk: 걷기, cry: 짖기·울기, jump: 제자리 뛰기, sleep: 웅크려 잠,
- * interact: 사람 곁에서 반기기(하트), leave: 출구로 나가는 중, vanish: 사라짐
+ * interact: 사람 곁에서 반기기(하트), vanish: 사라짐, held: 마우스로 들려 버둥거림, land: 내려놓아 바닥에 닿는 중
  */
-export type PetMode = "appear" | "idle" | "walk" | "cry" | "jump" | "sleep" | "interact" | "vanish";
+export type PetMode = "appear" | "idle" | "walk" | "cry" | "jump" | "sleep" | "interact" | "vanish" | "held" | "land";
 
 export interface Pet {
   id: string;
@@ -39,6 +39,8 @@ export interface Pet {
   leaving: boolean;
   /** 지금 내는 소리(말풍선). 없으면 null */
   sound: string | null;
+  /** 들린 높이 0–1. 잡으면 올라가고 내려놓으면 내려온다. */
+  lift: number;
 }
 
 interface Traits {
@@ -70,6 +72,10 @@ export const CRY_SECONDS = 1.6;
 export const JUMP_SECONDS = 0.9;
 const APPEAR_SECONDS = 0.6;
 const VANISH_SECONDS = 0.8;
+/** 들어 올리는 시간과 내려놓는 시간, 들렸을 때 바닥에서 떠오르는 높이(배경 픽셀) */
+const LIFT_SECONDS = 0.14;
+const LAND_SECONDS = 0.2;
+export const PET_LIFT_PX = 14;
 /** 반기러 갈 사람을 찾는 거리, 그 곁에 머무는 시간 */
 const VISIT_RADIUS = 360;
 const VISIT_SECONDS = [4, 7] as const;
@@ -136,7 +142,7 @@ export class PetSim {
     const pet: Pet = {
       id: `pet-${++this.serial}`, species, x, y, node, path: [], mode: "appear", t: 0, hold: 0,
       view: "front", flip: this.random() < 0.5, alpha: first ? 1 : 0, phase: this.random() * 4,
-      rest: 1 + this.random() * 4, friend: null, leaving: false, sound: null,
+      rest: 1 + this.random() * 4, friend: null, leaving: false, sound: null, lift: 0,
     };
     if (first) pet.mode = "idle";
     this.pets.set(pet.id, pet);
@@ -145,10 +151,42 @@ export class PetSim {
 
   private setMode(pet: Pet, mode: PetMode, hold = 0) { pet.mode = mode; pet.t = 0; pet.hold = hold; }
 
+  /** 마우스로 목덜미를 잡아 들어 올린다. 하던 일(반기기·걷기·잠)은 그만두고 버둥거리며 운다. 나타나거나 사라지는 중이면 잡지 않는다. */
+  grab(id: string) {
+    const pet = this.pets.get(id);
+    if (!pet || pet.mode === "appear" || pet.mode === "vanish" || pet.mode === "held") return false;
+    pet.path = [];
+    pet.friend = null;
+    pet.view = "front";
+    pet.sound = this.say(pet.species, "sounds");
+    this.setMode(pet, "held");
+    return true;
+  }
+
+  /** 들린 동물의 발밑 바닥 자리를 옮긴다(배경 좌표). */
+  hold(id: string, x: number, y: number) {
+    const pet = this.pets.get(id);
+    if (!pet || pet.mode !== "held") return;
+    if (Math.abs(x - pet.x) > 0.5) pet.flip = x < pet.x;
+    pet.x = x; pet.y = y;
+  }
+
+  /** 내려놓는다. 놓은 자리에서 가장 가까운 걷는 칸에 내려앉아 그 자리에서 쉰다(나가던 동물은 다시 출구로 간다). */
+  drop(id: string) {
+    const pet = this.pets.get(id);
+    if (!pet || pet.mode !== "held") return;
+    const grid = this.layout.grid;
+    const cell = grid ? nearestOpenCell(grid, pet.x, pet.y) : null;
+    const node = cell && this.graph.points.has(cellNode(cell[0], cell[1])) ? cellNode(cell[0], cell[1]) : this.closest(pet.x, pet.y) ?? pet.node;
+    const [x, y] = cell && grid && node === cellNode(cell[0], cell[1]) ? cellCenter(grid, cell[0], cell[1]) : this.graph.point(node);
+    pet.node = node; pet.x = x; pet.y = y;
+    this.setMode(pet, "land");
+  }
+
   /** 눌러서 부른다: 제자리에서 뛰며 운다. 자고 있었으면 깬다. */
   poke(id: string) {
     const pet = this.pets.get(id);
-    if (!pet || pet.leaving || pet.mode === "appear" || pet.mode === "vanish") return false;
+    if (!pet || pet.leaving || pet.mode === "appear" || pet.mode === "vanish" || pet.mode === "held" || pet.mode === "land") return false;
     pet.path = []; pet.friend = null;
     pet.view = "front";
     pet.sound = this.say(pet.species, "sounds");
@@ -201,6 +239,19 @@ export class PetSim {
           break;
         case "sleep":
           if (pet.t >= pet.hold) this.calm(pet);
+          break;
+        case "held":
+          pet.lift = Math.min(1, pet.lift + dt / LIFT_SECONDS);
+          if (pet.t > CRY_SECONDS) pet.sound = null;
+          break;
+        case "land":
+          pet.lift = Math.max(0, pet.lift - dt / LAND_SECONDS);
+          if (pet.lift > 0) break;
+          if (pet.leaving && this.layout.exit && this.go(pet, this.layout.exit)) break;
+          pet.leaving = false;
+          this.calm(pet);
+          // 내려놓으면 잠시 그 자리에 머문다.
+          pet.rest = 3 + this.random() * 4;
           break;
       }
     }
@@ -363,8 +414,12 @@ export class PetSim {
   }
 }
 
-/** 뛰는 동안 바닥에서 떠오르는 높이(배경 픽셀). 그림은 웅크렸다 뻗는 자세만 있고 높이는 여기서 준다. */
+/** 잡아 올릴 때는 빠르게 솟았다가, 내려놓을 때는 툭 떨어진다. */
+const liftCurve = (t: number) => (t >= 1 ? 1 : t <= 0 ? 0 : 1 - (1 - t) ** 3);
+
+/** 뛰거나 들린 동안 바닥에서 떠오르는 높이(배경 픽셀). 그림은 웅크렸다 뻗는 자세만 있고 높이는 여기서 준다. */
 export function petHop(pet: Pet) {
+  if (pet.mode === "held" || pet.mode === "land") return Math.round(liftCurve(pet.lift) * PET_LIFT_PX);
   if (pet.mode !== "jump") return 0;
   return Math.round(Math.abs(Math.sin((pet.t / JUMP_SECONDS) * Math.PI)) * 7);
 }
@@ -380,7 +435,7 @@ export function petPose(pet: Pet): PetAnim {
   switch (pet.mode) {
     case "walk": return pet.view === "front" ? "front_walk" : "back_walk";
     case "cry": return "cry";
-    case "jump": return "jump";
+    case "jump": case "held": case "land": return "jump";
     case "sleep": return "sleep";
     case "interact": return "interact";
     default: return pet.view === "front" ? "front_idle" : "back_idle";

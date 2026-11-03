@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { seatNode, WalkGraph, type OfficeLayout } from "../src/web/lib/office/layout";
+import { cellCenter, seatNode, WalkGraph, type OfficeLayout } from "../src/web/lib/office/layout";
 import { seeded } from "../src/web/lib/office/look";
 import { JUMP_SECONDS, petHop, petPose, PetSim, remarkFor, SPECIES, TRAITS, type Pet } from "../src/web/lib/office/pets";
 import { OfficeSim, type OfficeSession } from "../src/web/lib/office/sim";
@@ -140,5 +140,49 @@ describe("office pets with part of the art", () => {
     const pets = new PetSim(layout, new WalkGraph(layout), { random: seeded(8), count: 4, species: ["cat", "panda"] });
     expect(pets.all()).toHaveLength(4);
     expect(new Set(pets.all().map((pet) => pet.species))).toEqual(new Set(["cat", "panda"]));
+  });
+});
+
+describe("carrying pets", () => {
+  test("a pet picked up by the scruff stops what it was doing, cries and follows the pointer, then lands on the nearest walkable cell and rests there", () => {
+    const shipped = buildingOf("night").layout;
+    const grid = shipped.grid!;
+    const pets = new PetSim(shipped, new WalkGraph(shipped), { random: seeded(9), count: 1 });
+    const pet = pets.all()[0]!;
+    Object.assign(pet, { mode: "sleep", hold: 100 });
+    expect(pets.grab(pet.id)).toBe(true);
+    expect(pet).toMatchObject({ mode: "held", path: [], friend: null, view: "front" });
+    expect(TRAITS[pet.species].sounds).toContain(pet.sound!);
+    expect(petPose(pet)).toBe("jump");
+    expect(pets.grab(pet.id)).toBe(false);
+    expect(pets.poke(pet.id)).toBe(false);
+    run(pets, 0.3);
+    expect(pet.lift).toBe(1);
+    expect(petHop(pet)).toBeGreaterThan(10);
+    // 아무 데나 끌고 가서 놓는다: 가장 가까운 걷는 칸 한가운데에 내려앉는다.
+    const [tx, ty] = cellCenter(grid, 12, 9);
+    pets.hold(pet.id, tx + 3, ty - 2);
+    expect([pet.x, pet.y]).toEqual([tx + 3, ty - 2]);
+    pets.drop(pet.id);
+    expect(pet.mode).toBe("land");
+    expect(pet.node.startsWith("c:")).toBe(true);
+    expect([pet.x, pet.y]).toEqual([...new WalkGraph(shipped).point(pet.node)]);
+    run(pets, 0.3);
+    expect(pet).toMatchObject({ mode: "idle", lift: 0 });
+    expect(pet.rest).toBeGreaterThan(2);
+    expect(petHop(pet)).toBe(0);
+  });
+
+  test("a pet carried off on its way out heads for the exit again once put down", () => {
+    const pets = new PetSim(layout, new WalkGraph(layout), { random: seeded(10), count: 1 });
+    const pet = pets.all()[0]!;
+    pet.leaving = true;
+    expect(pets.grab(pet.id)).toBe(true);
+    pets.hold(pet.id, 150, 150);
+    pets.drop(pet.id);
+    run(pets, 0.3);
+    expect(pet.mode).toBe("walk");
+    expect(pet.path.at(-1)).toBe(layout.exit!);
+    expect(pets.grab("missing")).toBe(false);
   });
 });

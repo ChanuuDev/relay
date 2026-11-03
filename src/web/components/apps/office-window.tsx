@@ -19,7 +19,7 @@ import { zoneAt, type OfficeLayout } from "../../lib/office/layout";
 import { SIGN_COLORS, World } from "../../lib/office/world";
 import { bubbleLines, clip, shortId, stamp, talkLine, zoneLabel } from "../../lib/office/bubble";
 import { hash } from "../../lib/office/look";
-import { PET_NAMES, PetSim, remarkFor, type Species } from "../../lib/office/pets";
+import { PET_LIFT_PX, PET_NAMES, PetSim, remarkFor, type Species } from "../../lib/office/pets";
 import { PET_URL, PETS } from "../../lib/office/pet-data";
 
 const LIST_URL = "/api/v1/sessions?limit=100";
@@ -34,6 +34,8 @@ const talking = (agent: Agent | undefined, kind: "work" | "home") => Boolean(age
   : !agent!.leaving && agent!.zone === "working" && !agent!.session.endedAt && (agent!.mode === "seated" || agent!.mode === "sitdown"));
 /** 잡은 손(포인터)에서 발밑 바닥까지: 옷깃에서 발까지 30px에 들린 높이를 더한다. */
 const HOLD_OFFSET = 30 + LIFT_PX;
+/** 반려동물은 목덜미를 잡는다: 잡은 손에서 발밑까지 10px에 들린 높이를 더한다. */
+const PET_HOLD_OFFSET = 10 + PET_LIFT_PX;
 /** 말풍선마다 숨쉬기 박자를 어긋나게 한다. */
 const floatDelay = (id: string) => `${-(hash(id) % 2800)}ms`;
 /** 울음소리 말풍선을 띄울 수 있는 반려동물 수(말풍선 자리) */
@@ -83,7 +85,7 @@ export function OfficeWindow() {
   const layoutOf = (): OfficeLayout => engine.current?.sim.layout ?? buildingOf(building).layout;
   const camera = useRef<Camera>({ zoom: 1, cx: buildingOf(building).layout.image.width / 2, cy: buildingOf(building).layout.image.height / 2 });
   const view = useRef<View>({ width: 1, height: 1, dpr: 1 });
-  const pointer = useRef<{ x: number; y: number; id: number; panned: boolean; cx: number; cy: number; agent: string | null; dragging: boolean } | null>(null);
+  const pointer = useRef<{ x: number; y: number; id: number; panned: boolean; cx: number; cy: number; agent: string | null; pet: string | null; dragging: boolean } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -468,6 +470,16 @@ export function OfficeWindow() {
         }
         return;
       }
+      // 반려동물도 끌면 목덜미를 잡혀 들린 채 따라오고, 놓은 자리의 걷는 칸에 내려앉는다.
+      if (drag.pet) {
+        const pets = engine.current?.pets;
+        if (!drag.dragging && Math.hypot(dx, dy) > 4 && pets?.grab(drag.pet)) { drag.dragging = true; setDragging(drag.pet); setHovered(null); setPetHovered(false); }
+        if (drag.dragging) {
+          const point = scenePoint(event);
+          pets?.hold(drag.pet, point.x, point.y + PET_HOLD_OFFSET);
+        }
+        return;
+      }
       if (!drag.panned && Math.hypot(dx, dy) > 4 && camera.current.zoom > 1.01) drag.panned = true;
       if (drag.panned) {
         const scale = screenOf(0, 0).scale;
@@ -483,9 +495,10 @@ export function OfficeWindow() {
   }
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
-    const agent = hit(event);
+    const hitAgent = hit(event);
+    const agent = hitAgent && roster.some((session) => session.id === hitAgent) ? hitAgent : null;
     pointer.current = { x: event.clientX, y: event.clientY, id: event.pointerId, panned: false, cx: camera.current.cx, cy: camera.current.cy,
-      agent: agent && roster.some((session) => session.id === agent) ? agent : null, dragging: false };
+      agent, pet: agent ? null : petHit(event), dragging: false };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
@@ -493,9 +506,14 @@ export function OfficeWindow() {
     pointer.current = null;
     if (!drag || drag.id !== event.pointerId || drag.panned) return;
     if (drag.dragging && drag.agent) { dropAgent(drag.agent); return; }
+    if (drag.dragging && drag.pet) { dropPet(drag.pet); return; }
     if (drag.agent) { openMenu(drag.agent, event.clientX + 6, event.clientY + 6, false); return; }
-    const pet = petHit(event);
-    if (pet) pokePet(pet);
+    if (drag.pet) pokePet(drag.pet);
+  }
+  /** 들고 있던 반려동물을 놓은 자리에 내려놓는다. */
+  function dropPet(id: string) {
+    setDragging(null);
+    engine.current?.pets?.drop(id);
   }
   /** 내려놓은 자리가 다른 구역이면 그 구역의 작업 상태로 바꾼다. 같은 구역·홀·벽이면 제자리로 돌아간다. */
   function dropAgent(id: string) {
@@ -546,7 +564,11 @@ export function OfficeWindow() {
   return <Window id="office" bodyClassName="office-body" header={<WindowTitleBar id="office" right={legend} />}>
     <div ref={stageRef} className="office-stage" data-building={building} data-ready={ready ? "" : undefined} data-hovering={hovered || petHovered ? "" : undefined} data-dragging={dragging ? "" : undefined}
       onPointerMove={onPointerMove} onPointerDown={onPointerDown} onPointerUp={onPointerUp}
-      onPointerCancel={() => { const drag = pointer.current; pointer.current = null; if (drag?.dragging && drag.agent) dropAgent(drag.agent); }}
+      onPointerCancel={() => {
+        const drag = pointer.current; pointer.current = null;
+        if (drag?.dragging && drag.agent) dropAgent(drag.agent);
+        if (drag?.dragging && drag.pet) dropPet(drag.pet);
+      }}
       onPointerLeave={() => { if (!pointer.current) { setHovered(null); setPetHovered(false); } }}>
       <canvas ref={canvasRef} className="office-canvas" role="img" data-fade={generation > 1 ? (generation % 2 ? "odd" : "even") : undefined}
         aria-label={`도트 사무실: ${TALLIES.map((tally) => `${zoneLabel(tally)} ${counts[tally].total}`).join(", ")}`} />

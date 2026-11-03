@@ -217,7 +217,7 @@ export class OfficeRenderer {
     const standing: Drawable[] = [];
     const lifted: (typeof frames)[number][] = [];
     this.petBoxes = [];
-    if (pets && this.petArt) standing.push(...this.petDrawables(pets, time));
+    if (pets && this.petArt) standing.push(...this.petDrawables(pets, time, false));
     for (const frame of frames) {
       if (raised(frame.agent)) { lifted.push(frame); continue; }
       const [gx, gy] = this.groundOf(frame.agent);
@@ -226,6 +226,8 @@ export class OfficeRenderer {
         paint: () => paint(frame), ghost: () => this.ghost(frame, frame.agent.id === selected || frame.agent.id === hovered || frame.agent.id === target?.swap) });
     }
     this.world.drawFront(context, standing, time, target ? [this.world.cellMark(target.cell)] : []);
+    // 들린 반려동물과 캐릭터는 벽·가구보다 위에 그린다.
+    if (pets && this.petArt) for (const item of this.petDrawables(pets, time, true)) item.paint(context, time);
     for (const frame of lifted) paint(frame);
     // 상자(고르기용)와 배지는 그린 순서와 상관없이 맨 위에 둔다. 앞에 그린 것이 위이므로 들린 캐릭터를 맨 끝에 둔다.
     for (const frame of [...frames.filter((entry) => !raised(entry.agent)).sort((a, b) => a.agent.y - b.agent.y), ...lifted]) {
@@ -238,12 +240,13 @@ export class OfficeRenderer {
     context.globalAlpha = 1;
   }
 
-  /** 반려동물을 바닥 그림자와 함께 앞뒤 순서에 끼운다. 뛰면 떠오르고, 반길 때는 하트가, 잘 때는 Z가 머리 위에 뜬다. */
-  private petDrawables(pets: PetSim, time: number): Drawable[] {
+  /** 반려동물을 바닥 그림자와 함께 앞뒤 순서에 끼운다. 뛰거나 들리면 떠오르고, 반길 때는 하트가, 잘 때는 Z가 머리 위에 뜬다.
+   *  raised: 마우스로 들린(내려앉는 중인) 동물만, 아니면 바닥에 있는 동물만 */
+  private petDrawables(pets: PetSim, time: number, raised: boolean): Drawable[] {
     const { image, sheet } = this.petArt!;
     const context = this.sceneContext;
     const scale = sheet.scale;
-    return pets.all().flatMap((pet): Drawable[] => {
+    return pets.all().filter((pet) => (pet.mode === "held" || pet.mode === "land") === raised).flatMap((pet): Drawable[] => {
       const anims = sheet.species[pet.species];
       if (!anims) return [];
       const anim = anims[petPose(pet)];
@@ -263,9 +266,10 @@ export class OfficeRenderer {
         box: [gx - r, gx + r, gy - r, gy + r], rect: [left, head - 10, left + w, top + h], layer: 2,
         paint: () => {
           context.globalAlpha = pet.alpha;
-          context.fillStyle = `rgba(4, 8, 20, ${0.28 * (1 - hop / 14)})`;
+          const shrink = Math.max(0.45, 1 - hop / 24);
+          context.fillStyle = `rgba(4, 8, 20, ${0.28 * shrink})`;
           context.beginPath();
-          context.ellipse(pet.x, pet.y, Math.max(5, sw * 0.28) * (1 - hop / 20), 2.5, 0, 0, Math.PI * 2);
+          context.ellipse(pet.x, pet.y, Math.max(5, sw * 0.28) * shrink, 2.5 * shrink, 0, 0, Math.PI * 2);
           context.fill();
           if (pet.flip) {
             context.setTransform(-1, 0, 0, 1, left + w, top);
