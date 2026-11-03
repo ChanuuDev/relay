@@ -42,10 +42,6 @@ export const PANTS: readonly Tone[] = [
 ];
 export const SKIN: readonly Tone[] = [
   { h: 27, s: 0.8, l: 0.83 },
-  { h: 26, s: 0.62, l: 0.74 },
-  { h: 24, s: 0.48, l: 0.62 },
-  { h: 22, s: 0.4, l: 0.48 },
-  { h: 20, s: 0.36, l: 0.36 },
 ];
 
 /** FNV-1a 32비트. 세션 ID를 고르게 흩는다. */
