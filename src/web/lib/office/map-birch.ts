@@ -118,11 +118,13 @@ export const BIRCH_MAP: MapDef = {
 
 export const BIRCH_THEME: Theme = {
   sky: ["#cfe5f2", "#f4efe3"],
-  glow: "rgba(255, 255, 255, 0.55)",
+  glow: "rgba(255, 255, 255, 0.22)",
   slab: ["#d8cbb3", "#bfae92"],
   grid: "rgba(70, 50, 20, 0.07)",
   shade: 0.85,
   sign: "plate",
   logo: "rgba(120, 88, 46, 0.34)",
   ghost: "rgba(70, 96, 150, 0.85)",
+  backdrop: "/office/backdrop-birch.webp?v=1",
+  drop: "rgba(96, 68, 32, 0.42)",
 };

@@ -121,4 +121,6 @@ export const NIGHT_THEME: Theme = {
   sign: "neon",
   logo: "rgba(140, 170, 255, 0.3)",
   ghost: "rgba(150, 190, 255, 0.85)",
+  backdrop: "/office/backdrop-night.webp?v=1",
+  drop: "rgba(0, 0, 8, 0.6)",
 };

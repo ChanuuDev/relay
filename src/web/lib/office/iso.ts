@@ -12,6 +12,8 @@ export const WALL_H = 88;
 export const SLAB_H = 20;
 /** 장면 가장자리 여백 */
 const MARGIN = 36;
+/** 아래쪽 여백 더하기: 바닥 판 아래로 떨어지는 그림자가 잘리지 않게 한다. */
+const DROP = 44;
 
 export type Cell = readonly [number, number];
 /** n: 칸의 위(북)쪽 모서리를 따라 x로 뻗는 벽, w: 칸의 왼(서)쪽 모서리를 따라 y로 뻗는 벽 */
@@ -131,7 +133,7 @@ export function planWorld(map: MapDef, kit: Kit): WorldPlan {
   }
   const origin: Point = [MARGIN + rows * HALF_W, MARGIN + WALL_H];
   const width = Math.ceil(2 * MARGIN + (cols + rows) * HALF_W);
-  const height = Math.ceil(2 * MARGIN + WALL_H + (cols + rows) * HALF_H + SLAB_H);
+  const height = Math.ceil(2 * MARGIN + WALL_H + (cols + rows) * HALF_H + SLAB_H + DROP);
 
   // 벽: 그릴 조각과 막힌 모서리, 끝마다 기둥
   const walls: PlannedWall[] = [];

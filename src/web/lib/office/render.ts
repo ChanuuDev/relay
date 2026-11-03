@@ -350,8 +350,26 @@ export function toScene(camera: Camera, view: View, width: number, height: numbe
   return { x: (x - view.width / 2) / scale + camera.cx, y: (y - view.height / 2) / scale + camera.cy };
 }
 
-/** 장면을 화면 캔버스에 옮긴다. 바깥은 사옥의 하늘색으로 채우고, 줄일 때는 부드럽게, 두 배 넘게 키울 때는 도트를 그대로 키운다. */
-export function blit(context: CanvasRenderingContext2D, scene: HTMLCanvasElement, camera: Camera, view: View, theme?: Theme) {
+/** 배경을 화면 가득(cover) 깐다. 확대·이동할 때 사무실보다 덜 움직여(시차) 멀리 있는 풍경처럼 보인다. */
+export function drawBackdrop(context: CanvasRenderingContext2D, image: HTMLImageElement, camera: Camera, view: View, width: number, height: number) {
+  const { width: canvasWidth, height: canvasHeight } = context.canvas;
+  const iw = image.naturalWidth, ih = image.naturalHeight;
+  if (!iw || !ih) return;
+  // 시차로 밀려도 가장자리가 비지 않게 조금 더 크게 깐다.
+  const cover = Math.max(canvasWidth / iw, canvasHeight / ih) * 1.08 * (1 + (camera.zoom - 1) * 0.12);
+  const w = iw * cover, h = ih * cover;
+  const sceneScale = fitScale(view, width, height) * camera.zoom * view.dpr;
+  const shiftX = -(camera.cx - width / 2) * sceneScale * 0.12;
+  const shiftY = -(camera.cy - height / 2) * sceneScale * 0.12;
+  const x = Math.min(0, Math.max(canvasWidth - w, (canvasWidth - w) / 2 + shiftX));
+  const y = Math.min(0, Math.max(canvasHeight - h, (canvasHeight - h) / 2 + shiftY));
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(image, x, y, w, h);
+}
+
+/** 장면을 화면 캔버스에 옮긴다. 바깥은 사옥 배경(없으면 하늘색)으로 채우고, 줄일 때는 부드럽게, 두 배 넘게 키울 때는 도트를 그대로 키운다. */
+export function blit(context: CanvasRenderingContext2D, scene: HTMLCanvasElement, camera: Camera, view: View, theme?: Theme, backdrop?: HTMLImageElement | null) {
   const { width, height } = scene;
   const scale = fitScale(view, width, height) * camera.zoom;
   const device = scale * view.dpr;
@@ -363,6 +381,7 @@ export function blit(context: CanvasRenderingContext2D, scene: HTMLCanvasElement
     sky.addColorStop(1, theme.sky[1]);
     context.fillStyle = sky;
     context.fillRect(0, 0, canvasWidth, canvasHeight);
+    if (backdrop) drawBackdrop(context, backdrop, camera, view, width, height);
     const glow = context.createRadialGradient(canvasWidth / 2, canvasHeight * 0.45, 0, canvasWidth / 2, canvasHeight * 0.45, Math.max(canvasWidth, canvasHeight) * 0.6);
     glow.addColorStop(0, theme.glow);
     glow.addColorStop(1, "rgba(0, 0, 0, 0)");

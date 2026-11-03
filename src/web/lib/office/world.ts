@@ -21,6 +21,10 @@ export interface Theme {
   logo: string;
   /** 벽 뒤에 가린 캐릭터 실루엣 색 */
   ghost: string;
+  /** 사무실 아래에 까는 배경 그림 주소. 못 받으면 하늘색 그러데이션만 깐다. */
+  backdrop?: string;
+  /** 배경 위에 떠 있는 사무실이 바닥에 드리우는 그림자 색 */
+  drop: string;
 }
 
 /** 구역 색(간판·끌어 놓을 칸 표시) */
@@ -346,6 +350,14 @@ export class World {
     const [ox, oy] = grid.origin;
     const iso = () => context.setTransform(HALF_W, HALF_H, -HALF_W, HALF_H, ox, oy);
     const cellOf = (x: number, y: number) => (x >= 0 && y >= 0 && x < grid.cols && y < grid.rows ? plan.floors[y * grid.cols + x] : null);
+
+    // 떠 있는 사무실의 그림자: 바닥 모양을 아래로 내려 흐리게 깐다. 배경과 사무실이 붙어 보인다.
+    context.save();
+    context.filter = "blur(14px)";
+    context.fillStyle = theme.drop;
+    context.setTransform(HALF_W, HALF_H, -HALF_W, HALF_H, ox, oy + SLAB_H + 18);
+    context.fill(this.floorClip());
+    context.restore();
 
     // 바닥 판 옆면: 아래쪽(+y)과 오른쪽(+x)이 바깥인 칸의 모서리를 판 두께만큼 내려 그린다.
     context.setTransform(1, 0, 0, 1, 0, 0);

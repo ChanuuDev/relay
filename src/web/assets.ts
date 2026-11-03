@@ -28,6 +28,9 @@ import officeKitBirch from "./public/office/kit-birch.png" with { type: "file" }
 import officeFloorsBirch from "./public/office/floors-birch.png" with { type: "file" };
 import officeKitOak from "./public/office/kit-oak.png" with { type: "file" };
 import officeFloorsOak from "./public/office/floors-oak.png" with { type: "file" };
+import officeBackdropNight from "./public/office/backdrop-night.webp" with { type: "file" };
+import officeBackdropBirch from "./public/office/backdrop-birch.webp" with { type: "file" };
+import officeBackdropOak from "./public/office/backdrop-oak.webp" with { type: "file" };
 import officeBadges from "./public/office/badges.png" with { type: "file" };
 import iconApp192 from "./public/icons/app-192.png" with { type: "file" };
 import iconApp512 from "./public/icons/app-512.png" with { type: "file" };
@@ -77,7 +80,7 @@ export const assets = new Map<string, Asset>([
   ["/pdf.worker.mjs", { file: pdfWorker, type: "text/javascript; charset=utf-8", cache: "public, max-age=86400" }],
   ["/icons/calculator.png", image(iconCalculator, "image/png")],
   ["/icons/office.png", image(iconOffice, "image/png")],
-  // 사무실 앱: 사옥마다 그림 묶음(가구·벽 조각·벽 장식 아틀라스)과 바닥 재질, 캐릭터 스프라이트 아틀라스, 상태 배지
+  // 사무실 앱: 사옥마다 그림 묶음(가구·벽 조각·벽 장식 아틀라스)과 바닥 재질·배경, 캐릭터 스프라이트 아틀라스, 상태 배지
   ["/office/worker.png", image(officeWorker, "image/png")],
   ["/office/kit-night.png", image(officeKitNight, "image/png")],
   ["/office/floors-night.png", image(officeFloorsNight, "image/png")],
@@ -85,6 +88,9 @@ export const assets = new Map<string, Asset>([
   ["/office/floors-birch.png", image(officeFloorsBirch, "image/png")],
   ["/office/kit-oak.png", image(officeKitOak, "image/png")],
   ["/office/floors-oak.png", image(officeFloorsOak, "image/png")],
+  ["/office/backdrop-night.webp", image(officeBackdropNight, "image/webp")],
+  ["/office/backdrop-birch.webp", image(officeBackdropBirch, "image/webp")],
+  ["/office/backdrop-oak.webp", image(officeBackdropOak, "image/webp")],
   ["/office/badges.png", image(officeBadges, "image/png")],
   ["/icons/app-192.png", image(iconApp192, "image/png")],
   ["/icons/app-512.png", image(iconApp512, "image/png")],

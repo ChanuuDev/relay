@@ -123,4 +123,6 @@ export const OAK_THEME: Theme = {
   sign: "neon",
   logo: "rgba(176, 120, 52, 0.32)",
   ghost: "rgba(255, 196, 140, 0.85)",
+  backdrop: "/office/backdrop-oak.webp?v=1",
+  drop: "rgba(30, 8, 24, 0.5)",
 };

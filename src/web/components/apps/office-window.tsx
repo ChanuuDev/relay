@@ -70,7 +70,7 @@ export function OfficeWindow() {
   const bubbleRef = useRef<HTMLDivElement>(null);
   const talkRefs = useRef(new Map<string, HTMLDivElement>());
   const talkingNow = useRef<ReadonlySet<string>>(new Set());
-  const engine = useRef<{ sim: OfficeSim; renderer: OfficeRenderer } | null>(null);
+  const engine = useRef<{ sim: OfficeSim; renderer: OfficeRenderer; backdrop: HTMLImageElement | null } | null>(null);
   const [building, setBuilding] = useState<BuildingId>(storedBuilding);
   /** 그리고 있는 사옥의 좌석·길. 사옥 그림을 다 받기 전에는 고르기 전 사옥 그대로다. */
   const layoutOf = (): OfficeLayout => engine.current?.sim.layout ?? buildingOf(building).layout;
@@ -108,7 +108,9 @@ export function OfficeWindow() {
   useEffect(() => {
     let cancelled = false;
     const plan = buildingOf(building);
-    Promise.all([loadImage(plan.kit.atlas), loadImage(plan.kit.floors), loadImage(WORKER_URL), loadImage(BADGE_URL)]).then(([kit, floors, atlas, badges]) => {
+    // 배경 그림을 받지 못해도 사무실은 연다(하늘색 그러데이션만 깐다).
+    const backdrop = plan.theme.backdrop ? loadImage(plan.theme.backdrop).catch(() => null) : Promise.resolve(null);
+    Promise.all([loadImage(plan.kit.atlas), loadImage(plan.kit.floors), loadImage(WORKER_URL), loadImage(BADGE_URL), backdrop]).then(([kit, floors, atlas, badges, backdropImage]) => {
       if (cancelled) return;
       // 끌어 놓아 고른 자리는 사옥마다 이 브라우저에 남는다.
       const pins = storedSeats(building);
@@ -116,6 +118,7 @@ export function OfficeWindow() {
       engine.current = {
         sim: new OfficeSim(plan.layout, { sitSeconds: SIT_SECONDS, reduced: reduced(), bodies: SPRITES.bodies.length, pins, onPin: () => storeSeats(building, pins) }),
         renderer: new OfficeRenderer(world, atlas, SPRITES, SIT_SECONDS, { image: badges, sheet: BADGES }),
+        backdrop: backdropImage,
       };
       const { width, height } = plan.layout.image;
       camera.current = clampCamera({ zoom: 1, cx: width / 2, cy: height / 2 }, view.current, width, height);
@@ -186,7 +189,7 @@ export function OfficeWindow() {
       time += Math.min(dt, 0.1);
       current.sim.step(dt);
       current.renderer.draw(current.sim, time, marks.current.hovered, marks.current.selected, talkingNow.current, dropMark(current));
-      blit(context, current.renderer.scene, camera.current, view.current, current.renderer.theme);
+      blit(context, current.renderer.scene, camera.current, view.current, current.renderer.theme, current.backdrop);
       placeBubbles(current);
       frame = requestAnimationFrame(tick);
     };
