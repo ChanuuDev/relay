@@ -249,13 +249,13 @@ export class World {
       const sprite = kit.walls[wall.kind]![wall.side];
       const [x, y] = this.point(wall.x, wall.y);
       const box: Drawable["box"] = wall.side === "n" ? [wall.x, wall.x + 1, wall.y - THIN, wall.y + THIN] : [wall.x - THIN, wall.x + THIN, wall.y, wall.y + 1];
-      list.push({ box, layer: 0, solid: wall.kind === "wall" || wall.kind === "header", rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
+      list.push({ box, layer: 0, solid: wall.kind === "wall" || wall.kind === "header" || wall.kind === "wood" || wall.kind === "woodHeader", rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
     }
     for (const post of plan.posts) {
       const sprite = kit.posts[post.kind];
       if (!sprite) continue;
       const [x, y] = this.point(post.x, post.y);
-      list.push({ box: [post.x - THIN, post.x + THIN, post.y - THIN, post.y + THIN], layer: 0, solid: post.kind === "wall", rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
+      list.push({ box: [post.x - THIN, post.x + THIN, post.y - THIN, post.y + THIN], layer: 0, solid: post.kind === "wall" || post.kind === "wood", rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, sprite, x, y) });
     }
     for (const decor of plan.map.decor ?? []) {
       const entry = kit.decor[decor.sprite];
@@ -268,7 +268,8 @@ export class World {
       list.push({ box, layer: 0, rect: this.spriteRect(sprite, x, y), paint: (context) => this.blitSprite(context, open && this.exitOpen ? open : sprite, x, y) });
     }
     for (const sign of plan.map.signs ?? []) list.push(this.signDrawable(sign));
-    for (const item of plan.items) list.push(this.itemDrawable(item));
+    // 바닥 깔개(러그)는 바닥 층에 그렸으므로 앞뒤를 가릴 필요가 없다.
+    for (const item of plan.items) if (!item.item.floor) list.push(this.itemDrawable(item));
     return list;
   }
 
@@ -360,11 +361,19 @@ export class World {
     context.restore();
 
     // 바닥 판 옆면: 아래쪽(+y)과 오른쪽(+x)이 바깥인 칸의 모서리를 판 두께만큼 내려 그린다.
+    // 섬 옆면 띠가 있으면(자작나무 사옥) 이끼·흙·늘어진 뿌리 띠를 모서리를 따라 기울여 잇는다.
     context.setTransform(1, 0, 0, 1, 0, 0);
+    const edge = kit.edge ? this.edgePattern(context, kit.edge) : null;
     for (let y = 0; y < grid.rows; y++) for (let x = 0; x < grid.cols; x++) {
       if (!cellOf(x, y)) continue;
-      if (!cellOf(x, y + 1)) this.slabFace(context, this.point(x, y + 1), this.point(x + 1, y + 1), theme.slab[0]);
-      if (!cellOf(x + 1, y)) this.slabFace(context, this.point(x + 1, y + 1), this.point(x + 1, y), theme.slab[1]);
+      if (!cellOf(x, y + 1)) {
+        if (edge) this.edgeFace(context, edge, this.point(x, y + 1), this.point(x + 1, y + 1), this.point(0, y + 1), 0.5, 0.94);
+        else this.slabFace(context, this.point(x, y + 1), this.point(x + 1, y + 1), theme.slab[0]);
+      }
+      if (!cellOf(x + 1, y)) {
+        if (edge) this.edgeFace(context, edge, this.point(x + 1, y + 1), this.point(x + 1, y), this.point(x + 1, 0), -0.5, 0.8);
+        else this.slabFace(context, this.point(x + 1, y + 1), this.point(x + 1, y), theme.slab[1]);
+      }
     }
 
     // 재질마다 칸을 한 경로로 모아 이음매 없이 채운다.
@@ -414,6 +423,15 @@ export class World {
       if (down && down !== here) { context.moveTo(x, y + 1); context.lineTo(x + 1, y + 1); }
     }
     context.stroke();
+
+    // 바닥 깔개(러그): 재질·칸 선 위, 벽·가구 그늘 아래에 깐다. 사람이 밟고 지나간다.
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    for (const item of plan.items) {
+      if (!item.item.floor) continue;
+      const [x, y] = this.point(item.x, item.y);
+      this.blitSprite(context, item.item, x, y, item.flip);
+    }
+    iso();
 
     // 벽 아래 그늘: 벽 양쪽 바닥으로 번지는 그러데이션. 바닥이 있는 칸 밖으로는 새지 않게 자른다.
     const clip = this.floorClip();
@@ -473,6 +491,32 @@ export class World {
     const path = new Path2D();
     for (let y = 0; y < grid.rows; y++) for (let x = 0; x < grid.cols; x++) if (this.plan.floors[y * grid.cols + x]) path.rect(x, y, 1, 1);
     return path;
+  }
+
+  /** 섬 옆면 띠를 무늬로 만든다(가로로만 되풀이). */
+  private edgePattern(context: CanvasRenderingContext2D, sprite: KitSprite) {
+    const [sx, sy, sw, sh] = sprite.r;
+    const strip = document.createElement("canvas");
+    strip.width = sw; strip.height = sh;
+    strip.getContext("2d")!.drawImage(this.atlas, sx, sy, sw, sh, 0, 0, sw, sh);
+    return { pattern: context.createPattern(strip, "repeat-x")!, height: sh, lift: sprite.a[1] };
+  }
+
+  /** 섬 옆면 한 칸: a→b 모서리 아래로 띠를 기울여 붙인다. origin은 그 모서리 줄의 기준점(띠가 줄을 따라 끊김 없이 이어진다), shade는 면 밝기 */
+  private edgeFace(context: CanvasRenderingContext2D, edge: { pattern: CanvasPattern; height: number; lift: number }, a: Point, b: Point, origin: Point, slope: number, shade: number) {
+    const top = edge.lift;
+    edge.pattern.setTransform(new DOMMatrix([1, slope, 0, 1, origin[0], origin[1] - top]));
+    context.save();
+    context.fillStyle = edge.pattern;
+    context.beginPath();
+    context.moveTo(a[0], a[1] - top);
+    context.lineTo(b[0], b[1] - top);
+    context.lineTo(b[0], b[1] - top + edge.height);
+    context.lineTo(a[0], a[1] - top + edge.height);
+    context.closePath();
+    context.fill();
+    if (shade < 1) { context.globalCompositeOperation = "source-atop"; context.fillStyle = `rgba(0, 0, 0, ${1 - shade})`; context.fill(); }
+    context.restore();
   }
 
   private slabFace(context: CanvasRenderingContext2D, a: Point, b: Point, color: string) {

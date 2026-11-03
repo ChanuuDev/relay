@@ -42,11 +42,13 @@ export interface Kit {
   posts: Record<string, KitSprite>;
   /** 벽에 붙이는 장식(창·문·화이트보드…). span칸 길이이고 기준점은 첫 조각의 시작 꼭짓점 바닥이다. */
   decor: Record<string, { n: KitSprite; w: KitSprite; span: number }>;
+  /** 떠 있는 섬의 옆면 띠(왼쪽·오른쪽으로 이음매 없이 되풀이). 있으면 바닥 판 옆면 대신 그린다. */
+  edge?: KitSprite;
 }
 
 /**
  * 벽 한 줄. side가 n이면 (x, y) 칸의 위쪽 모서리부터 x로, w면 왼쪽 모서리부터 y로 pattern 글자 수만큼 뻗는다.
- * W 벽, G 유리 칸막이, L 낮은 벽, D 문 없는 출입구(위에 인방), d 유리 칸막이의 출입구, O 트인 통로(기둥만), o 낮은 벽의 트인 통로,
+ * W 벽, Y 나무 판벽, G 유리 칸막이, L 낮은 벽, D 문 없는 출입구(위에 인방), B 나무 판벽의 출입구, d 유리 칸막이의 출입구, O 트인 통로(기둥만), o 낮은 벽의 트인 통로,
  * E 출구 유리문(퇴근하는 세션이 나간다), 공백은 벽 없음.
  */
 export interface WallRun { side: Side; x: number; y: number; pattern: string }
@@ -100,6 +102,8 @@ export interface WorldPlan {
 /** 벽 글자 → 그릴 벽 조각 종류(없으면 그리지 않음)와 지나갈 수 있는지 */
 const WALL_KINDS: Record<string, { kind: string | null; post: string | null; pass: boolean }> = {
   W: { kind: "wall", post: "wall", pass: false },
+  Y: { kind: "wood", post: "wood", pass: false },
+  B: { kind: "woodHeader", post: "wood", pass: true },
   G: { kind: "glass", post: "glass", pass: false },
   L: { kind: "low", post: "low", pass: false },
   D: { kind: "header", post: "wall", pass: true },
@@ -141,7 +145,7 @@ export function planWorld(map: MapDef, kit: Kit): WorldPlan {
   const posts = new Map<string, { x: number; y: number; kind: string }>();
   const post = (x: number, y: number, kind: string) => {
     const key = `${x},${y}`;
-    const rank = (value: string) => ["low", "glass", "wall"].indexOf(value);
+    const rank = (value: string) => ["low", "glass", "wood", "wall"].indexOf(value);
     const before = posts.get(key);
     if (!before || rank(kind) > rank(before.kind)) posts.set(key, { x, y, kind });
   };
