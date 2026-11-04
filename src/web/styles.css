@@ -1104,8 +1104,10 @@ form.files-path { flex: 1; min-width: 140px; }
 .files-tree-note > svg { width: 12px; height: 12px; animation: browser-spin 1s linear infinite; }
 .files-nav-error { padding: 10px; font-size: var(--fs-11); line-height: 1.6; color: var(--glass-text-muted); }
 
-/* 내용: 열 머리 · 목록 · 상태 줄 */
-.files-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background);
+/* 내용: 열 머리 · 목록 · 상태 줄.
+   미리 보기 창을 열면 세로 flex인 분할 패널 안에 놓이므로, min-height: 0이 없으면 목록 높이만큼 패널 밖으로 늘어나
+   .files-list가 스크롤하지 못하고, 고른 항목을 보이려는 브라우저가 overflow: hidden인 패널을 밀어 열 머리·상태 줄이 사라진다. */
+.files-main { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--background);
   --files-check: 0px; transition: --files-check .32s cubic-bezier(.32, .72, 0, 1); }
 /* 체크 상자 열 폭. 체크 모드가 켜지고 꺼질 때 0 ↔ 26px로 흘러, 열들이 좌우로 밀리며 상자 자리가 열리고 닫힌다. */
 @property --files-check { syntax: "<length>"; inherits: true; initial-value: 0px; }

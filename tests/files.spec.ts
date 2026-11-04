@@ -378,6 +378,38 @@ test("파일 탐색기: 미리 보기 창 폭을 끌어 바꾸고, PDF 첫 쪽�
   expect(errors).toEqual([]);
 });
 
+test("파일 탐색기: 미리 보기 창을 연 채 항목이 창보다 많으면 목록 안에서 스크롤되고 열 머리·상태 줄은 제자리에 있다", async ({ page }) => {
+  const disk = await openFolder(page);
+  for (let index = 1; index <= 120; index += 1) writeFileSync(path.join(disk, `보고 ${String(index).padStart(3, "0")}.html`), "<p>x</p>");
+  await page.getByRole("button", { name: "새로 고침" }).click();
+  await expect(page.locator(".files-status")).toContainText("항목 124개");
+  await expect(page.locator(".files-preview-split")).toBeVisible();
+  const files = page.locator(win("files"));
+  const list = files.locator(".files-list");
+  const columns = files.locator(".files-columns");
+  const content = files.locator(".files-preview-split .files-main");
+  // 내용 영역이 목록 높이만큼 분할 패널 밖으로 늘어나지 않고, 목록 자체가 넘친다.
+  const [split, main] = await Promise.all([files.locator(".files-preview-split").boundingBox(), content.boundingBox()]);
+  expect(main!.y + main!.height).toBeLessThanOrEqual(split!.y + split!.height + 1);
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight + 200)).toBe(true);
+  const header = (await columns.boundingBox())!.y;
+  // 휠로 목록 끝까지 내려가고, 열 머리는 그 자리에 남는다.
+  await list.hover();
+  await page.mouse.wheel(0, 20000);
+  await expect.poll(() => list.evaluate((el) => Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
+  expect((await columns.boundingBox())!.y).toBe(header);
+  // 마지막 항목을 골라도 패널이 밀려 열 머리·상태 줄이 가려지지 않는다.
+  await row(page, "보고 120.html").click();
+  await expect(row(page, "보고 120.html")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Home");
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeLessThanOrEqual(4);
+  await page.keyboard.press("End");
+  await expect.poll(() => list.evaluate((el) => el.scrollTop > 200)).toBe(true);
+  expect((await columns.boundingBox())!.y).toBe(header);
+  expect(await files.locator(".files-preview-split .split-pane").first().evaluate((el) => el.scrollTop)).toBe(0);
+  await expect(files.locator(".files-status")).toBeInViewport();
+});
+
 test("뷰어: 글·코드를 고쳐 원래 인코딩·줄 끝으로 저장하고, 바뀐 파일·저장 안 한 변경은 묻는다", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   const disk = await openFolder(page);
