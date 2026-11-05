@@ -33,6 +33,9 @@
   async function refreshStatus() {
     try {
       const status = await api.getStatus();
+      $("storage-directory").textContent = status.dataDirectory;
+      $("remote-status").textContent = status.mode !== "remote" ? "로컬 모드" : status.remote ? `${status.remote.reachable ? `연결됨 (${status.remote.latencyMs ?? 0}ms)` : "연결 끊김"} · 대기 ${status.remote.outbox.pending}건 · 실패 ${status.remote.outbox.failed}건` : "확인 중…";
+      $<HTMLButtonElement>("flush-outbox").disabled = status.mode !== "remote";
       chip.hidden = false;
       chip.dataset.state = status.running ? "ok" : "fail";
       chip.textContent = status.running ? `서버 켜짐 · ${status.mode === "remote" ? "원격" : "로컬"}${status.appVersion ? ` · v${status.appVersion}` : ""}` : "서버 꺼짐";
@@ -45,6 +48,7 @@
     if (config.mode === "remote" && config.remote) rows.push(["서버", config.remote.url], ["이 PC", config.remote.deviceName], ["기기 id", config.remote.deviceId ?? "미등록"]);
     rows.push(["화면 주소", `http://127.0.0.1:${config.webPort}`]);
     facts.replaceChildren(...rows.flatMap(([k, v]) => { const dt = document.createElement("dt"); dt.textContent = k; const dd = document.createElement("dd"); dd.textContent = v; return [dt, dd]; }));
+    $<HTMLInputElement>("web-port").value = String(config.webPort);
     autoLaunch.checked = config.desktop?.autoLaunch ?? true;
     closeToTray.checked = config.desktop?.closeToTray ?? true;
     $<HTMLInputElement>("keep-server").checked = config.desktop?.keepServerRunning ?? false;
@@ -55,7 +59,7 @@
     report.replaceChildren(...result.steps.map((step) => {
       const li = document.createElement("li");
       li.dataset.state = step.state;
-      const mark = document.createElement("span"); mark.className = "mark"; mark.textContent = step.state === "ok" ? "✓" : step.state === "fail" ? "✕" : "–";
+      const mark = document.createElement("span"); mark.className = "mark"; mark.textContent = step.state === "ok" ? "✓" : step.state === "fail" ? "✕" : step.state === "warn" ? "!" : "–";
       const label = document.createElement("span"); label.className = "label"; label.textContent = step.label;
       const detail = document.createElement("span"); detail.className = "detail"; detail.textContent = step.detail;
       li.append(mark, label, detail);
@@ -137,12 +141,33 @@
   $("open-main").addEventListener("click", () => void api.openMain());
   for (const back of document.querySelectorAll<HTMLButtonElement>("[data-back]")) back.addEventListener("click", () => show(sheet.dataset.step === "migrate" ? "remote" : "mode"));
 
+  async function maintenance(id: string, action: () => Promise<MigrateResult>) {
+    const button = $<HTMLButtonElement>(id); busy(button, true);
+    const output = $("maintenance-output"); output.hidden = false; output.textContent = "실행 중…";
+    errorBox.hidden = true;
+    try { const result = await action(); output.textContent = result.output; if (!result.ok) fail("처리하지 못했습니다. 아래 결과를 확인하세요."); await refreshStatus(); }
+    catch (error) { fail((error as Error).message); }
+    finally { busy(button, false); }
+  }
+  $("install-hooks").addEventListener("click", () => void maintenance("install-hooks", () => api.installIntegration("hooks")));
+  $("install-skills").addEventListener("click", () => void maintenance("install-skills", () => api.installIntegration("skills")));
+  $("flush-outbox").addEventListener("click", () => void maintenance("flush-outbox", () => api.flushOutbox()));
+  for (const kind of ["data", "logs"] as const) $(kind === "data" ? "open-storage" : "open-logs").addEventListener("click", () => { void api.openFolder(kind).catch(error => fail((error as Error).message)); });
+  $("port-form").addEventListener("submit", async event => {
+    event.preventDefault(); const button = $<HTMLButtonElement>("save-port"); busy(button, true);
+    errorBox.hidden = true;
+    try { config = await api.setPort(Number($<HTMLInputElement>("web-port").value)); renderFacts(); await refreshStatus(); }
+    catch (error) { fail((error as Error).message); }
+    finally { busy(button, false); }
+  });
   api.onStatus(() => void refreshStatus());
+  setInterval(() => void refreshStatus(), 3000);
 
   // 시작: 설정이 있으면 설정 화면, 없으면 모드 고르기
   void (async () => {
     config = await api.getConfig();
-    if (config.mode) { renderFacts(); show("done"); } else show("mode");
+    renderFacts();
+    show(config.mode ? "done" : "mode");
     await refreshStatus();
   })();
 })();

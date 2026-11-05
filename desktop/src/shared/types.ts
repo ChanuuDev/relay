@@ -27,7 +27,7 @@ export interface RelayConfig {
   desktop?: DesktopConfig;
 }
 
-export type StepState = "ok" | "fail" | "skip";
+export type StepState = "ok" | "fail" | "skip" | "warn";
 export interface TestStep { id: "reach" | "identity" | "auth" | "device" | "clock"; label: string; state: StepState; detail: string }
 export interface ConnectionReport {
   ok: boolean;
@@ -39,7 +39,11 @@ export interface ConnectionReport {
   device?: { id: string; name: string; created: boolean };
 }
 
+export interface RemoteStatus { reachable: boolean; latencyMs?: number; outbox: { pending: number; failed: number } }
+
 export interface RelayStatus {
+  dataDirectory: string;
+  remote: RemoteStatus | null;
   /** relay.exe 웹 서버가 응답하는지 */
   running: boolean;
   /** 이 앱이 띄운 것이 아니라 이미 돌고 있던 서버인지 */
@@ -59,6 +63,10 @@ export interface MigrateResult { ok: boolean; output: string }
 /** 메인 → 화면 */
 export interface DesktopApi {
   getConfig(): Promise<RelayConfig>;
+  setPort(port: number): Promise<RelayConfig>;
+  installIntegration(kind: "hooks" | "skills"): Promise<MigrateResult>;
+  flushOutbox(): Promise<MigrateResult>;
+  openFolder(kind: "data" | "logs"): Promise<void>;
   /** 모드를 저장하고 relay.exe를 다시 띄운다. 원격이면 remote가 있어야 한다. */
   saveMode(input: { mode: Mode; remote?: RemoteConfig }): Promise<RelayConfig>;
   testConnection(input: { url: string; token: string; deviceName: string }): Promise<ConnectionReport>;

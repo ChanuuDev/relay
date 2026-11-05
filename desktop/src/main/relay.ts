@@ -2,18 +2,19 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { log } from "./log";
+import type { RemoteStatus } from "../shared/types";
 
-export interface Probe { kind: "none" | "foreign" | "relay"; pid: number | null; appVersion: string | null; build: string | null }
+export interface Probe { remote?: RemoteStatus; kind: "none" | "foreign" | "relay"; pid: number | null; appVersion: string | null; build: string | null }
 
 /** 그 주소에서 무엇이 듣고 있는지 본다. relay.exe는 모든 응답에 Relay-Pid 헤더를 싣는다. */
-export async function probe(url: string, timeoutMs = 1500): Promise<Probe> {
+export async function probe(url: string, timeoutMs = 3000): Promise<Probe> {
   try {
     const response = await fetch(`${url}/api/v1/health`, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual" });
     const pid = Number(response.headers.get("relay-pid"));
-    const body = await response.json().catch(() => null) as { schemaVersion?: unknown; appVersion?: unknown; build?: unknown } | null;
+    const body = await response.json().catch(() => null) as { schemaVersion?: unknown; appVersion?: unknown; build?: unknown; remote?: RemoteStatus } | null;
     const relay = Number.isSafeInteger(pid) && pid > 0;
-    return { kind: relay ? "relay" : body?.schemaVersion === 1 ? "relay" : "foreign", pid: relay ? pid : null,
-      appVersion: typeof body?.appVersion === "string" ? body.appVersion : null, build: typeof body?.build === "string" ? body.build : null };
+    return { kind: relay && body?.schemaVersion === 1 ? "relay" : "foreign", pid: relay ? pid : null,
+      remote: body?.remote, appVersion: typeof body?.appVersion === "string" ? body.appVersion : null, build: typeof body?.build === "string" ? body.build : null };
   } catch (error) {
     const name = (error as { name?: string }).name;
     return { kind: name === "TimeoutError" || name === "AbortError" ? "foreign" : "none", pid: null, appVersion: null, build: null };
@@ -50,7 +51,7 @@ export class RelayProcess {
     this.external = false;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const found = await probe(this.url, 500);
+      const found = await probe(this.url, 2500);
       if (found.kind === "relay") return found;
       if (!this.child) break;
       await new Promise((resolve) => setTimeout(resolve, 150));

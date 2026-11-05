@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../src/config";
+import { testRemoteConnection } from "@relay/core";
 import { RemoteClient } from "../src/remote/client";
 import { RemoteSessions } from "../src/remote/sessions";
 import { migrate } from "../src/remote/migrate";
@@ -11,16 +12,16 @@ import { errorBody, RelayError } from "../src/errors";
 
 let f: ReturnType<typeof fixture>;
 let server: ReturnType<typeof Bun.serve>;
-let unavailable = false, reject = false, slow = false;
+let unavailable = false, reject = false, slow = false, clockSkew = 0;
 let received: { route: string; body: any; key: string | null }[];
 let responses: Map<string, unknown>;
 beforeEach(() => {
-  f = fixture(); unavailable = false; reject = false; slow = false; received = []; responses = new Map();
+  f = fixture(); clockSkew = 0; unavailable = false; reject = false; slow = false; received = []; responses = new Map();
   process.env.RELAY_ALLOW_HTTP = "1";
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (slow) await Bun.sleep(2300);
     if (unavailable) return Response.json({ error: { code: "STORAGE_ERROR", message: "offline" } }, { status: 503 });
-    if (request.headers.get("Authorization") !== "Bearer test-token") return Response.json({}, { status: 401 });
+    if (new URL(request.url).pathname !== "/api/v1/health" && request.headers.get("Authorization") !== "Bearer test-token") return Response.json({}, { status: 401 });
     const url = new URL(request.url), route = url.pathname;
     const body = request.method === "POST" ? await request.json() as any : undefined;
     const key = request.headers.get("Idempotency-Key");
@@ -29,7 +30,9 @@ beforeEach(() => {
     try {
       if (reject) throw new RelayError("INVALID_ARGUMENT", "bad request");
       let result: unknown;
-      if (route === "/api/v1/health") result = { schemaVersion: 1, status: "ok", kind: "relay-remote", apiVersion: 1 };
+      if (route === "/api/v1/health") result = { schemaVersion: 1, status: "ok", kind: "relay-remote", apiVersion: 1, appVersion: "test", build: "test", time: new Date(Date.now() + clockSkew).toISOString(), files: true };
+      else if (route === "/api/v1/auth/whoami") result = { user: { name: "tester" }, token: { name: "test-token" } };
+      else if (route === "/api/v1/devices/register") result = { device: { id: "dev-test", name: "test-device" }, created: true };
       else if (route === "/api/v1/sessions") result = request.method === "POST" ? f.service.record(body) : f.service.list(Object.fromEntries(url.searchParams));
       else if (route === "/api/v1/sessions/continue") result = f.service.record(body, body.parent.providerSessionId, body.parent.provider);
       else if (route === "/api/v1/sessions/update") result = f.service.update(body.providerSessionId, body.summary, body.provider, body);
@@ -136,4 +139,11 @@ test("이전 미리 보기는 쓰지 않고 실행은 원본 DB와 이력을 보
   expect(received.filter(row => row.route === "/api/v1/import")).toHaveLength(3);
   expect(existsSync(f.config.databasePath)).toBe(true);
   expect(f.service.show("migrate", "openai", true).updates).toHaveLength(1);
+});
+
+test("PC 시각 차이는 연결을 차단하지 않고 경고한다", async () => {
+  clockSkew = 10 * 60_000;
+  const result = await testRemoteConnection({ url: config().remote.url, token: "test-token", deviceName: "test-device" }, { allowHttp: true, platform: "win32" });
+  expect(result.ok).toBe(true);
+  expect(result.steps.find(step => step.id === "clock")?.state).toBe("warn");
 });

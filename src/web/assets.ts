@@ -50,8 +50,8 @@ export type Asset = { body: string; type: string } | { file: string; type: strin
 
 const image = (file: string, type: string): Asset => ({ file, type, cache: "public, max-age=86400" });
 
-/** 화면 빌드 식별자. 화면 파일이 바뀌면 달라진다. HTML에 심고 health로도 알려, 열린 화면이 서버가 새 빌드로 다시 떴는지 알아챈다. */
-export const buildId = Bun.hash(`${html as unknown as string}\0${js}\0${css}\0${serviceWorker}`).toString(36);
+/** 화면 자산과 실행 파일의 커밋 식별자. HTML과 health가 같은 값을 써 재설치 뒤 열린 화면을 새로 고친다. */
+export const buildId = Bun.hash(`${html as unknown as string}\0${js}\0${css}\0${serviceWorker}\0${process.env.RELAY_BUILD_REVISION ?? ""}`).toString(36);
 
 // Bun's ambient *.html type describes HTML bundles, but the explicit text loader returns a string.
 export const assets = new Map<string, Asset>([

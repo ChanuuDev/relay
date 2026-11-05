@@ -16,7 +16,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: radial-gradient(1200px 600px at 20% -10%, #1b2440 0%, var(--bg) 55%), var(--bg); color: var(--text); }
-body { display: grid; place-items: start center; padding: 28px 24px; overflow-y: auto; word-break: keep-all; }
+body { display: grid; place-items: start center; padding: 28px 24px; overflow-y: auto; word-break: keep-all; overflow-wrap: anywhere; }
 .sheet { width: min(680px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 20px; backdrop-filter: blur(18px); padding: 26px 28px 22px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35); }
 .head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
 .logo { border-radius: 11px; }
@@ -39,7 +39,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; backg
 .field { display: grid; gap: 6px; margin-bottom: 14px; }
 .field > span { font-size: 13px; color: var(--muted); }
 .field small { color: var(--muted); font-size: 12px; }
-input[type="text"], input[type="password"] { width: 100%; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--text); font: inherit; font-size: 14px; }
+input[type="text"], input[type="password"], input[type="number"] { width: 100%; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--text); font: inherit; font-size: 14px; }
 input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
 .spacer { flex: 1; }
@@ -67,3 +67,8 @@ button.ghost { background: transparent; }
 .error { margin: 14px 0 0; color: var(--fail); font-size: 13px; padding: 10px 12px; border-radius: 10px; background: rgba(255, 123, 123, 0.08); border: 1px solid rgba(255, 123, 123, 0.3); }
 [hidden] { display: none !important; }
 @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } .report li { grid-template-columns: 18px 1fr; } .report li .detail { grid-column: 2; } }
+
+#advanced-settings { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+#advanced-settings summary { cursor: pointer; color: var(--muted); }
+#advanced-settings .actions { flex-wrap: wrap; }
+.report li[data-state="warn"] .mark { color: var(--warn); }

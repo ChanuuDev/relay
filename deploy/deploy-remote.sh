@@ -8,6 +8,8 @@ ACTOR="${2:?actor}"
 IFS= read -r TOKEN
 cd /srv/relay
 chmod +x backup.sh 2>/dev/null || true
+sudo sh /srv/relay/install-cli.sh
+/usr/local/bin/relay --help </dev/null
 
 # 인증서가 있으면 2단계 nginx 설정(443)을 적용한다. 없으면 올라온 새 설정을 버리고 기존 것을 둔다.
 if sudo test -f certbot/conf/live/relay.chanuu.com/fullchain.pem; then

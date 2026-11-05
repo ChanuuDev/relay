@@ -3,7 +3,7 @@ type Mode = "local" | "remote";
 interface RemoteConfig { url: string; token: string; deviceId: string | null; deviceName: string }
 interface DesktopConfig { autoLaunch: boolean; keepServerRunning?: boolean; closeToTray: boolean }
 interface RelayConfig { schemaVersion: 1 | 2; webPort: number; retentionDays: number; mode?: Mode; remote?: RemoteConfig; desktop?: DesktopConfig }
-type StepState = "ok" | "fail" | "skip";
+type StepState = "ok" | "fail" | "skip" | "warn";
 interface TestStep { id: string; label: string; state: StepState; detail: string }
 interface ConnectionReport {
   ok: boolean; url: string; steps: TestStep[]; latencyMs: number | null;
@@ -11,10 +11,14 @@ interface ConnectionReport {
   user?: { name: string; tokenName: string };
   device?: { id: string; name: string; created: boolean };
 }
-interface RelayStatus { running: boolean; external: boolean; url: string; pid: number | null; mode: Mode | null; remoteUrl: string | null; appVersion: string | null; build: string | null; exe: string | null }
+interface RelayStatus { dataDirectory: string; remote: { reachable: boolean; latencyMs?: number; outbox: { pending: number; failed: number } } | null; running: boolean; external: boolean; url: string; pid: number | null; mode: Mode | null; remoteUrl: string | null; appVersion: string | null; build: string | null; exe: string | null }
 interface MigrateResult { ok: boolean; output: string }
 interface DesktopApi {
   getConfig(): Promise<RelayConfig>;
+  setPort(port: number): Promise<RelayConfig>;
+  installIntegration(kind: "hooks" | "skills"): Promise<MigrateResult>;
+  flushOutbox(): Promise<MigrateResult>;
+  openFolder(kind: "data" | "logs"): Promise<void>;
   saveMode(input: { mode: Mode; remote?: RemoteConfig }): Promise<RelayConfig>;
   testConnection(input: { url: string; token: string; deviceName: string }): Promise<ConnectionReport>;
   getStatus(): Promise<RelayStatus>;

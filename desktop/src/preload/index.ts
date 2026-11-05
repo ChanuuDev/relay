@@ -4,6 +4,10 @@ import type { DesktopApi, RelayStatus } from "../shared/types";
 /** 마법사·설정 화면에만 노출하는 최소 API. Relay 본 화면(127.0.0.1)은 이 객체를 쓰지 않는다. */
 const api: DesktopApi = {
   getConfig: () => ipcRenderer.invoke("config:get"),
+  setPort: port => ipcRenderer.invoke("config:set-port", port),
+  installIntegration: kind => ipcRenderer.invoke("integration:install", kind),
+  flushOutbox: () => ipcRenderer.invoke("outbox:flush"),
+  openFolder: kind => ipcRenderer.invoke("folder:open", kind),
   saveMode: (input) => ipcRenderer.invoke("config:save-mode", input),
   testConnection: (input) => ipcRenderer.invoke("remote:test", input),
   getStatus: () => ipcRenderer.invoke("relay:status"),

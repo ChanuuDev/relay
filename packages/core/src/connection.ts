@@ -1,4 +1,4 @@
-export interface TestStep { id: "reach" | "identity" | "auth" | "device" | "clock"; label: string; state: "ok" | "fail" | "skip"; detail: string }
+export interface TestStep { id: "reach" | "identity" | "auth" | "device" | "clock"; label: string; state: "ok" | "fail" | "skip" | "warn"; detail: string }
 export interface ConnectionReport {
   ok: boolean; url: string; steps: TestStep[]; latencyMs: number | null;
   server?: { appVersion: string; apiVersion: number; build: string; files: boolean; time: string };
@@ -71,7 +71,7 @@ export async function testRemoteConnection(input: { url: string; token: string; 
   if (Number.isNaN(serverTime)) push({ id: "clock", label: "시각", state: "skip", detail: "서버 시각을 읽지 못했습니다." });
   else {
     const skew = Math.abs(serverTime - Date.now());
-    push({ id: "clock", label: "시각", state: skew > CLOCK_SKEW_MS ? "fail" : "ok", detail: skew > CLOCK_SKEW_MS ? `PC와 서버 시각이 ${Math.round(skew / 60000)}분 어긋납니다.` : `차이 ${Math.round(skew / 1000)}초` });
+    push({ id: "clock", label: "시각", state: skew > CLOCK_SKEW_MS ? "warn" : "ok", detail: skew > CLOCK_SKEW_MS ? `PC와 서버 시각이 ${Math.round(skew / 60000)}분 어긋납니다.` : `차이 ${Math.round(skew / 1000)}초` });
   }
 
   // 3) 토큰

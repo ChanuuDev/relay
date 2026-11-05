@@ -38,8 +38,14 @@ async function boot() {
   const setup = await ensureInstalled().catch((error) => { log("warn", `설치 건너뜀: ${(error as Error).message}`); return { exe: null, installed: false, output: "" }; });
   if (!setup.exe) { log("warn", "relay.exe를 찾지 못했습니다. 마법사에서 안내한다."); }
   if (!config.mode) { await openWizard(); return; }
-  await startRelay();
-  if (!hiddenStart) await showMain();
+  try {
+    await startRelay();
+    if (!hiddenStart) await showMain();
+  } catch (error) {
+    log("warn", "서버 시작 실패: 설정 창에서 포트를 확인하세요.");
+    await openWizard();
+    void dialog.showMessageBox(wizardWindow!, { type: "warning", message: "로컬 서버를 시작하지 못했습니다.", detail: (error as Error).message });
+  }
 }
 
 async function startRelay(): Promise<RelayStatus> {
@@ -57,7 +63,7 @@ async function currentStatus(): Promise<RelayStatus> {
   const url = `http://127.0.0.1:${config.webPort}`;
   const found = await probe(url);
   const { installedExe } = await import("./relay");
-  return { running: found.kind === "relay", external: relay?.external ?? false, url, pid: found.pid, mode: config.mode ?? null,
+  return { dataDirectory: dataDirectory(), remote: found.remote ?? null, running: found.kind === "relay", external: relay?.external ?? false, url, pid: found.pid, mode: config.mode ?? null,
     remoteUrl: config.mode === "remote" ? config.remote?.url ?? null : null, appVersion: found.appVersion, build: found.build, exe: installedExe() };
 }
 
@@ -115,6 +121,9 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "설정…", click: () => void openWizard() },
     { label: "서버 다시 시작", click: () => void restartRelay() },
+    { label: "outbox 전송", enabled: config.mode === "remote", click: () => { void runMaintenance(["outbox", "flush", "--json"]).then(result => {
+      tray?.displayBalloon({ title: "Relay", content: result.ok ? "전송 대기열을 확인했습니다. 설정 창에서 남은 건수를 확인하세요." : "전송하지 못했습니다. 설정 창에서 연결을 확인하세요." });
+    }); } },
     { label: "로그 폴더 열기", click: () => void shell.showItemInFolder(logFile()) },
     { type: "separator" },
     { label: "종료", click: () => { quitting = true; app.quit(); } },
@@ -134,6 +143,15 @@ function applyAutoLaunch(desktop: DesktopConfig) {
   app.setLoginItemSettings({ openAtLogin: desktop.autoLaunch, openAsHidden: true, args: ["--hidden"] });
 }
 
+async function runMaintenance(args: string[]): Promise<MigrateResult> {
+  const { installedExe } = await import("./relay");
+  const exe = installedExe();
+  if (!exe) return { ok: false, output: "relay.exe를 찾지 못했습니다." };
+  const runner = relay ?? new RelayProcess(exe, dataDirectory(), config.webPort);
+  try { return { ok: true, output: (await runner.run(args)).trim() }; }
+  catch (error) { return { ok: false, output: (error as Error).message }; }
+}
+
 function registerIpc() {
   const handle = (channel: string, listener: (...args: any[]) => unknown) => {
     ipcMain.handle(channel, (event, ...args) => {
@@ -142,6 +160,43 @@ function registerIpc() {
     });
   };
   handle("config:get", () => config);
+  handle("folder:open", async (_event, kind: string) => {
+    if (kind !== "data" && kind !== "logs") throw new Error("열 폴더를 확인하세요.");
+    const error = await shell.openPath(kind === "data" ? dataDirectory() : path.dirname(logFile()));
+    if (error) throw new Error(error);
+  });
+  handle("integration:install", (_event, kind: string) => {
+    if (kind !== "hooks" && kind !== "skills") throw new Error("설치할 연동을 확인하세요.");
+    return runMaintenance([kind === "hooks" ? "install-hooks" : "install-skills", "--json"]);
+  });
+  handle("outbox:flush", async () => {
+    if (config.mode !== "remote") return { ok: false, output: "원격 모드에서만 전송 대기열을 사용합니다." };
+    const result = await runMaintenance(["outbox", "flush", "--json"]);
+    broadcast(await currentStatus());
+    return result;
+  });
+  handle("config:set-port", async (_event, port: number) => {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("포트는 1~65535 정수로 입력하세요.");
+    if (port === config.webPort) return config;
+    if ((await probe(`http://127.0.0.1:${port}`)).kind !== "none") throw new Error(`포트 ${port}는 이미 사용 중입니다. 다른 포트를 입력하세요.`);
+    const previous = config;
+    const wasRunning = (await probe(`http://127.0.0.1:${config.webPort}`)).kind === "relay";
+    if (wasRunning && relay) await relay.run(["web", "--close", "--port", String(config.webPort)]);
+    relay = null;
+    try {
+      config = writeConfig({ ...config, webPort: port });
+      if (config.mode) await startRelay();
+      if (mainWindow) await mainWindow.loadURL(`http://127.0.0.1:${port}/`);
+      return config;
+    } catch (error) {
+      await (relay as RelayProcess | null)?.stop().catch(() => {});
+      config = writeConfig(previous);
+      relay = null;
+      if (wasRunning) await startRelay().catch(() => {});
+      if (mainWindow) await mainWindow.loadURL(`http://127.0.0.1:${previous.webPort}/`).catch(() => {});
+      throw error;
+    }
+  });
   handle("device:default-name", () => defaultDeviceName());
   handle("remote:test", (_event, input: { url: string; token: string; deviceName: string }): Promise<ConnectionReport> => testConnection(input));
   handle("config:save-mode", async (_event, input: { mode: Mode; remote?: RemoteConfig }) => {

@@ -43,7 +43,7 @@
         <label class="field">
           <span>API 토큰</span>
           <input id="token" name="token" type="password" placeholder="서버에서 만든 기기 토큰" spellcheck="false" required>
-          <small>서버에서 <code>token create --name &lt;기기명&gt;</code>으로 만든 값입니다. 이 PC의 설정 파일에만 저장됩니다.</small>
+          <small>Ubuntu 서버에서 <code>relay create-token --name &lt;기기명&gt;</code>으로 만듭니다. 생성한 토큰은 이 PC의 설정 파일에 저장됩니다.</small>
         </label>
         <label class="field">
           <span>이 PC 이름</span>
@@ -84,6 +84,7 @@
         <label class="toggle"><input type="checkbox" id="close-to-tray"> <span>창을 닫으면 종료하지 않고 트레이로</span></label>
         <label class="toggle"><input type="checkbox" id="keep-server"> <span>앱을 종료해도 서버 유지</span></label>
       </div>
+
       <div class="actions">
         <button type="button" class="ghost" id="change-mode">모드 바꾸기</button>
         <button type="button" class="ghost" id="restart">서버 다시 시작</button>
@@ -91,6 +92,20 @@
         <button type="button" class="primary" id="open-main">Relay 열기</button>
       </div>
     </section>
+
+    <details id="advanced-settings">
+      <summary>서버·Agent 연동 설정</summary>
+      <dl class="facts"><dt>저장소</dt><dd id="storage-directory"></dd><dt>원격 연결</dt><dd id="remote-status">로컬 모드</dd></dl>
+      <form id="port-form"><label class="field"><span>로컬 웹 서버 포트</span><input id="web-port" type="number" min="1" max="65535" required></label><button type="submit" class="ghost" id="save-port">포트 저장</button></form>
+      <div class="actions">
+        <button type="button" class="ghost" id="open-storage">저장소 폴더</button>
+        <button type="button" class="ghost" id="open-logs">로그 폴더</button>
+        <button type="button" class="ghost" id="install-hooks">훅 다시 설치</button>
+        <button type="button" class="ghost" id="install-skills">스킬 다시 설치</button>
+        <button type="button" class="ghost" id="flush-outbox">outbox 전송</button>
+      </div>
+      <pre class="console" id="maintenance-output" hidden></pre>
+    </details>
 
     <p class="error" id="error" hidden></p>
   </main>

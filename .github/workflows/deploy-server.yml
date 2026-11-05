@@ -40,6 +40,7 @@ jobs:
       - run: npm run build -w @relay/core
       - run: npm run build:web
       - run: npm run check -w @relay/server
+      - run: sh deploy/test-cli.sh
 
   build:
     needs: test
@@ -90,7 +91,7 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
       - name: compose·nginx 설정·배포 스크립트 올리기
         run: |
-          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh deploy/deploy-remote.sh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
+          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh deploy/deploy-remote.sh deploy/relay.sh deploy/install-cli.sh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
           scp -i ~/.ssh/deploy_key deploy/nginx/conf.d/00-limits.conf deploy/nginx/conf.d/default.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/conf.d/"
           scp -i ~/.ssh/deploy_key deploy/nginx/relay.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay.conf.new"
       - name: 이미지 받아 다시 띄우기

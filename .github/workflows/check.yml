@@ -34,5 +34,6 @@ jobs:
       - run: npm run build -w @relay/core
       - run: npm run build:web
       - run: npm run check -w @relay/server
+      - run: sh deploy/test-cli.sh
       - name: Docker 이미지가 빌드되는지
         run: docker build -f server/Dockerfile -t relay-api:ci .
