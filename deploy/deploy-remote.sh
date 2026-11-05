@@ -11,10 +11,15 @@ chmod +x backup.sh 2>/dev/null || true
 sudo sh /srv/relay/install-cli.sh
 /usr/local/bin/relay --help </dev/null
 
-# 인증서가 있으면 2단계 nginx 설정(443)을 적용한다. 없으면 올라온 새 설정을 버리고 기존 것을 둔다.
-if sudo test -f certbot/conf/live/relay.chanuu.com/fullchain.pem; then
-  if [ -f nginx/relay.conf.new ]; then mv -f nginx/relay.conf.new nginx/conf.d/relay.conf; fi
-  docker compose exec -T nginx nginx -t </dev/null && docker compose exec -T nginx nginx -s reload </dev/null || echo "nginx reload 실패(계속)"
+# 도메인은 비공개 환경 파일 또는 기존 nginx 설정에서 읽는다.
+sh /srv/relay/render-nginx.sh nginx/relay.conf.new nginx/relay.conf.new
+RELAY_DOMAIN=$(sed -n 's/^RELAY_DOMAIN=//p' .env | tail -n 1)
+if sudo test -f "certbot/conf/live/$RELAY_DOMAIN/fullchain.pem"; then
+  mv -f nginx/relay.conf.new nginx/conf.d/relay.conf
+  if ! docker compose exec -T nginx nginx -t </dev/null >/dev/null 2>&1; then
+    echo "nginx 설정 검사 실패" >&2; exit 1
+  fi
+  docker compose exec -T nginx nginx -s reload </dev/null >/dev/null 2>&1
 else
   rm -f nginx/relay.conf.new
 fi
@@ -25,14 +30,19 @@ unset TOKEN
 grep -v '^RELAY_API_IMAGE=' .env > .env.next || true
 echo "RELAY_API_IMAGE=${IMAGE}" >> .env.next
 mv .env.next .env && chmod 600 .env
-docker compose pull relay-api </dev/null
+docker compose pull relay-api </dev/null >/dev/null 2>&1
 docker compose up -d --remove-orphans </dev/null
 docker logout ghcr.io </dev/null >/dev/null
 docker image prune -f </dev/null >/dev/null
 
 for i in $(seq 1 40); do
   if docker compose exec -T relay-api wget -qO- http://127.0.0.1:3000/api/v1/health </dev/null >/dev/null 2>&1; then
-    echo "relay-api healthy (${IMAGE})"
+    if sudo test -f "certbot/conf/live/$RELAY_DOMAIN/fullchain.pem"; then
+      if ! curl -fsS --max-time 10 "https://$RELAY_DOMAIN/api/v1/health" >/dev/null 2>&1; then
+        echo "HTTPS health 확인 실패" >&2; exit 1
+      fi
+    fi
+    echo "relay-api healthy"
     docker compose ps --format "table {{.Service}}\t{{.Status}}" </dev/null
     exit 0
   fi

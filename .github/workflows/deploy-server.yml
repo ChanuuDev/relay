@@ -91,7 +91,7 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
       - name: compose·nginx 설정·배포 스크립트 올리기
         run: |
-          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh deploy/deploy-remote.sh deploy/relay.sh deploy/install-cli.sh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
+          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh deploy/deploy-remote.sh deploy/relay.sh deploy/install-cli.sh deploy/render-nginx.sh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
           scp -i ~/.ssh/deploy_key deploy/nginx/conf.d/00-limits.conf deploy/nginx/conf.d/default.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/conf.d/"
           scp -i ~/.ssh/deploy_key deploy/nginx/relay.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay.conf.new"
       - name: 이미지 받아 다시 띄우기
@@ -101,10 +101,3 @@ jobs:
           tag="${{ needs.build.outputs.tag }}"
           printf '%s\n' "${{ secrets.GITHUB_TOKEN }}" | ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             bash /srv/relay/deploy-remote.sh "ghcr.io/${owner}/relay-api:${tag}" "${{ github.actor }}"
-      - name: 바깥에서 health 확인
-        run: |
-          for i in $(seq 1 10); do
-            if curl -fsS --max-time 10 https://relay.chanuu.com/api/v1/health | grep -q '"kind":"relay-remote"'; then echo ok; exit 0; fi
-            sleep 3
-          done
-          echo "https health failed (인증서 발급 전이면 무시)"; exit 0

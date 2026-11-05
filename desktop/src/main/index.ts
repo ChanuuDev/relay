@@ -30,7 +30,7 @@ else {
 const iconPath = () => (app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.resolve(app.getAppPath(), "resources", "icon.png"));
 
 async function boot() {
-  app.setAppUserModelId("dev.chanuu.relay");
+  app.setAppUserModelId("dev.relay.desktop");
   log("info", `Relay 앱 시작 (packaged=${app.isPackaged}, hidden=${hiddenStart}, data=${dataDirectory()})`);
   registerIpc();
   applyAutoLaunch(config.desktop ?? { autoLaunch: true, closeToTray: true });

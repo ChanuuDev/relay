@@ -1,4 +1,4 @@
-appId: dev.chanuu.relay
+appId: dev.relay.desktop
 productName: Relay
 electronDist: ../node_modules/electron/dist
 copyright: MIT
@@ -29,6 +29,8 @@ win:
   icon: resources/icon.png
   artifactName: Relay-Setup-${version}.${ext}
 nsis:
+  # 기존 설치 앱과 같은 업데이트 경로를 유지한다.
+  guid: efbce5d9-3a61-5d54-8a05-9b6025672bca
   oneClick: true
   perMachine: false
   allowElevation: false

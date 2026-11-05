@@ -71,5 +71,21 @@ test "$(cat other/relay)" = 'another CLI'
 code=0
 RELAY_SERVER_DIR="$test_dir/missing" relay create-token --name office > result 2>&1 || code=$?
 test "$code" -eq 1
+mkdir -p "$RELAY_SERVER_DIR/nginx/conf.d"
+printf '%s\n' 'KEEP_FIELD=1' > "$RELAY_SERVER_DIR/.env"
+printf '%s\n' 'server_name service.example.invalid;' > "$RELAY_SERVER_DIR/nginx/conf.d/relay.conf"
+sh "$script_dir/render-nginx.sh" "$script_dir/nginx/relay.conf" rendered.conf > result
+test ! -s result
+grep -Fq 'server_name service.example.invalid;' rendered.conf
+grep -Fq 'RELAY_DOMAIN=service.example.invalid' "$RELAY_SERVER_DIR/.env"
+grep -Fxq 'KEEP_FIELD=1' "$RELAY_SERVER_DIR/.env"
+grep -Fq '$host' rendered.conf
+if grep -Fq '__RELAY_DOMAIN__' rendered.conf; then exit 1; fi
+RELAY_DOMAIN=other.example.invalid sh "$script_dir/render-nginx.sh" "$script_dir/nginx/relay.http.conf" rendered.conf > result
+test ! -s result
+grep -Fq 'server_name other.example.invalid;' rendered.conf
+code=0
+RELAY_DOMAIN='invalid; domain' sh "$script_dir/render-nginx.sh" "$script_dir/nginx/relay.conf" rendered.conf > result 2>&1 || code=$?
+test "$code" -eq 2
 sh -n "$script_dir/relay.sh" "$script_dir/install-cli.sh" "$script_dir/deploy-remote.sh"
 printf '%s\n' 'Ubuntu CLI: 설치·재설치·인자 보존·입력 검사·실패 전파·기존 명령 보존 통과'

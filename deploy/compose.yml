@@ -46,7 +46,7 @@ services:
     # ports를 열지 않는다: 호스트·외부에서 직접 접속할 수 없다.
 
   relay-api:
-    image: ${RELAY_API_IMAGE:-ghcr.io/chanuudev/relay-api:latest}
+    image: ${RELAY_API_IMAGE:-relay-api:latest}
     env_file: .env
     volumes:
       - ./files:/data/files
