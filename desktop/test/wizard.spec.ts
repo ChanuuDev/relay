@@ -195,3 +195,69 @@ test("원격 연결·기기 등록 → 이전 미리 보기 → 화면에서 서
   await expect(main.locator('.files-row').filter({ hasText: "uploaded.txt" })).toBeVisible();
   expect(readFileSync(path.join(directory, "remote-files", "uploaded.txt"), "utf8")).toBe("uploaded");
 });
+
+test("메뉴바가 제목 표시줄을 대신하고 창 조작·테마·바탕화면 색을 유지한다", async () => {
+  const capture = async (name: string) => {
+    const nativeCapture = await app!.evaluate(async ({ BrowserWindow, desktopCapturer }) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      const sources = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 1280, height: 820 } });
+      return sources.find(source => source.id === window.getMediaSourceId())?.thumbnail.toPNG().toString("base64");
+    });
+    expect(nativeCapture).toBeTruthy();
+    writeFileSync(path.join(root, `output/${name}.png`), Buffer.from(nativeCapture!, "base64"));
+  };
+  await app!.evaluate(({ BrowserWindow }) => {
+    const original = BrowserWindow.prototype.setTitleBarOverlay;
+    BrowserWindow.prototype.setTitleBarOverlay = function (options) {
+      (globalThis as unknown as { relayAppearance: typeof options }).relayAppearance = options;
+      return original.call(this, options);
+    };
+  });
+  const appearance = () => app!.evaluate(() => (globalThis as unknown as { relayAppearance?: { color?: string; symbolColor?: string } }).relayAppearance);
+  const wizard = await app!.firstWindow();
+  await wizard.locator("#card-local").click();
+  await expect(wizard.locator("#done-lead")).toContainText("로컬 서버로 저장했습니다");
+  const opened = app!.waitForEvent("window");
+  await wizard.locator("#open-main").click();
+  const main = await opened;
+  await expect(main.locator("html")).toHaveAttribute("data-titlebar", "overlay");
+  const metrics = await main.evaluate(() => {
+    const overlay = (navigator as unknown as { windowControlsOverlay: { visible: boolean; getTitlebarAreaRect(): DOMRect } }).windowControlsOverlay;
+    return { visible: overlay.visible, area: overlay.getTitlebarAreaRect().toJSON(),
+      bar: document.querySelector(".menubar")!.getBoundingClientRect().toJSON(),
+      clock: document.querySelector(".menubar-clock")!.getBoundingClientRect().toJSON(),
+      drag: getComputedStyle(document.querySelector(".menubar")!).getPropertyValue("-webkit-app-region"),
+      click: getComputedStyle(document.querySelector(".menubar-mark")!).getPropertyValue("-webkit-app-region") };
+  });
+  expect(metrics.visible).toBe(true);
+  expect(metrics.bar.y).toBe(0);
+  expect(metrics.bar.height).toBeGreaterThanOrEqual(32);
+  expect(metrics.clock.right).toBeLessThan(metrics.area.right);
+  expect(metrics.drag).toBe("drag"); expect(metrics.click).toBe("no-drag");
+  expect(await main.evaluate(() => "relayDesktop" in window)).toBe(false);
+  await main.getByRole("button", { name: "Relay 메뉴", exact: true }).click();
+  await expect(main.getByRole("menu")).toBeVisible(); await main.keyboard.press("Escape");
+  await expect.poll(async () => (await appearance())?.symbolColor).toBe("#f5f5f7");
+  const dark = await appearance();
+  await main.locator('.dock-item[aria-label="설정"]').click();
+  await main.getByRole("radiogroup", { name: "바탕화면" }).getByRole("radio", { name: "선셋" }).click();
+  await expect.poll(async () => (await appearance())?.color).not.toBe(dark?.color);
+  await main.screenshot({ path: path.join(root, "output/titlebar-dark.png") });
+  await capture("titlebar-window-dark");
+  await main.getByRole("button", { name: "라이트 모드로 전환" }).click();
+  await expect.poll(async () => (await appearance())?.symbolColor).toBe("#1d1d1f");
+  await main.screenshot({ path: path.join(root, "output/titlebar-light.png") });
+  await capture("titlebar-window");
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(760, 600));
+  await expect.poll(() => main.evaluate(() => {
+    const area = (navigator as unknown as { windowControlsOverlay: { getTitlebarAreaRect(): DOMRect } }).windowControlsOverlay.getTitlebarAreaRect();
+    return document.querySelector(".menubar-clock")!.getBoundingClientRect().right < area.right;
+  })).toBe(true);
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 820));
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.maximize());
+  await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())).toBe(true);
+  await app!.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]!; window.unmaximize(); window.minimize(); });
+  await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(true);
+  await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.restore());
+  await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
+});

@@ -78,7 +78,8 @@ async function showMain() {
   mainWindow = new BrowserWindow({
     width: 1280, height: 820, minWidth: 760, minHeight: 520, show: false, title: "Relay", icon: iconPath(), backgroundColor: "#111318",
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    titleBarStyle: "hidden", titleBarOverlay: { color: "#1e1e20", symbolColor: "#f5f5f7", height: 32 },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(__dirname, "..", "preload", "shell.js") },
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("close", (event) => {
@@ -153,6 +154,11 @@ async function runMaintenance(args: string[]): Promise<MigrateResult> {
 }
 
 function registerIpc() {
+  ipcMain.on("window:appearance", (event, appearance: { color?: unknown; dark?: unknown } | null) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return;
+    if (!appearance || typeof appearance.color !== "string" || !/^#[\da-f]{6}$/i.test(appearance.color) || typeof appearance.dark !== "boolean") return;
+    mainWindow.setTitleBarOverlay({ color: appearance.color, symbolColor: appearance.dark ? "#f5f5f7" : "#1d1d1f" });
+  });
   const handle = (channel: string, listener: (...args: any[]) => unknown) => {
     ipcMain.handle(channel, (event, ...args) => {
       if (!wizardWindow || event.sender !== wizardWindow.webContents || event.senderFrame !== wizardWindow.webContents.mainFrame) throw new Error("설정 창에서만 사용할 수 있습니다.");
