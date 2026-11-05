@@ -1,0 +1,21 @@
+# server/Dockerfile의 빌드 컨텍스트(저장소 루트)에서 뺄 것
+**/node_modules
+**/dist
+**/.env
+**/secrets
+.git
+output
+test-results
+Tasks
+desktop
+deploy
+skills
+tests
+src
+scripts
+design_system_output
+설계
+*.md
+!packages/core/README.md
+*.png
+*.pem

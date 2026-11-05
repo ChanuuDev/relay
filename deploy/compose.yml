@@ -1,0 +1,70 @@
+# Lightsail의 /srv/relay/compose.yml. Actions가 이 파일을 scp로 올리고 `docker compose up -d`를 돈다.
+# 비밀은 같은 폴더의 .env(relay-api 환경)와 secrets/pg_password에만 두며 깃에 올리지 않는다.
+name: relay
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+    depends_on:
+      - relay-api
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
+    # 12시간마다 갱신을 시도한다. 갱신되면 nginx가 다음 reload(아래 cron) 때 새 인증서를 읽는다.
+    entrypoint: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait; done"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: relay
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    secrets:
+      - pg_password
+    # RAM 2GB 서버라 작게 잡는다.
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=40", "-c", "work_mem=4MB"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # ports를 열지 않는다: 호스트·외부에서 직접 접속할 수 없다.
+
+  relay-api:
+    image: ${RELAY_API_IMAGE:-ghcr.io/chanuudev/relay-api:latest}
+    env_file: .env
+    volumes:
+      - ./files:/data/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3000"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata: {}
+
+secrets:
+  pg_password:
+    file: ./secrets/pg_password

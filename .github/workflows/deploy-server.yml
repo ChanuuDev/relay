@@ -1,0 +1,122 @@
+# 원격 서버 배포: server·packages/core·deploy가 바뀐 main 푸시마다
+#   1) 서버 테스트 → 2) 이미지를 GHCR(비공개)에 push → 3) SSH로 compose·nginx 설정을 올리고 pull·up → 4) health 확인.
+# 비밀은 Secrets에만 둔다: DEPLOY_HOST(SSH 호스트명), DEPLOY_USER, DEPLOY_KEY(pem 내용).
+# 서버의 GHCR 로그인은 이 실행의 GITHUB_TOKEN으로 그때만 한다(서버에 장기 토큰을 두지 않는다).
+name: deploy-server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "packages/core/**"
+      - "deploy/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/relay-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build -w @relay/core
+      - run: npm run check -w @relay/server
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner}/relay-api" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          push: true
+          build-args: RELAY_BUILD=${{ steps.meta.outputs.tag }}
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH 키 준비
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: compose·nginx 설정 올리기
+        run: |
+          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
+          scp -i ~/.ssh/deploy_key deploy/nginx/conf.d/00-limits.conf deploy/nginx/conf.d/default.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/conf.d/"
+          scp -i ~/.ssh/deploy_key deploy/nginx/relay.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay.conf.new"
+      - name: 이미지 받아 다시 띄우기
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          tag="${{ needs.build.outputs.tag }}"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" bash -s <<EOF
+          set -euo pipefail
+          cd /srv/relay
+          chmod +x backup.sh
+          # 인증서가 있으면 2단계 설정(443)을, 없으면 기존 설정을 유지한다.
+          if sudo test -f certbot/conf/live/relay.chanuu.com/fullchain.pem; then mv -f nginx/relay.conf.new nginx/conf.d/relay.conf; docker compose exec -T nginx nginx -t && docker compose exec -T nginx nginx -s reload || true; else rm -f nginx/relay.conf.new; fi
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # 고른 이미지 태그를 .env에 남겨 두어 나중에 compose up을 다시 해도 같은 이미지를 쓴다.
+          grep -v '^RELAY_API_IMAGE=' .env > .env.next || true
+          echo "RELAY_API_IMAGE=ghcr.io/${owner}/relay-api:${tag}" >> .env.next
+          mv .env.next .env && chmod 600 .env
+          docker compose pull relay-api
+          docker compose up -d --remove-orphans
+          docker logout ghcr.io
+          docker image prune -f >/dev/null
+          for i in \$(seq 1 30); do
+            if docker compose exec -T relay-api wget -qO- http://127.0.0.1:3000/api/v1/health >/dev/null 2>&1; then echo "relay-api healthy"; exit 0; fi
+            sleep 2
+          done
+          echo "relay-api did not become healthy"; docker compose logs --tail 50 relay-api; exit 1
+          EOF
+      - name: 바깥에서 health 확인
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 10 https://relay.chanuu.com/api/v1/health | grep -q '"kind":"relay-remote"'; then echo ok; exit 0; fi
+            sleep 3
+          done
+          echo "https health failed (인증서 발급 전이면 무시)"; exit 0

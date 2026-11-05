@@ -1,0 +1,33 @@
+# 공용 코어와 원격 서버의 검증. 루트(relay.exe·Playwright)는 Windows 전용이라 로컬 `npm run check`로 돈다.
+name: check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "packages/core/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/check.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - "packages/core/**"
+      - "package.json"
+      - "package-lock.json"
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build -w @relay/core
+      - run: npm run check -w @relay/server
+      - name: Docker 이미지가 빌드되는지
+        run: docker build -f server/Dockerfile -t relay-api:ci .

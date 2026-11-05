@@ -3,7 +3,8 @@
   "version": "0.9.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "server"
   ],
   "license": "MIT",
   "type": "module",
@@ -13,14 +14,15 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/database.test.ts tests/session.test.ts tests/cli.test.ts tests/api.test.ts tests/calculator.test.ts tests/files.test.ts tests/highlight.test.ts tests/control.test.ts tests/output.test.ts tests/interactive.test.ts tests/install.test.ts tests/hooks-install.test.ts tests/skills-install.test.ts tests/pwa.test.ts tests/office.test.ts tests/office-buildings.test.ts tests/pets.test.ts",
     "test:web": "playwright test",
-    "check": "npm run typecheck && npm test && npm run build && npm run test:web",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:web && npm run check:server",
     "build:web": "bun run scripts/build-web.ts",
     "prepare": "npm run build:core && npm run build:web",
     "prerelay": "npm run build:core && npm run build:web",
     "pretest": "npm run build:core && npm run build:web",
     "build:core": "npm run build -w @relay/core",
     "pretypecheck": "npm run build:core",
-    "prebuild": "npm run build:core"
+    "prebuild": "npm run build:core",
+    "check:server": "npm run check -w @relay/server"
   },
   "dependencies": {
     "@gsap/react": "2.1.2",
