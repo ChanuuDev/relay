@@ -6,6 +6,7 @@
 - 필요할 경우 사용자에게 접속 정보를 묻는다.
 - 개인 식별 표기와 실제 서비스 도메인을 문서 예시·앱 식별자·저작권 표기·커밋 작성자에 사용하지 않는다. 중립적인 프로젝트 명칭을 쓴다.
 - 실제 배포 주소와 이미지 경로는 Git에서 제외한 서버 환경 설정으로 관리하고, 검사 결과에는 원문 값을 출력하지 않는다.
+- 커밋 전 `.githooks/pre-commit`(`scripts/secret-scan.mjs`)이 공인 IP·개인키·토큰·pem 경로·비밀 파일·실제 서비스 식별자를 막는다. 막히면 `--no-verify`로 우회하지 말고 값을 빼거나 비공개 설정으로 옮긴다. 훅은 `npm install` 때 `core.hooksPath`로 켜지고, 금지어는 원문 대신 `node scripts/secret-scan.mjs --hash <낱말>`의 해시를 `scripts/secret-scan.hashes.json`에 더한다.
 
 ## 세션 기록 지침
 
