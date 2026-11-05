@@ -48,7 +48,7 @@ export function SessionsWindow({ list, detail, updates, relations, chain, health
     </div>
     <footer className="statusbar material-chrome">
       <span>총 {total?.toLocaleString() ?? "—"}건 · 최근 갱신순</span>
-      <span id="database-path" title={health?.databasePath}>{health?.databasePath ?? "저장소 확인 중…"}</span>
+      <span id="database-path" title={health?.mode === "remote" ? health.remote?.url : health?.databasePath}>{health?.mode === "remote" ? health.remote?.url : health?.databasePath ?? "저장소 확인 중…"}</span>
       <span className="statusbar-end"><span className="version">RELAY {health?.appVersion ? `v${health.appVersion}` : ""}</span>
         <span>{successAt ? `마지막 성공 조회 ${new Date(successAt).toLocaleTimeString("ko-KR")}` : "마지막 조회 —"} · 3초마다 자동 조회</span></span>
     </footer>

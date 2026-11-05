@@ -77,7 +77,7 @@ Chrome·Edge에서 주소 표시줄의 앱 설치 아이콘이나 Relay의 **설
 
 ## Windows 앱과 원격 서버
 
-Electron 설치 파일은 `npm run dist -w @relay/desktop`으로 만듭니다. 먼저 루트에서 `npm run build`를 실행하면 동봉할 `dist/relay.exe`가 생성됩니다. 결과는 `desktop/release/Relay-Setup-0.9.0.exe`입니다.
+Electron 설치 파일은 `npm run dist -w @relay/desktop`으로 만듭니다. 먼저 루트에서 `npm run build`를 실행하면 동봉할 `dist/relay.exe`가 생성됩니다. 결과는 루트의 `installer/`에 모입니다. Electron 설치 파일 `Relay-Setup-1.0.0.exe`, 단독 CLI `relay.exe`, 설치 스크립트 `install-cli.ps1`·`install.cmd`를 함께 제공합니다.
 
 앱을 처음 열면 로컬 또는 원격 저장을 고릅니다. 원격은 미리 구축한 서버의 HTTPS 주소, 기기별 API 토큰, 이 PC의 이름을 입력합니다. 연결·서버 버전·인증·기기 등록 결과를 확인하고, 기존 로컬 데이터의 건수를 본 뒤 이전 여부를 고릅니다. 서버 구축은 [구축 문서](deploy/서버-구축.md)를 참고하세요.
 

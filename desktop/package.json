@@ -1,6 +1,6 @@
 {
   "name": "@relay/desktop",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Relay Windows 앱: relay.exe를 켜고, 처음 실행 때 로컬/원격을 고르고, 트레이·자동 실행 같은 Windows 연동을 맡는다",
   "main": "dist/main/index.js",
@@ -18,5 +18,8 @@
     "electron": "38.8.6",
     "electron-builder": "^26.0.0",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@relay/core": "1.0.0"
   }
 }

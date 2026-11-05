@@ -2,7 +2,8 @@ import { test, expect, _electron as electron, type ElectronApplication } from "@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 
 let app: ElectronApplication | undefined;
@@ -20,8 +21,21 @@ test.beforeEach(async () => {
     RELAY_DATA_DIR: directory, RELAY_ALLOW_HTTP: "1", RELAY_DESKTOP_NO_INSTALL: "1", RELAY_DESKTOP_RELAY_EXE: path.join(root, "dist", "relay.exe") } });
 });
 test.afterEach(async () => {
-  await app?.close();
-  if (remoteServer) { const child = remoteServer; remoteServer = undefined; const ended = new Promise<void>(resolve => child.once("exit", () => resolve())); child.stdin?.end(); await ended; }
+  // 외부 relay가 Windows의 DevTools 파이프를 잠시 상속할 수 있으므로 실제 앱 종료를 먼저 확인하고 서버를 정리한다.
+  const child = app?.process();
+  const closing = app?.close();
+  if (child) await expect.poll(() => child.exitCode, { timeout: 10_000 }).not.toBeNull();
+  await promisify(execFile)(path.join(root, "dist/relay.exe"), ["web", "--close", "--data-dir", directory], { windowsHide: true, timeout: 10_000, env: { ...process.env, RELAY_ALLOW_HTTP: "1" } }).catch(() => {});
+  await closing;
+  if (remoteServer) {
+    const child = remoteServer; remoteServer = undefined;
+    if (child.exitCode === null) {
+      const ended = new Promise<void>(resolve => child.once("exit", () => resolve()));
+      child.stdin?.end();
+      const kill = setTimeout(() => child.kill(), 5000);
+      await ended; clearTimeout(kill);
+    }
+  }
   if (path.dirname(directory) !== os.tmpdir() || !path.basename(directory).startsWith("relay-desktop-test-")) throw new Error("Unsafe cleanup target");
   rmSync(directory, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
 });
@@ -61,6 +75,7 @@ test("원격 연결·기기 등록 → 이전 미리 보기 → 화면에서 서
     remoteServer!.once("error", reject);
   });
   const remote = JSON.parse(readFileSync(path.join(directory, "fixture.json"), "utf8"));
+  await promisify(execFile)(path.join(root, "dist/relay.exe"), ["web", "--headless", "--data-dir", directory], { windowsHide: true });
   const wizard = await app!.firstWindow();
   await wizard.locator("#card-remote").click();
   await wizard.locator("#url").fill(remote.url);
@@ -76,6 +91,7 @@ test("원격 연결·기기 등록 → 이전 미리 보기 → 화면에서 서
   await wizard.locator("#open-main").click();
   const main = await opened;
   await expect(main.locator("body")).toContainText("다른 PC에서 남긴 기록");
+  await expect(main.locator(".local-label")).toHaveText("원격 서버");
   await main.locator('.dock-item[aria-label="파일 탐색기"]').click();
   await main.getByRole("button", { name: "경로 직접 입력 (Ctrl+L)" }).click();
   await main.getByRole("textbox", { name: "경로", exact: true }).fill("remote:/");

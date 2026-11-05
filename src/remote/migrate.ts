@@ -11,12 +11,14 @@ import type { ImportRequest } from "@relay/core";
 export async function migrate(config: Config, dryRun: boolean) {
   const db = openDatabase(config, true);
   try {
-    const service = new SessionService(new SessionRepository(db));
-    const sessions = service.repo.rows("", [], Number.MAX_SAFE_INTEGER, 0);
-    const updates = db.query(`SELECT id, session_id AS sessionId, sequence, summary, status, created_at AS createdAt FROM session_updates ORDER BY session_id, sequence`).all() as NonNullable<ImportRequest["updates"]>;
-    const notes = new NoteStore(db).exportAll().items;
-    const calculations = new CalculatorStore(db).list().items;
-    const data = { sessions, updates, notes, calculations };
+    const data = db.transaction(() => {
+      const service = new SessionService(new SessionRepository(db));
+      const sessions = service.repo.rows("", [], Number.MAX_SAFE_INTEGER, 0);
+      const updates = db.query(`SELECT id, session_id AS sessionId, sequence, summary, status, created_at AS createdAt FROM session_updates ORDER BY session_id, sequence`).all() as NonNullable<ImportRequest["updates"]>;
+      const notes = new NoteStore(db).exportAll().items;
+      const calculations = new CalculatorStore(db).list().items;
+      return { sessions, updates, notes, calculations };
+    }).deferred();
     const counts = Object.fromEntries(Object.entries(data).map(([key, rows]) => [key, rows.length]));
     if (dryRun) return { schemaVersion: 1, dryRun: true, counts };
     const client = new RemoteClient(config, 10 * 60_000);

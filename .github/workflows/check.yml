@@ -30,6 +30,7 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node node_modules/bun/install.js
       - run: npm run build -w @relay/core
       - run: npm run build:web
       - run: npm run check -w @relay/server

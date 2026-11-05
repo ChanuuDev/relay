@@ -19,6 +19,6 @@ const url = `http://127.0.0.1:${port}`;
 await fetch(url + "/api/v1/sessions", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ provider: "openai", agent: "codex", sessionId: "fixture-session", summary: "다른 PC에서 남긴 기록", cwd: "C:/fixture" }) });
 writeFileSync(path.join(directory, "fixture.json"), JSON.stringify({ url, token }), { mode: 0o600 });
 process.stdout.write("ready\n");
-const stop = async () => { await app.close(); await close(); process.exit(0); };
+const stop = async () => { app.getHttpServer().closeAllConnections(); await app.close(); await close(); process.exit(0); };
 process.on("SIGTERM", stop); process.on("SIGINT", stop);
 process.stdin.resume(); process.stdin.on("end", stop);

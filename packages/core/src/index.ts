@@ -11,3 +11,5 @@ export * from "./format.js";
 export * from "./resume-command.js";
 export * from "./session-context.js";
 export * from "./handoff.js";
+
+export { testRemoteConnection, normalizeRemoteUrl } from "./connection.js";

@@ -2,6 +2,8 @@
 import { Command, CommanderError } from "commander";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { testRemoteConnection } from "@relay/core";
+import { hostname } from "node:os";
 import { loadConfig, remoteUrl } from "./config";
 import { RemoteClient } from "./remote/client";
 import { RemoteSessions, type SessionAccess } from "./remote/sessions";
@@ -270,11 +272,10 @@ remote.command("test").option("--url <url>", "서버 주소").option("--token <t
   .action(async (options, command: Command) => {
     const config = loadConfig(command.optsWithGlobals().dataDir);
     if (options.url || options.token) config.remote = { url: remoteUrl(options.url ?? config.remote?.url), token: options.token ?? config.remote?.token ?? "" };
-    const client = new RemoteClient(config, 5000);
-    const health = await client.json<{ schemaVersion: number; kind: string; apiVersion: number }>("/api/v1/health");
-    if (health.schemaVersion !== 1 || health.kind !== "relay-remote" || health.apiVersion < 1) invalid("호환되는 Relay 원격 서버가 아닙니다.");
-    const auth = await client.json("/api/v1/auth/whoami");
-    process.stdout.write(JSON.stringify({ schemaVersion: 1, ok: true, health, auth }) + "\n");
+    if (!config.remote) invalid("원격 서버 주소와 토큰을 먼저 설정하세요.");
+    const result = await testRemoteConnection({ ...config.remote, deviceName: config.remote.deviceName ?? hostname() }, { allowHttp: process.env.RELAY_ALLOW_HTTP === "1", platform: process.platform });
+    process.stdout.write(JSON.stringify(result) + "\n");
+    if (!result.ok) process.exitCode = 7;
   });
 remote.command("status").action(async (_options, command: Command) => {
   const config = loadConfig(command.optsWithGlobals().dataDir);

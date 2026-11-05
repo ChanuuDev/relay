@@ -66,6 +66,7 @@ function broadcast(status: RelayStatus) {
 }
 
 async function showMain() {
+  if (!config.mode) { await openWizard(); return; }
   if (!relay) { await startRelay(); }
   if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); return; }
   mainWindow = new BrowserWindow({
@@ -152,7 +153,8 @@ function registerIpc() {
     config = writeConfig({ ...config, mode: input.mode, remote: input.mode === "remote" ? input.remote : undefined });
     log("info", `모드 저장: ${config.mode}`);
     refreshTrayMenu();
-    if (relay) await restartRelay(); else await startRelay();
+    if (relay) await restartRelay();
+    else { const status = await startRelay(); if (status.external) await restartRelay(); }
     return config;
   });
   handle("config:set-desktop", (_event, input: Partial<DesktopConfig>) => {

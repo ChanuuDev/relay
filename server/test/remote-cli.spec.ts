@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { testApp, type TestApp } from "./helpers.js";
@@ -21,10 +21,12 @@ test("두 CLI 클라이언트가 실제 NestJS API에서 같은 세션·메모�
   const root = path.resolve("..");
   const bundledBun = path.join(root, "node_modules", "bun", "bin", process.platform === "win32" ? "bun.exe" : "bun");
   const bun = existsSync(bundledBun) ? bundledBun : "bun";
-  const run = async (...args: string[]) => {
-    const result = await promisify(execFile)(bun, [path.join(root, "src/index.ts"), ...args, "--data-dir", directory!, "--json"], { cwd: root, env: { ...process.env, RELAY_ALLOW_HTTP: "1" }, windowsHide: true });
+  const runAt = async (store: string, ...args: string[]) => {
+    const result = await promisify(execFile)(bun, [path.join(root, "src/index.ts"), ...args, "--data-dir", store, "--json"], { cwd: root, env: { ...process.env, RELAY_ALLOW_HTTP: "1" }, windowsHide: true });
     return JSON.parse(result.stdout);
   };
+  const run = (...args: string[]) => runAt(directory!, ...args);
+  expect((await run("remote", "test")).ok).toBe(true);
   const record = ["record", "--provider", "openai", "--agent", "codex", "--session-id", "contract-parent", "--summary", "처음", "--cwd", root];
   const parent = await run(...record);
   const update = await run("update", "--session-id", "contract-parent", "--summary", "다른 PC에서 갱신", "--status", "working");
@@ -43,4 +45,14 @@ test("두 CLI 클라이언트가 실제 NestJS API에서 같은 세션·메모�
   await run("notes", "export", exportFile);
   expect(JSON.parse(readFileSync(exportFile, "utf8")).items[0].title).toBe("공유 메모");
   expect((await run("outbox", "list")).pending).toHaveLength(0);
+  const local = path.join(directory, "local"); mkdirSync(local);
+  await runAt(local, "record", "--provider", "openai", "--agent", "codex", "--session-id", "local-migrate", "--summary", "이전할 로컬 기록", "--cwd", root);
+  await runAt(local, "notes", "import", exportFile);
+  writeFileSync(path.join(local, "config.json"), readFileSync(path.join(directory, "config.json")));
+  expect((await runAt(local, "migrate", "--to-remote", "--dry-run")).counts.sessions).toBe(1);
+  await runAt(local, "migrate", "--to-remote");
+  expect((await run("show", "local-migrate", "--history")).updates).toHaveLength(1);
+  await runAt(local, "migrate", "--to-remote");
+  expect((await run("show", "local-migrate", "--history")).updates).toHaveLength(1);
+  expect(existsSync(path.join(local, "relay.db"))).toBe(true);
 });

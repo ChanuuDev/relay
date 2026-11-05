@@ -61,7 +61,9 @@ export class RelayProcess {
   /** 현재 설치본으로 같은 포트·저장소에서 다시 띄운다(설정을 바꾼 뒤). */
   async reload(): Promise<Probe> {
     const external = this.external;
+    log("info", "서버 설정 다시 적용 시작");
     await this.run(["web", "--reload", "--port", String(this.port), "--data-dir", this.dataDir]);
+    log("info", "서버 설정 다시 적용 완료");
     this.child = null; this.external = external;
     return probe(this.url);
   }
@@ -82,7 +84,7 @@ export class RelayProcess {
       child.stderr.on("data", (chunk: Buffer) => { err += chunk.toString("utf8"); });
       const timer = setTimeout(() => { child.kill(); reject(new Error("relay 명령이 시간 안에 끝나지 않았습니다.")); }, timeoutMs);
       child.on("error", (error) => { clearTimeout(timer); reject(error); });
-      child.on("exit", (code) => { clearTimeout(timer); if (code === 0) resolve(out); else reject(new Error((err || out).trim() || `relay ${args[0]} 실패 (code ${code})`)); });
+      child.on("exit", (code) => { log("info", `CLI 종료: ${args[0]} (code ${code})`); clearTimeout(timer); if (code === 0) resolve(out); else reject(new Error((err || out).trim() || `relay ${args[0]} 실패 (code ${code})`)); });
     });
   }
 }

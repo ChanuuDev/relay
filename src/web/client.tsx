@@ -65,7 +65,7 @@ function App() {
   const failed = watched.some((query) => query.isError);
   const pending = watched.some((query) => query.isPending);
   const successAt = Math.min(...watched.map((query) => query.dataUpdatedAt));
-  const connection = failed ? "offline" : pending ? "pending" : "online";
+  const connection = failed || health.data?.remote?.reachable === false ? "offline" : pending ? "pending" : "online";
   const theme = useUI((state) => state.theme);
   const mobile = useDesktop((state) => state.mobile);
   const standalone = useInstall((state) => state.standalone);
@@ -214,7 +214,7 @@ function App() {
   return <div className="desktop" data-shell="desktop" data-mobile={mobile ? "" : undefined}>
     <a className="skip-link" href="#workspace">본문으로 건너뛰기</a>
     <Wallpaper dark={dark} />
-    <MenuBar connection={connection} dark={dark} />
+    <MenuBar connection={connection} dark={dark} mode={health.data?.mode} />
     <main id="desktop">
       <SessionsWindow list={list} detail={detail} updates={updates} relations={children} chain={chain} health={health.data} params={params}
         selectedId={id} activeFilters={activeFilters} copy={copy} onPage={listPage} successAt={successAt} />
