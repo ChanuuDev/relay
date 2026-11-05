@@ -2,6 +2,9 @@
   "name": "relay-session-continuity",
   "version": "0.9.0",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -12,9 +15,12 @@
     "test:web": "playwright test",
     "check": "npm run typecheck && npm test && npm run build && npm run test:web",
     "build:web": "bun run scripts/build-web.ts",
-    "prepare": "npm run build:web",
-    "prerelay": "npm run build:web",
-    "pretest": "npm run build:web"
+    "prepare": "npm run build:core && npm run build:web",
+    "prerelay": "npm run build:core && npm run build:web",
+    "pretest": "npm run build:core && npm run build:web",
+    "build:core": "npm run build -w @relay/core",
+    "pretypecheck": "npm run build:core",
+    "prebuild": "npm run build:core"
   },
   "dependencies": {
     "@gsap/react": "2.1.2",

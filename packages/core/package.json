@@ -1,0 +1,25 @@
+{
+  "name": "@relay/core",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Relay 로컬 서버(Bun/SQLite)와 원격 서버(NestJS/PostgreSQL)가 함께 쓰는 타입·검증·오류·API 계약",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

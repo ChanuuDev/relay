@@ -2,42 +2,24 @@ import { spawn, spawnSync } from "node:child_process";
 import { constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statfsSync, statSync, writeFileSync, type Dirent, type Stats } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { attachmentName, byteRange, copyName as pickCopyName, itemName, MAX_ENTRIES, MAX_SAVE_BYTES, newFolderName as pickFolderName,
+  type ClipboardResult, type Crumb, type DeleteResult, type Failure, type FileEntry, type FileInfo, type FolderResult, type Listing, type OpenAction,
+  type PasteResult, type Place, type PlaceId, type Places, type RenameResult, type SaveResult, type Drive, type DriveType } from "@relay/core";
 import { RelayError } from "../errors";
 import { systemFileClipboard, type FileClipboardWriter } from "./windows-clipboard";
 export type { FileClipboardWriter } from "./windows-clipboard";
 
 /** 파일 탐색기 창의 서버 쪽. 로컬 디스크를 읽고, 화면이 시킨 복사·이동·휴지통 이동·새 폴더·이름 바꾸기만 한다. 열기는 운영체제의 탐색기·기본 앱에 넘긴다. */
 
-export type FileKind = "directory" | "file";
-export interface FileEntry { name: string; path: string; kind: FileKind; size: number | null; modified: string | null; hidden: boolean; link: boolean }
-export interface Crumb { name: string; path: string }
-export interface Listing { schemaVersion: 1; path: string; name: string; parent: string | null; crumbs: Crumb[]; entries: FileEntry[]; total: number; truncated: boolean }
-export type PlaceId = "home" | "desktop" | "documents" | "downloads" | "pictures" | "music" | "videos";
-export interface Place { id: PlaceId; label: string; path: string }
-export type DriveType = "fixed" | "removable" | "network" | "optical" | "ram" | "unknown";
-export interface Drive { path: string; label: string; type: DriveType; total: number | null; free: number | null }
-export interface Places { schemaVersion: 1; platform: NodeJS.Platform; separator: string; home: string; places: Place[]; drives: Drive[] }
-export type OpenAction = "open" | "reveal";
+// 응답 모양과 이름 규칙·Range 해석은 원격 파일 API와 같아서 공용 코어에 있다.
+export { byteRange, itemName, MAX_ENTRIES, MAX_SAVE_BYTES } from "@relay/core";
+export type { FileKind, FileEntry, Crumb, Listing, PlaceId, Place, DriveType, Drive, Places, OpenAction, Failure, FileInfo, PasteMode, PasteResult,
+  DeleteResult, SaveResult, FolderResult, RenameResult, ClipboardResult } from "@relay/core";
 /** 탐색기·기본 앱을 띄우는 부분. 테스트는 가짜를 넣는다. */
 export type Launcher = (target: string, action: OpenAction, directory: boolean) => void;
 /** 항목을 치우는 부분. Windows는 휴지통으로 옮기고(recycled), 그 밖에는 바로 지운다. 테스트는 가짜를 넣는다. */
 export type Remover = (targets: string[]) => { recycled: boolean; failed: Failure[] };
-export interface Failure { path: string; message: string }
-/** 속성 창에 보이는 한 항목의 정보. contents는 폴더일 때 안에 든 항목 수와 크기다(너무 크면 partial). */
-export interface FileInfo {
-  schemaVersion: 1; name: string; path: string; kind: FileKind; size: number | null; created: string | null; modified: string | null; accessed: string | null;
-  hidden: boolean; readonly: boolean; link: boolean; target: string | null; contents: { folders: number; files: number; bytes: number; partial: boolean } | null;
-}
-export type PasteMode = "copy" | "cut";
-export interface PasteResult { schemaVersion: 1; mode: PasteMode; done: { from: string; to: string }[]; failed: Failure[] }
-export interface DeleteResult { schemaVersion: 1; recycled: boolean; done: string[]; failed: Failure[] }
-export interface SaveResult { schemaVersion: 1; path: string; size: number; modified: string }
-export interface FolderResult { schemaVersion: 1; path: string; name: string }
-export interface RenameResult { schemaVersion: 1; from: string; to: string; name: string }
-export interface ClipboardResult { schemaVersion: 1; copied: number }
 
-/** 한 폴더에서 돌려주는 최대 항목 수. 넘치면 이름 순 앞부분만 주고 truncated로 알린다. */
-export const MAX_ENTRIES = 5000;
 const MAX_PATH_LENGTH = 4096;
 const windows = process.platform === "win32";
 const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
@@ -237,19 +219,6 @@ export function contentType(target: string): string {
   return "application/octet-stream";
 }
 
-/** 한 구간 Range(bytes=a-b, a-, -n)만 받는다. 맞지 않으면 null(전체), 범위를 벗어나면 "invalid". */
-export function byteRange(header: string | null, size: number): { start: number; end: number } | null | "invalid" {
-  const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
-  if (!match || (!match[1] && !match[2])) return null;
-  let start: number; let end: number;
-  if (!match[1]) { const tail = Number(match[2]); start = Math.max(0, size - tail); end = size - 1; }
-  else { start = Number(match[1]); end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1; }
-  if (start > end || start >= size) return "invalid";
-  return { start, end };
-}
-
-const attachmentName = (name: string) => `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
-
 /** 파일 내용. 미리 보기(이미지·영상·소리·글)와 내려받기에 쓰고, 영상 탐색을 위해 Range를 받는다. */
 export function fileResponse(request: Request, url: URL, headers: Record<string, string>): Response {
   for (const key of url.searchParams.keys()) if (key !== "path" && key !== "download") throw new RelayError("INVALID_ARGUMENT", `허용하지 않는 query key: ${key}`);
@@ -381,14 +350,7 @@ export async function copyToClipboard(body: unknown, write: FileClipboardWriter 
 
 /** 붙여넣을 이름. 같은 폴더에 복사하거나 같은 이름이 있으면 탐색기처럼 `이름 - 복사본`, `이름 - 복사본 (2)`를 쓴다. */
 export function copyName(directory: string, name: string, taken = (candidate: string) => existsSync(path.join(directory, candidate))): string {
-  if (!taken(name)) return name;
-  const dot = name.lastIndexOf(".");
-  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
-  for (let index = 1; index < 1000; index += 1) {
-    const candidate = `${stem} - 복사본${index > 1 ? ` (${index})` : ""}${ext}`;
-    if (!taken(candidate)) return candidate;
-  }
-  throw new RelayError("FILE_ERROR", "붙여넣을 이름을 정하지 못했습니다.", 5, 500);
+  return pickCopyName(name, taken);
 }
 
 /** POST /api/v1/files/paste 본문 {sources, destination, mode}. 덮어쓰지 않으며, 잘라내기에서 이름이 겹치면 그 항목만 건너뛴다. */
@@ -434,20 +396,6 @@ export function pasteItems(body: unknown): PasteResult {
   return result;
 }
 
-/** Windows가 파일 이름에 못 쓰는 글자(제어 문자 포함)와 장치 예약 이름 */
-const BAD_NAME = /[\\/:*?"<>|\u0000-\u001f]/;
-const RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-const MAX_NAME_LENGTH = 255;
-/** 새 이름. 탐색기처럼 앞뒤 공백과 끝의 점은 떼고, Windows가 못 쓰는 글자·예약 이름·너무 긴 이름은 받지 않는다. */
-export function itemName(raw: unknown): string {
-  if (typeof raw !== "string") throw new RelayError("INVALID_ARGUMENT", "name은 문자열입니다.");
-  const name = raw.trim().replace(/[. ]+$/, "");
-  if (!name) throw new RelayError("INVALID_NAME", "이름을 입력하세요.");
-  if (BAD_NAME.test(name)) throw new RelayError("INVALID_NAME", '이름에 다음 문자는 쓸 수 없습니다: \\ / : * ? " < > |');
-  if (RESERVED_NAME.test(name.split(".")[0].trimEnd())) throw new RelayError("INVALID_NAME", `‘${name}’은(는) Windows가 예약한 이름이라 쓸 수 없습니다.`);
-  if (name.length > MAX_NAME_LENGTH) throw new RelayError("INVALID_NAME", `이름이 너무 깁니다(${MAX_NAME_LENGTH}자까지).`);
-  return name;
-}
 function changeError(error: unknown): RelayError {
   const code = (error as { code?: string })?.code;
   if (code === "EEXIST" || code === "ENOTEMPTY") return new RelayError("FILE_EXISTS", "같은 이름의 항목이 이미 있습니다.", 2, 409);
@@ -459,11 +407,7 @@ function changeError(error: unknown): RelayError {
 
 /** 새 폴더 이름. 탐색기처럼 `새 폴더`, 있으면 `새 폴더 (2)`, `새 폴더 (3)`… */
 export function newFolderName(directory: string, taken = (candidate: string) => existsSync(path.join(directory, candidate))): string {
-  for (let index = 1; index < 1000; index += 1) {
-    const candidate = index === 1 ? "새 폴더" : `새 폴더 (${index})`;
-    if (!taken(candidate)) return candidate;
-  }
-  throw new RelayError("FILE_ERROR", "새 폴더 이름을 정하지 못했습니다.", 5, 500);
+  return pickFolderName(taken);
 }
 
 /** POST /api/v1/files/mkdir 본문 {parent, name?}. name이 없으면 `새 폴더`(겹치면 번호를 붙임)로 만든다. 같은 이름이 있으면 만들지 않는다. */
@@ -542,8 +486,6 @@ export function deleteItems(body: unknown, remove: Remover): DeleteResult {
   return result;
 }
 
-/** 뷰어가 저장하는 글의 상한. 뷰어가 읽는 8MB에 인코딩 차이를 더한 여유다. */
-export const MAX_SAVE_BYTES = 16 * 1024 * 1024;
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 function writeError(error: unknown): RelayError {
   const code = (error as { code?: string })?.code;

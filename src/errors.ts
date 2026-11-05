@@ -1,12 +1,7 @@
-export class RelayError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public exitCode = 2,
-    public httpStatus = 400,
-    public details?: Record<string, unknown>,
-  ) { super(message); }
-}
+import { RelayError } from "@relay/core";
+
+// 오류 클래스·본문·코드 표는 로컬 서버와 원격 서버가 함께 쓰는 공용 코어에 있다. 여기에는 SQLite에 묶인 변환만 남긴다.
+export { RelayError, errorBody, errorFromBody, invalid, ERROR_CODES } from "@relay/core";
 
 export function storageError(error: unknown): RelayError {
   if (error instanceof RelayError) return error;
@@ -15,13 +10,4 @@ export function storageError(error: unknown): RelayError {
     return new RelayError("DB_BUSY", "저장소가 사용 중입니다. 잠금 해제 후 다시 확인하세요.", 5, 503);
   }
   return new RelayError("STORAGE_ERROR", "저장소에 접근할 수 없습니다. 경로와 권한을 확인하세요.", 5, 503);
-}
-
-export function errorBody(error: RelayError) {
-  return { schemaVersion: 1, error: { code: error.code, message: error.message,
-    ...(error.details ? { details: error.details } : {}) } };
-}
-
-export function invalid(message: string): never {
-  throw new RelayError("INVALID_ARGUMENT", message);
 }

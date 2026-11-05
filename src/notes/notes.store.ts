@@ -1,86 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { RelayError, storageError } from "../errors";
+import { EXPORT_FORMAT, type NoteBatch, type NoteExport, type NoteImportResult, type NoteItem, mergeDecision } from "@relay/core";
+import { storageError } from "../errors";
 
-/** 폴더와 메모(본문은 Markdown)가 parentId로 트리를 이룬다. null은 최상위다.
- *  position은 형제 사이에서 사용자가 끌어 정한 순서(작을수록 위)다. null이면 순서를 정한 항목 뒤에 폴더 먼저·이름 순으로 놓인다. */
-export type NoteItem =
-  | { id: string; kind: "folder"; parentId: string | null; name: string; position: number | null; createdAt: number; updatedAt: number }
-  | { id: string; kind: "note"; parentId: string | null; title: string; body: string; position: number | null; createdAt: number; updatedAt: number };
-export type NoteBatch = { upserts: NoteItem[]; deletes: string[] };
-/** 다른 환경으로 옮기는 파일. format은 Relay 메모 파일인지 알아보는 표지다. */
-export type NoteExport = { format: typeof EXPORT_FORMAT; schemaVersion: 1; exportedAt: string; items: NoteItem[] };
-/** 가져오기 결과. kept는 같거나 이 환경 쪽이 더 최근이라 그대로 둔 항목 수다. */
-export type ImportResult = { schemaVersion: 1; revision: number; added: number; updated: number; kept: number };
-
-export const MAX_NAME = 200;
-export const MAX_BODY = 200_000;
-export const EXPORT_FORMAT = "relay-notes";
-/** 한 번에 받는 항목 수. 브라우저는 고친 항목만 모아 보내므로 넉넉하다. */
-const MAX_BATCH = 5000;
-/** 가져오기 한 번에 받는 항목 수. 내보낸 파일 하나를 통째로 받는다. */
-const MAX_IMPORT = 50_000;
-const ID = /^[A-Za-z0-9_-]{1,100}$/;
+// 메모 항목의 모양·검사·내보내기 파일 규칙은 원격 서버와 같이 쓰므로 공용 코어에 있다. 여기에는 SQLite 저장소만 남긴다.
+export { EXPORT_FORMAT, MAX_BODY, MAX_NAME, exportFileName, parseBatch, parseExport, type NoteBatch, type NoteExport, type NoteItem } from "@relay/core";
+export type ImportResult = NoteImportResult;
 
 type Row = { id: string; kind: "folder" | "note"; parent_id: string | null; name: string; title: string; body: string; position: number | null; created_at: number; updated_at: number };
-
-const time = (value: unknown, fallback: number) =>
-  (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback);
-const text = (value: unknown, max: number, field: string) => {
-  if (value === undefined || value === null) return "";
-  if (typeof value !== "string") throw new RelayError("INVALID_ARGUMENT", `${field}은(는) 문자열이어야 합니다.`);
-  if (value.length > max) throw new RelayError("INVALID_ARGUMENT", `${field}이(가) 너무 깁니다(최대 ${max}자).`);
-  return value;
-};
-const position = (value: unknown, field: string) => {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new RelayError("INVALID_ARGUMENT", `${field}은(는) 숫자나 null이어야 합니다.`);
-  return value;
-};
-const id = (value: unknown, field: string) => {
-  if (typeof value !== "string" || !ID.test(value)) throw new RelayError("INVALID_ARGUMENT", `${field}이(가) 올바르지 않습니다.`);
-  return value;
-};
-
-/** 브라우저가 보낸 저장 묶음을 검사해 모양을 고정한다. 틀리면 아무것도 쓰지 않고 거부한다. */
-export function parseBatch(raw: unknown, now = Date.now()): NoteBatch {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new RelayError("INVALID_ARGUMENT", "저장 묶음은 객체여야 합니다.");
-  const { upserts = [], deletes = [] } = raw as { upserts?: unknown; deletes?: unknown };
-  if (!Array.isArray(upserts) || !Array.isArray(deletes)) throw new RelayError("INVALID_ARGUMENT", "upserts와 deletes는 배열이어야 합니다.");
-  if (upserts.length + deletes.length > MAX_BATCH) throw new RelayError("INVALID_ARGUMENT", `한 번에 ${MAX_BATCH}개까지 저장합니다.`);
-  const items = upserts.map((value, index) => parseItem(value, `upserts[${index}]`, now));
-  return { upserts: items, deletes: deletes.map((value, index) => id(value, `deletes[${index}]`)) };
-}
-
-/** 항목 하나의 모양을 고정한다. field는 오류에 보일 위치다. */
-function parseItem(value: unknown, field: string, now: number): NoteItem {
-  if (!value || typeof value !== "object") throw new RelayError("INVALID_ARGUMENT", `${field}는 객체여야 합니다.`);
-  const entry = value as Record<string, unknown>;
-  const itemId = id(entry.id, `${field}.id`);
-  const parentId = entry.parentId === null || entry.parentId === undefined ? null : id(entry.parentId, `${field}.parentId`);
-  if (parentId === itemId) throw new RelayError("INVALID_ARGUMENT", "항목을 제 안에 넣을 수 없습니다.");
-  const createdAt = time(entry.createdAt, now);
-  const updatedAt = time(entry.updatedAt, now);
-  const order = position(entry.position, `${field}.position`);
-  if (entry.kind === "folder") return { id: itemId, kind: "folder", parentId, name: text(entry.name, MAX_NAME, "폴더 이름").trim() || "새 폴더", position: order, createdAt, updatedAt };
-  if (entry.kind === "note") return { id: itemId, kind: "note", parentId, title: text(entry.title, MAX_NAME, "제목"), body: text(entry.body, MAX_BODY, "본문"), position: order, createdAt, updatedAt };
-  throw new RelayError("INVALID_ARGUMENT", `${field}.kind는 folder 또는 note여야 합니다.`);
-}
-
-const pad = (value: number) => String(value).padStart(2, "0");
-/** 내보낼 파일 이름. 이 컴퓨터의 날짜를 붙인다. */
-export const exportFileName = (date = new Date()) => `relay-notes-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.json`;
-
-/** 내보낸 파일을 검사한다. 표지·판이 다르거나 항목 하나라도 틀리면 아무것도 쓰지 않고 거부한다. 같은 id가 거듭 나오면 마지막 것을 쓴다. */
-export function parseExport(raw: unknown, now = Date.now()): NoteItem[] {
-  const data = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as { format?: unknown; schemaVersion?: unknown; items?: unknown } : null;
-  if (data?.format !== EXPORT_FORMAT) throw new RelayError("INVALID_ARGUMENT", "Relay에서 내보낸 메모 파일이 아닙니다.");
-  if (data.schemaVersion !== 1) throw new RelayError("INVALID_ARGUMENT", "지원하지 않는 메모 파일 판입니다. Relay를 새 버전으로 바꿔 주세요.");
-  if (!Array.isArray(data.items)) throw new RelayError("INVALID_ARGUMENT", "items는 배열이어야 합니다.");
-  if (data.items.length > MAX_IMPORT) throw new RelayError("INVALID_ARGUMENT", `한 번에 ${MAX_IMPORT}개까지 가져옵니다.`);
-  const items = new Map<string, NoteItem>();
-  data.items.forEach((value, index) => { const item = parseItem(value, `items[${index}]`, now); items.set(item.id, item); });
-  return [...items.values()];
-}
 
 const toItem = (row: Row): NoteItem => (row.kind === "folder"
   ? { id: row.id, kind: "folder", parentId: row.parent_id, name: row.name, position: row.position, createdAt: row.created_at, updatedAt: row.updated_at }
@@ -130,16 +56,15 @@ export class NoteStore {
   merge(items: NoteItem[]): ImportResult {
     try {
       return this.db.transaction(() => {
-        const find = this.db.query("SELECT kind, parent_id, name, title, body, position, updated_at FROM notes WHERE id = ?");
+        const find = this.db.query("SELECT id, kind, parent_id, name, title, body, position, created_at, updated_at FROM notes WHERE id = ?");
         const changes: NoteItem[] = [];
         let added = 0, kept = 0;
         for (const item of items) {
-          const row = find.get(item.id) as Omit<Row, "id" | "created_at"> | null;
-          if (!row) { added++; changes.push(item); continue; }
-          const same = row.kind === item.kind && row.parent_id === item.parentId && row.position === item.position
-            && (item.kind === "folder" ? row.name === item.name : row.title === item.title && row.body === item.body);
-          if (row.kind !== item.kind || same || item.updatedAt <= row.updated_at) kept++;
-          else changes.push(item);
+          const row = find.get(item.id) as Row | null;
+          const decision = mergeDecision(row ? toItem(row) : null, item);
+          if (decision === "add") { added++; changes.push(item); }
+          else if (decision === "update") changes.push(item);
+          else kept++;
         }
         const updated = changes.length - added;
         if (!changes.length) return { schemaVersion: 1 as const, revision: this.revision(), added, updated, kept };
