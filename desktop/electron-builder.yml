@@ -1,0 +1,33 @@
+appId: dev.chanuu.relay
+productName: Relay
+electronDist: ../node_modules/electron/dist
+copyright: MIT
+directories:
+  output: release
+  buildResources: resources
+files:
+  - dist/**
+  - package.json
+  - "!**/node_modules/**"
+extraResources:
+  # 설치형 앱에 relay.exe와 설치 스크립트를 동봉한다. 첫 실행 때 ~/.local/bin에 복사하고 훅·스킬·relay://를 구성한다.
+  - from: ../dist/relay.exe
+    to: relay.exe
+  - from: ../scripts/install-cli.ps1
+    to: install-cli.ps1
+  - from: resources/icon.png
+    to: icon.png
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.png
+  artifactName: Relay-Setup-${version}.${ext}
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  shortcutName: Relay
+publish: null

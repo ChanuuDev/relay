@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'">
+  <title>Relay 설정</title>
+  <link rel="stylesheet" href="wizard.css">
+</head>
+<body>
+  <main class="sheet" data-step="mode">
+    <header class="head">
+      <img class="logo" src="icon.png" alt="" width="40" height="40">
+      <div>
+        <h1>Relay</h1>
+        <p class="sub" id="subtitle">기록을 어디에 둘지 고르세요</p>
+      </div>
+      <span class="chip" id="status-chip" hidden></span>
+    </header>
+
+    <!-- 1. 모드 -->
+    <section class="step" data-step="mode">
+      <div class="cards">
+        <button type="button" class="card" data-mode="local" id="card-local">
+          <span class="card-title">로컬 서버 <small>이 PC에 저장</small></span>
+          <span class="card-body">세션·메모·계산 이력을 이 PC의 <code>~/.relay/relay.db</code>에 둡니다. 지금과 같은 구조이고 인터넷이 없어도 됩니다.</span>
+        </button>
+        <button type="button" class="card" data-mode="remote" id="card-remote">
+          <span class="card-title">원격 서버 <small>도메인 입력</small></span>
+          <span class="card-body">여러 PC가 같은 기록을 봅니다. 서버 주소와 API 토큰을 넣고 연결을 확인한 뒤 저장합니다. 파일 탐색기에 서버 폴더가 추가됩니다.</span>
+        </button>
+      </div>
+      <p class="note">모드는 나중에 트레이 메뉴의 <b>설정…</b>에서 바꿀 수 있습니다.</p>
+    </section>
+
+    <!-- 2. 원격 입력 + 연결 테스트 -->
+    <section class="step" data-step="remote" hidden>
+      <form id="remote-form" autocomplete="off">
+        <label class="field">
+          <span>서버 주소</span>
+          <input id="url" name="url" type="text" placeholder="relay.example.com" spellcheck="false" required>
+          <small>https만 받습니다. 스킴을 생략하면 https로 봅니다.</small>
+        </label>
+        <label class="field">
+          <span>API 토큰</span>
+          <input id="token" name="token" type="password" placeholder="서버에서 만든 기기 토큰" spellcheck="false" required>
+          <small>서버에서 <code>token create --name &lt;기기명&gt;</code>으로 만든 값입니다. 이 PC의 설정 파일에만 저장됩니다.</small>
+        </label>
+        <label class="field">
+          <span>이 PC 이름</span>
+          <input id="device" name="device" type="text" maxlength="100" required>
+          <small>원격 기록에 어느 PC에서 남긴 것인지 표시됩니다.</small>
+        </label>
+        <div class="actions">
+          <button type="button" class="ghost" data-back>뒤로</button>
+          <button type="submit" class="primary" id="test">연결 확인</button>
+        </div>
+      </form>
+      <ol class="report" id="report" hidden></ol>
+      <div class="actions" id="remote-next" hidden>
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="to-migrate">다음</button>
+      </div>
+    </section>
+
+    <!-- 3. 데이터 이전 -->
+    <section class="step" data-step="migrate" hidden>
+      <p class="lead">이 PC에 저장된 기록을 원격 서버로 올릴까요?</p>
+      <p class="note">세션·이력·메모·계산 이력을 id 기준으로 올립니다. 같은 항목은 더 최근 쪽을 남기고 아무것도 지우지 않습니다. 이 PC의 <code>relay.db</code>는 백업으로 그대로 남습니다.</p>
+      <pre class="console" id="migrate-output" hidden></pre>
+      <div class="actions">
+        <button type="button" class="ghost" data-back>뒤로</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="skip-migrate">올리지 않고 저장</button>
+        <button type="button" class="primary" id="run-migrate">올리고 저장</button>
+      </div>
+    </section>
+
+    <!-- 4. 완료 / 설정 -->
+    <section class="step" data-step="done" hidden>
+      <p class="lead" id="done-lead">저장했습니다.</p>
+      <dl class="facts" id="facts"></dl>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="auto-launch"> <span>Windows 로그인 때 트레이로 조용히 시작</span></label>
+        <label class="toggle"><input type="checkbox" id="close-to-tray"> <span>창을 닫으면 종료하지 않고 트레이로</span></label>
+        <label class="toggle"><input type="checkbox" id="keep-server"> <span>앱을 종료해도 서버 유지</span></label>
+      </div>
+      <div class="actions">
+        <button type="button" class="ghost" id="change-mode">모드 바꾸기</button>
+        <button type="button" class="ghost" id="restart">서버 다시 시작</button>
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="open-main">Relay 열기</button>
+      </div>
+    </section>
+
+    <p class="error" id="error" hidden></p>
+  </main>
+  <script src="wizard.js"></script>
+</body>
+</html>

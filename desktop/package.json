@@ -1,0 +1,22 @@
+{
+  "name": "@relay/desktop",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Relay Windows 앱: relay.exe를 켜고, 처음 실행 때 로컬/원격을 고르고, 트레이·자동 실행 같은 Windows 연동을 맡는다",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json && node scripts/copy-static.cjs",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "start": "npm run build && electron .",
+    "test": "npm run build && playwright test -c playwright.config.ts",
+    "dist": "npm run build && node scripts/package.cjs",
+    "check": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.0.0",
+    "electron": "38.8.6",
+    "electron-builder": "^26.0.0",
+    "typescript": "5.9.3"
+  }
+}

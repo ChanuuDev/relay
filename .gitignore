@@ -26,3 +26,6 @@ deploy/secrets/
 설계/설계.md
 
 .environment
+
+# Electron 설치 산출물
+desktop/release/

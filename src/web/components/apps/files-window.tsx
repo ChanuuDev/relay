@@ -135,6 +135,7 @@ export function FilesWindow() {
   function openEntry(entry: FileEntry) {
     if (entry.kind === "directory") go(entry.path);
     else if (viewerKind(entry)) useViewer.getState().open(entry, entries);
+    else if (entry.path.startsWith("remote:/")) download(entry.path);
     else void system(entry.path, "open");
   }
   const inClipboard = (target: string, mode?: PasteMode) => Boolean(clipboard && (!mode || clipboard.mode === mode) && clipboard.paths.some((path) => path.toLowerCase() === target.toLowerCase()));
@@ -145,7 +146,7 @@ export function FilesWindow() {
     if (items.length > BATCH_MAX) { say(`한 번에 ${BATCH_MAX}개까지만 ${mode === "cut" ? "잘라낼" : "복사할"} 수 있습니다.`, "error"); return; }
     const next: Clipboard = { paths: items.map((item) => item.path), mode };
     setClipboard(next);
-    if (mode === "copy" && (places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform))) {
+    if (mode === "copy" && !next.paths.some(path => path.startsWith("remote:/")) && (places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform))) {
       const id = Date.now();
       setNotice({ id, tone: "info", text: "Windows 클립보드에 복사하는 중…", pending: true });
       try {
@@ -287,7 +288,7 @@ export function FilesWindow() {
     ];
   };
   const pasteEntry = (destination: string): MenuEntry => ({ kind: "item", id: "paste", label: "붙여넣기", disabled: !clipboard || busy, onSelect: () => void paste(destination) });
-  const menuEntries = (target: Menu): MenuEntry[] => {
+  const allMenuEntries = (target: Menu): MenuEntry[] => {
     if (target.tree) return treeEntries(target.tree);
     const entry = target.entry;
     if (entry && picked.length > 1 && pickedSet.has(entry.path)) return [
@@ -302,7 +303,7 @@ export function FilesWindow() {
     if (entry) {
       const viewer = viewerKind(entry);
       return [
-        { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : viewer ? "뷰어로 열기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
+        { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : viewer ? "뷰어로 열기" : entry.path.startsWith("remote:/") ? "내려받기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
         ...(viewer ? [{ kind: "item" as const, id: "system", label: "기본 앱으로 열기", onSelect: () => void system(entry.path, "open") }] : []),
         ...(entry.kind === "directory" ? [favoriteEntry(entry.path)] : []),
         { kind: "item", id: "reveal", label: "탐색기에서 보기", onSelect: () => void system(entry.path, "reveal") },
@@ -330,6 +331,24 @@ export function FilesWindow() {
       ...(location !== null ? [{ kind: "separator" as const, id: "sep3" }, { kind: "item" as const, id: "properties", label: "속성", onSelect: () => setProperties(location) }] : []),
     ];
   };
+
+  const menuEntries = (target: Menu): MenuEntry[] => {
+    const remote = (target.entry?.path ?? target.tree?.path ?? location)?.startsWith("remote:/");
+    return allMenuEntries(target).filter(entry => !remote || !["system", "reveal", "explorer"].includes(entry.id));
+  };
+  async function upload(files: FileList | null) {
+    if (!files || !location?.startsWith("remote:/")) return;
+    setBusy(true);
+    try {
+      for (const file of Array.from(files)) {
+        const target = location.replace(/\/$/, "") + "/" + file.name;
+        const response = await fetch(`/api/v1/remote/files/content?path=${encodeURIComponent(target.slice(7))}`, { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file });
+        if (!response.ok) { const data = await response.json() as { error?: { message: string } }; throw new Error(data.error?.message ?? "올리지 못했습니다."); }
+      }
+      refresh(); say("파일을 올렸습니다.");
+    } catch (error) { refresh(); say(error instanceof Error ? error.message : "올리지 못했습니다.", "error"); }
+    finally { setBusy(false); }
+  }
 
   /** 화살표·Home·End로 고르고(Shift를 누르면 범위), Enter로 열고, Backspace·Alt+↑로 위로, Alt+←/→로 뒤로·앞으로. 글자를 치면 그 이름으로 건너뛴다.
    *  Ctrl+A는 모두 선택, Ctrl+C·X·V는 고른 항목 복사·잘라내기·붙여넣기, Delete는 삭제, F2는 이름 바꾸기, Alt+Enter는 속성이다. */
@@ -448,6 +467,7 @@ export function FilesWindow() {
           <Button type="button" variant="ghost" size="icon-sm" aria-label="새로 고침" title="새로 고침 (F5)" onClick={refresh}>
             <RotateCw aria-hidden="true" data-spinning={listing.isFetching || places.isFetching ? "" : undefined} /></Button>
         </div>
+        {location?.startsWith("remote:/") && <label><span>파일 올리기</span><input aria-label="원격 서버에 파일 올리기" type="file" multiple disabled={busy} onChange={event => { void upload(event.target.files); event.target.value = ""; }} /></label>}
         <PathBar location={location} listing={data} drives={drives} onGo={(target) => go(target)} />
       </div>
     </WindowTitleBar>}>

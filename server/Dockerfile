@@ -5,7 +5,8 @@ WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/package.json
 COPY server/package.json server/package.json
-RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY desktop/package.json desktop/package.json
+RUN npm ci --workspace @relay/core --workspace @relay/server --ignore-scripts --no-audit --no-fund
 COPY packages/core packages/core
 COPY server server
 RUN npm run build -w @relay/core && npm run build -w @relay/server && npm prune --omit=dev --ignore-scripts

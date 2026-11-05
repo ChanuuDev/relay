@@ -439,6 +439,8 @@ export const renameItem = (target: string, name: string) => postJson<RenameResul
 
 /** 경로 글자만으로 찾은 상위 폴더. 드라이브 루트(C:\)나 /의 상위는 null(`이 PC`)이다. */
 export function parentOf(target: string): string | null {
+  if (target === "remote:/") return null;
+  if (target.startsWith("remote:/") && target.lastIndexOf("/") === 7) return "remote:/";
   const trimmed = target.replace(/[\\/]+$/, "");
   const cut = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
   if (cut < 0 || !trimmed) return null;

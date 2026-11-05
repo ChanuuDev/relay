@@ -7,7 +7,7 @@ export type BriefSession = Pick<Session, "id" | "provider" | "agent" | "provider
 export type ListData<T = Session> = { schemaVersion: number; items: T[]; page: Page };
 export type DetailData = { schemaVersion: number; session: Session; parentSession: BriefSession | null; childrenPage: Page };
 export type ChainData = { schemaVersion: number; sessionId: string; items: ChainNode[]; truncated: boolean };
-export type HealthData = { schemaVersion: number; dataDirectory: string; databasePath: string; appVersion: string; build?: string };
+export type HealthData = { schemaVersion: number; dataDirectory: string; databasePath: string; appVersion: string; build?: string; mode?: "local" | "remote"; remote?: { url: string; reachable: boolean; latencyMs?: number; outbox: { pending: number; failed: number } } };
 export type HistoryData = ListData<SessionUpdate>;
 
 focusManager.setEventListener((handleFocus) => {

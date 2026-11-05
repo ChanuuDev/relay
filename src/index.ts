@@ -2,14 +2,17 @@
 import { Command, CommanderError } from "commander";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { loadConfig } from "./config";
+import { loadConfig, remoteUrl } from "./config";
+import { RemoteClient } from "./remote/client";
+import { RemoteSessions, type SessionAccess } from "./remote/sessions";
+import { migrate } from "./remote/migrate";
 import { openDatabase } from "./db/database";
 import { errorBody, invalid, RelayError, storageError } from "./errors";
 import { gitClue } from "./git";
 import { SESSION_COMPACT_PROMPT, SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { transcriptModels } from "./hooks/transcript";
-import { NoteStore, parseExport } from "./notes/notes.store";
+import { EXPORT_FORMAT, NoteStore, parseExport } from "./notes/notes.store";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
@@ -50,16 +53,17 @@ program.action((options, command: Command) => {
 const STATUS_HELP = "작업 상태: working | blocked | handoff | done";
 const shell = () => process.platform === "win32" ? "powershell" : "bash";
 
-async function run(command: Command, write: boolean, action: (service: SessionService, config: ReturnType<typeof loadConfig>) => unknown) {
+async function run(command: Command, write: boolean, action: (service: SessionAccess, config: ReturnType<typeof loadConfig>) => unknown) {
   const options = command.optsWithGlobals();
   const config = loadConfig(options.dataDir);
-  const db = openDatabase(config, !write);
+  const db = config.mode === "remote" ? null : openDatabase(config, !write);
   // A record written from the CLI carries the working tree as it stands; reads never touch git.
-  const service = new SessionService(new SessionRepository(db), config.retentionDays, write ? gitClue : undefined);
+  const service = db ? new SessionService(new SessionRepository(db), config.retentionDays, write ? gitClue : undefined) : new RemoteSessions(new RemoteClient(config), write ? gitClue : undefined);
+  if (service instanceof RemoteSessions && !write) await service.client.flush();
   let picked: Session | undefined;
   try {
     let result: unknown;
-    try { result = action(service, config); }
+    try { result = await action(service, config); }
     catch (error) {
       if (error instanceof RelayError && error.code === "SESSION_NOT_FOUND" && error.details?.relayId &&
         typeof error.details.providerSessionId === "string" && typeof error.details.provider === "string") {
@@ -70,15 +74,16 @@ async function run(command: Command, write: boolean, action: (service: SessionSe
       throw error;
     }
     if (options.json) return void process.stdout.write(JSON.stringify(result) + "\n");
+    if ((result as { queued?: boolean }).queued) return void process.stdout.write("원격 전송 대기 중\n");
     const space = terminalWidth();
     const lines = render(result, space);
     // The reader browses the same rows in the terminal, then keeps the plain table in the scrollback.
     // A list keeps the store open meanwhile, so the picked row can show its history and connections.
     const listed = Array.isArray((result as { items?: unknown }).items);
     picked = interactiveTerminal() && lines.some(line => line.owner)
-      ? await browse(lines, space, listed ? { detail: session => render(inspect(service, session), space) } : {}) : undefined;
+      ? await browse(lines, space, listed && service instanceof SessionService ? { detail: session => render(inspect(service, session), space) } : {}) : undefined;
     process.stdout.write(lines.map(line => line.text).join("\n") + "\n");
-  } finally { db.close(); }
+  } finally { db?.close(); }
   // The clipboard runs after the view is gone, so a slow tool never delays closing it.
   // stdout stays the table alone; what the reader picked is status, so it goes to stderr.
   if (picked) process.stderr.write(copyNotice(picked, await copyToClipboard(terminalContext(picked, config))) + "\n");
@@ -123,9 +128,9 @@ program.command("handoff <session-id>").description("요약·이력·흐름·재
   .option("--provider <provider>", "제공자 (ID 충돌 시 필수)")
   .option("--limit <number>", "담을 이력 건수 (1~100, 기본 50)")
   .option("--shell <shell>", "명령 인용 셸: powershell | bash (기본은 현재 OS)")
-  .action((id: string, o, c: Command) => run(c, false, (s, config) => {
+  .action((id: string, o, c: Command) => run(c, false, async (s, config) => {
     if (o.shell !== undefined && o.shell !== "powershell" && o.shell !== "bash") invalid("shell: powershell 또는 bash를 입력하세요.");
-    const packet = s.packet(id, o.provider, { limit: o.limit });
+    const packet = await s.packet(id, o.provider, { limit: o.limit });
     return { schemaVersion: 1, sessionId: packet.session.id,
       markdown: handoffMarkdown({ ...packet, childrenTotal: packet.childrenPage.total, updatesTotal: packet.updatesPage.total },
         { shell: o.shell ?? shell(), storeDirectory: config.dataDirectory }) };
@@ -152,8 +157,8 @@ program.command("delete <session-id>").description("세션 기록과 이력 삭�
 
 const notes = program.command("notes").description("메모 내보내기·가져오기 (다른 PC나 저장소로 옮길 때)");
 notes.command("export <file>").description("모든 메모와 폴더를 JSON 파일로 내보냄 (같은 이름의 파일은 덮어씀)")
-  .action((file: string, _o, c: Command) => withNotes(c, false, store => {
-    const data = store.exportAll();
+  .action((file: string, _o, c: Command) => withNotes(c, false, async store => {
+    const data = await store.exportAll();
     const target = path.resolve(file);
     try { writeFileSync(target, `${JSON.stringify(data, null, 2)}\n`); }
     catch { throw new RelayError("FILE_WRITE_FAILED", `파일을 쓸 수 없습니다: ${target}`, 5, 500); }
@@ -164,17 +169,19 @@ notes.command("export <file>").description("모든 메모와 폴더를 JSON 파�
 notes.command("import <file>").description("내보낸 JSON 파일의 메모를 합침. 없는 항목은 넣고, 같은 항목은 더 최근에 고친 쪽을 남기며 아무것도 지우지 않음")
   .action((file: string, _o, c: Command) => {
     const items = parseExport(readExport(path.resolve(file)));
-    return withNotes(c, true, store => {
-      const result = store.merge(items);
+    return withNotes(c, true, async store => {
+      const result = await store.merge(items);
       return [result, `메모를 가져왔습니다: 추가 ${result.added} · 갱신 ${result.updated} · 그대로 ${result.kept}`];
     });
   });
 
 /** 메모 저장소를 열어 한 가지 일을 하고 닫는다. --json이면 결과 객체를, 아니면 한 줄 안내를 stdout에 쓴다. */
-function withNotes(command: Command, write: boolean, action: (store: NoteStore) => [unknown, string]) {
-  const db = openDatabase(loadConfig(command.optsWithGlobals().dataDir), !write);
+async function withNotes(command: Command, write: boolean, action: (store: Pick<NoteStore, "exportAll" | "merge"> | { exportAll: () => Promise<ReturnType<NoteStore["exportAll"]>>; merge: (items: Parameters<NoteStore["merge"]>[0]) => Promise<ReturnType<NoteStore["merge"]>> }) => Promise<[unknown, string]>) {
+  const config = loadConfig(command.optsWithGlobals().dataDir);
+  const db = config.mode === "remote" ? null : openDatabase(config, !write);
+  const client = new RemoteClient(config);
   let output: [unknown, string];
-  try { output = action(new NoteStore(db)); } finally { db.close(); }
+  try { output = await action(db ? new NoteStore(db) : { exportAll: () => client.json<ReturnType<NoteStore["exportAll"]>>("/api/v1/notes/export"), merge: items => client.json("/api/v1/notes/import", { format: EXPORT_FORMAT, schemaVersion: 1, items }) }); } finally { db?.close(); }
   process.stdout.write(`${command.optsWithGlobals().json ? JSON.stringify(output[0]) : output[1]}\n`);
 }
 
@@ -216,23 +223,23 @@ program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin�
       const roots = Array.isArray(payload.workspace_roots) ? payload.workspace_roots : [];
       const cwd = [payload.cwd, roots[0]].find((value): value is string => typeof value === "string" && existsSync(value)) ?? process.cwd();
       const config = loadConfig(command.optsWithGlobals().dataDir);
-      const db = openDatabase(config);
+      const db = config.mode === "remote" ? null : openDatabase(config);
       try {
         // The hook has a few seconds at most, so it records without reading the working tree.
-        const service = new SessionService(new SessionRepository(db), config.retentionDays);
+        const service = db ? new SessionService(new SessionRepository(db), config.retentionDays) : new RemoteSessions(new RemoteClient(config, 1500));
         // The host knows the model, the agent does not need to say it: the list takes the models the
         // transcript shows answering, then the one the payload names (Codex·Cursor on every event, Claude Code on a switch).
-        const noteModels = () => {
+        const noteModels = async () => {
           const models = [...transcriptModels(payload.transcript_path), payload.model, payload.to_model];
-          if (models.some(model => typeof model === "string")) service.models(sessionId, provider, models);
+          if (models.some(model => typeof model === "string")) await service.models(sessionId, provider, models);
         };
         const steps = options.modelSwitch ? [noteModels]
           : options.end ? [() => service.end(sessionId, provider, endReason(payload)), noteModels]
           : options.compact ? [() => service.compact(sessionId, provider, typeof payload.trigger === "string" ? payload.trigger : undefined), noteModels]
           : [() => service.record({ provider, agent, sessionId, sessionName: path.basename(cwd), cwd, summary: HOOK_SUMMARY }), noteModels];
         // Each step stands alone, so a record that cannot be written still gets its models, and the other way round.
-        for (const step of steps) { try { step(); } catch { /* 기록 실패가 세션을 막지 않는다 */ } }
-      } finally { db.close(); }
+        for (const step of steps) { try { await step(); } catch { /* 기록 실패가 세션을 막지 않는다 */ } }
+      } finally { db?.close(); }
     } catch { /* 기록 실패가 세션을 막지 않는다 */ }
     finally { if (!answered) process.stdout.write("{}\n"); }
   });
@@ -257,6 +264,39 @@ function endReason(payload: Record<string, unknown>): string | undefined {
   const reason = given?.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 200);
   return reason || undefined;
 }
+
+const remote = program.command("remote").description("원격 서버 연결 확인·상태");
+remote.command("test").option("--url <url>", "서버 주소").option("--token <token>", "API 토큰")
+  .action(async (options, command: Command) => {
+    const config = loadConfig(command.optsWithGlobals().dataDir);
+    if (options.url || options.token) config.remote = { url: remoteUrl(options.url ?? config.remote?.url), token: options.token ?? config.remote?.token ?? "" };
+    const client = new RemoteClient(config, 5000);
+    const health = await client.json<{ schemaVersion: number; kind: string; apiVersion: number }>("/api/v1/health");
+    if (health.schemaVersion !== 1 || health.kind !== "relay-remote" || health.apiVersion < 1) invalid("호환되는 Relay 원격 서버가 아닙니다.");
+    const auth = await client.json("/api/v1/auth/whoami");
+    process.stdout.write(JSON.stringify({ schemaVersion: 1, ok: true, health, auth }) + "\n");
+  });
+remote.command("status").action(async (_options, command: Command) => {
+  const config = loadConfig(command.optsWithGlobals().dataDir);
+  const client = new RemoteClient(config);
+  process.stdout.write(JSON.stringify({ schemaVersion: 1, mode: config.mode ?? "local", outbox: client.list(),
+    ...(config.mode === "remote" ? { health: await client.json("/api/v1/health") } : {}) }) + "\n");
+});
+const outbox = program.command("outbox").description("원격 전송 대기열");
+outbox.command("list").action((_options, command: Command) => {
+  process.stdout.write(JSON.stringify(new RemoteClient(loadConfig(command.optsWithGlobals().dataDir)).list()) + "\n");
+});
+outbox.command("flush").action(async (_options, command: Command) => {
+  const client = new RemoteClient(loadConfig(command.optsWithGlobals().dataDir));
+  const result = await client.flush();
+  process.stdout.write(JSON.stringify({ ...client.list(), sent: result.sent }) + "\n");
+});
+program.command("migrate").requiredOption("--to-remote", "로컬 데이터를 원격 서버로 이전")
+  .option("--dry-run", "건수만 미리 보기")
+  .action(async (options, command: Command) => {
+    const result = await migrate(loadConfig(command.optsWithGlobals().dataDir), Boolean(options.dryRun));
+    process.stdout.write(JSON.stringify(result) + "\n");
+  });
 
 program.command("install-hooks").description("Claude/Grok/Codex 세션 훅·시작 안내 등록 및 스킬 설치")
   .option("--bin-dir <path>", "relay.exe와 훅 래퍼를 둘 절대경로")

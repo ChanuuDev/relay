@@ -69,11 +69,12 @@ export function SettingsWindow({ health, healthError, connection }: {
     <section className="settings-group" id="storage-info">
       <h3>저장소</h3>
       <ErrorNotice id="global-error" error={healthError} />
-      <div className="settings-row"><span>데이터베이스</span><code>{health?.databasePath ?? "확인 중…"}</code></div>
+      <div className="settings-row"><span>{health?.mode === "remote" ? "원격 서버" : "데이터베이스"}</span><code>{health?.mode === "remote" ? health.remote?.url : health?.databasePath ?? "확인 중…"}</code></div>
       <div className="settings-row"><span>버전</span><span>RELAY {health?.appVersion ? `v${health.appVersion}` : "—"}</span></div>
       <div className="settings-row"><span>연결</span><span className="settings-connection"><span className="connection-dot" data-state={connection} />{CONNECTION_LABEL[connection]}</span></div>
-      <div className="settings-row"><span>모드</span><Badge variant="outline">세션 조회·정리</Badge></div>
-      <p className="settings-note">127.0.0.1에서만 열리는 로컬 서버입니다. 세션 기록은 Agent가 CLI로 남기고, 이 화면은 목록 정리(작업 상태·고정·종료·삭제)와 메모 저장·가져오기만 합니다. 쓰기는 같은 화면에서 보낸 JSON만 받습니다.</p>
+      <div className="settings-row"><span>모드</span><Badge variant="outline">{health?.mode === "remote" ? "원격" : "로컬"}</Badge></div>
+      {health?.remote && <div className="settings-row"><span>원격 연결</span><span>{health.remote.reachable ? `연결됨 (${health.remote.latencyMs ?? 0}ms)` : "연결 끊김"} · 대기 {health.remote.outbox.pending}건 · 실패 {health.remote.outbox.failed}건</span></div>}
+      <p className="settings-note">모드 전환은 Electron 앱의 트레이 메뉴 ‘설정’에서 합니다. 화면은 127.0.0.1에서만 열리는 로컬 서버입니다. 세션 기록은 Agent가 CLI로 남기고, 이 화면은 목록 정리(작업 상태·고정·종료·삭제)와 메모 저장·가져오기만 합니다. 쓰기는 같은 화면에서 보낸 JSON만 받습니다.</p>
     </section>
   </Window>;
 }

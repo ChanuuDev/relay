@@ -1,0 +1,24 @@
+// Electron·브라우저 검증 전용 NestJS/PGlite 서버. 토큰은 임시 파일로만 넘긴다.
+import { writeFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { openPglite } from "../../server/dist/db/database.js";
+import { createApp } from "../../server/dist/app.js";
+import { AuthService } from "../../server/dist/auth/auth.service.js";
+const directory = process.argv[2];
+const files = path.join(directory, "remote-files");
+mkdirSync(files, { recursive: true });
+writeFileSync(path.join(files, "remote-note.txt"), "원격 파일 내용");
+const { db, close } = await openPglite();
+const app = await createApp(db, { databaseUrl: null, port: 0, retentionDays: 30, filesRoot: files, build: "fixture", bootstrapUser: "tester", logLevel: "error" }, { schedule: false, log: false });
+const auth = app.get(AuthService);
+const user = await auth.bootstrap("tester");
+const { token } = await auth.createToken(user.id, "fixture");
+await app.listen(0, "127.0.0.1");
+const { port } = app.getHttpServer().address();
+const url = `http://127.0.0.1:${port}`;
+await fetch(url + "/api/v1/sessions", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ provider: "openai", agent: "codex", sessionId: "fixture-session", summary: "다른 PC에서 남긴 기록", cwd: "C:/fixture" }) });
+writeFileSync(path.join(directory, "fixture.json"), JSON.stringify({ url, token }), { mode: 0o600 });
+process.stdout.write("ready\n");
+const stop = async () => { await app.close(); await close(); process.exit(0); };
+process.on("SIGTERM", stop); process.on("SIGINT", stop);
+process.stdin.resume(); process.stdin.on("end", stop);

@@ -1,3 +1,5 @@
+import { RemoteClient } from "../remote/client";
+import { remoteHandler } from "../remote/web";
 import type { Config } from "../config";
 import { openDatabase } from "../db/database";
 import { errorBody, RelayError } from "../errors";
@@ -187,7 +189,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
       return new Response(asset.body, { headers: { ...headers, "Content-Type": asset.type } });
     } catch (error) { return failed(error, allow); }
   };
-  return (request: Request): Response | Promise<Response> => {
+  const local = (request: Request): Response | Promise<Response> => {
     if (request.method === "POST") {
       const pathname = new URL(request.url).pathname;
       if (notes && pathname === NOTES_PATH) return saveNotes(request);
@@ -201,6 +203,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
     }
     return read(request);
   };
+  return config.mode === "remote" ? remoteHandler(config, local) : local;
 }
 
 export function startServer(config: Config) {
@@ -213,12 +216,16 @@ export function startServer(config: Config) {
   try {
     server = Bun.serve({ hostname: config.webHost, port: config.webPort,
       fetch: handler(service, config, { notes: new NoteStore(writeDb), files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb) }),
-      maxRequestBodySize: MAX_IMPORT_BYTES, development: false, reusePort: false });
+      maxRequestBodySize: config.mode === "remote" ? 256 * 1024 * 1024 : MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
     db.close(); writeDb.close();
     if ((error as { code?: string }).code === "EADDRINUSE") throw portFailure(config.webPort, "PORT_IN_USE", "포트가 사용 중입니다. 기존 서버를 확인하거나 --port를 지정하세요.");
     throw new RelayError("SERVER_START_FAILED", "로컬 서버를 시작할 수 없습니다. 포트와 권한을 확인하세요.", 6, 500);
   }
+  const flush = () => { if (config.mode === "remote") void new RemoteClient(config).flush().catch(() => {}); };
+  flush();
+  const timer = setInterval(flush, 5 * 60_000);
+  timer.unref();
   let stopped = false;
-  return { server, async stop() { if (!stopped) { stopped = true; await server.stop(false); db.close(); writeDb.close(); } } };
+  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); await server.stop(false); db.close(); writeDb.close(); } } };
 }

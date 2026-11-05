@@ -26,8 +26,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build -w @relay/core
+      - run: npm run build:web
       - run: npm run check -w @relay/server
       - name: Docker 이미지가 빌드되는지
         run: docker build -f server/Dockerfile -t relay-api:ci .
