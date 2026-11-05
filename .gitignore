@@ -11,8 +11,18 @@ output/playwright/
 *.db-wal
 *.db-shm
 *.log
+*.pem
 
 # 로컬 작업 기록과 설계 초안은 공개하지 않습니다
 Tasks/
 relay-agent-session-continuity-final-draft.md
 git profile.png
+
+# 원격 서버·배포 비밀 (코드는 커밋하고 비밀만 제외)
+server/.env
+server/secrets/
+deploy/.env
+deploy/secrets/
+설계/설계.md
+
+.environment

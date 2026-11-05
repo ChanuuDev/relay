@@ -1,5 +1,10 @@
 # Relay
 
+## 절대 우선순위로 지켜야할 사항
+
+- 작업 중 사용한 원격 서버 관련 정보와 pem 파일을 깃에 커밋 하거나, 관련 접속 정보를 로그로 남기지 않는다.
+- 필요할 경우 사용자에게 접속 정보를 묻는다.
+
 ## 세션 기록 지침
 
 이 프로젝트의 Agent 세션은 Relay에 기록한다. `relay`가 없거나 기록이 실패하면 한 줄로 알리고 원래 작업을 계속한다. 기록 때문에 사용자의 작업을 멈추지 않는다.
@@ -7,7 +12,6 @@
 - **세션 ID**: 현재 Agent의 실제 세션 ID를 셸 변수로 그대로 전달한다. Claude Code는 `$CLAUDE_CODE_SESSION_ID`, Codex는 `$CODEX_THREAD_ID`, Grok은 `$GROK_SESSION_ID`이다. Cursor는 환경변수가 없으므로 시작 훅이 맥락에 넣어 준 `sessionId`를 쓴다. 값을 임의로 만들지 않는다.
 - **압축 뒤**: 컨텍스트가 압축된 뒤 시작 안내가 기록을 다시 읽으라고 하면 `relay show <ID> --provider <회사 식별자> --history --json`으로 자신의 기록을 확인하고, 빠진 맥락을 `update`로 보완한다.
 - **첫 기록**: 첫 작업 전에 `relay show <ID> --provider <회사 식별자> --json`으로 확인한다. 기록이 없을 때만 아래를 실행한다.
-
   ```text
   relay record --provider <anthropic|openai|xai|cursor> --agent <claude-code|codex|grok|cursor-agent> --session-id <ID> --session-name <작업 주제> --summary <다음 대화에 필요한 첫 요약>
   ```
