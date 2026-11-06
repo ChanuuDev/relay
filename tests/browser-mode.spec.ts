@@ -86,6 +86,9 @@ async function login(page: Page, token = fixture.token) {
 }
 
 test("토큰과 주소로 로그인하고, 암호화해 둔 정보로 다시 열며, 그림 요청에도 토큰을 붙인다", async ({ page }) => {
+  // 로그인 전에는 화면 모듈(메모·계산기)의 첫 요청을 서버로 보내지 않는다. 토큰 확인(whoami)의 401만 서버에서 온다.
+  const rejected: string[] = [];
+  page.on("response", (response) => { if (response.status() === 401 && !response.url().endsWith("/api/v1/auth/whoami")) rejected.push(new URL(response.url()).pathname); });
   await login(page, "x".repeat(40));
   await expect(page.getByRole("alert")).toHaveText("토큰이 올바르지 않거나 폐기되었습니다.");
   await page.getByLabel("토큰", { exact: true }).fill("짧음");
@@ -97,6 +100,9 @@ test("토큰과 주소로 로그인하고, 암호화해 둔 정보로 다시 열
   await expect(page.locator("#connection-state")).toContainText("연결됨");
   await expect(page.locator(".menubar .local-label")).toHaveText("원격 · 브라우저");
   await expect(page.getByText("다른 PC에서 남긴 기록").first()).toBeVisible();
+  // 로그인 전에 실패한 메모 첫 목록은 몇 초 안에 스스로 다시 받는다.
+  await expect.poll(() => page.evaluate(async () => (await fetch("/api/v1/notes")).status)).toBe(200);
+  expect(rejected).toEqual([]);
 
   // 저장한 것은 암호문뿐이고, 토큰·주소가 그대로 보이지 않는다.
   const stored = await page.evaluate(() => localStorage.getItem("relay-web-credentials"));

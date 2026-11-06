@@ -1,6 +1,6 @@
 import type { WhoAmI } from "@relay/core";
 import { clearCredentials } from "./credentials";
-import { forward, isApi, normalizeRelayUrl, TOKEN_PATTERN, type Credentials } from "./remote-api";
+import { errorResponse, forward, isApi, normalizeRelayUrl, TOKEN_PATTERN, type Credentials } from "./remote-api";
 
 /* 브라우저 모드: 원격 서버가 내려준 정적 화면(`relay-web` 메타가 있는 index.html)을 일반 브라우저로 연 경우다.
    로컬 relay.exe 없이 로그인한 원격 Relay에 직접 붙는다. 화면 코드는 그대로 같은 출처 `/api/v1/*`를 부르고,
@@ -32,7 +32,9 @@ function remoteFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   const target = new URL(request ? request.url : input instanceof URL ? input.href : String(input), location.href);
   // 이미 토큰을 붙인 요청(원격 출처가 같은 경우의 재진입)과 API 밖의 요청은 그대로 보낸다.
   const headers = new Headers(init?.headers ?? request?.headers);
-  if (!current || !isApi(target, location.origin) || headers.has("authorization")) return original(input, init);
+  if (!isApi(target, location.origin) || headers.has("authorization")) return original(input, init);
+  // 로그인 전에는 서버에 묻지 않고 바로 답한다. 화면 모듈(메모·계산기)은 불러올 때 첫 목록을 요청하고 실패하면 몇 초 뒤 다시 시도한다.
+  if (!current) return Promise.resolve(errorResponse(401, "UNAUTHORIZED", "로그인이 필요합니다."));
   const method = init?.method ?? request?.method ?? "GET";
   const options = { send: original, build: pageBuild(), onUnauthorized: unauthorized, signal: init?.signal ?? request?.signal ?? null,
     keepalive: init?.keepalive ?? false, ...(init?.cache ? { cache: init.cache } : {}) };
@@ -43,9 +45,8 @@ function remoteFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   return forward(credentials, target, method, headers, init?.body, options);
 }
 
-/** 로그인 정보를 쓰기 시작한다. 처음 부르면 fetch를 감싸고 서비스 워커와 이야기할 준비를 한다. */
-export function activateCredentials(credentials: Credentials | null) {
-  current = credentials;
+/** fetch를 감싸고 서비스 워커와 이야기할 준비를 한다. 브라우저 모드면 이 모듈을 불러올 때 바로 한다(client.tsx가 가장 먼저 불러온다). */
+function install() {
   if (!installed && typeof window !== "undefined") {
     installed = true;
     window.fetch = remoteFetch as typeof fetch;
@@ -59,6 +60,13 @@ export function activateCredentials(credentials: Credentials | null) {
     // 강력 새로 고침(Shift+F5)으로 연 화면은 서비스 워커가 맡지 않으므로, 워커에게 이 화면을 맡아 달라고 한다. 그림·영상에 토큰을 붙이려면 필요하다.
     void container?.ready.then((registration) => { if (!container.controller) registration.active?.postMessage({ type: "relay-web-claim" }); }).catch(() => {});
   }
+}
+if (browserMode) install();
+
+/** 로그인 정보를 쓰기 시작한다(null이면 그만 쓴다). 서비스 워커에도 알린다. */
+export function activateCredentials(credentials: Credentials | null) {
+  current = credentials;
+  install();
   tellWorker();
 }
 

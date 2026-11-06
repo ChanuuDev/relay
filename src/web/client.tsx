@@ -1,3 +1,5 @@
+// 브라우저 모드의 fetch 감싸기를 다른 화면 모듈보다 먼저 설치한다(메모·계산기 모듈은 불러올 때 첫 요청을 보낸다).
+import { activateCredentials, browserMode, signOut, takeNotice, UNAUTHORIZED_EVENT } from "./lib/browser-mode";
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useGSAP } from "@gsap/react";
@@ -27,7 +29,6 @@ import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
 import { applyFontSize } from "./lib/font-size";
 import { listCustomImages } from "./lib/wallpaper";
 import { setupPwa, useInstall } from "./lib/pwa";
-import { activateCredentials, browserMode, signOut, takeNotice, UNAUTHORIZED_EVENT } from "./lib/browser-mode";
 import { loadCredentials, saveCredentials } from "./lib/credentials";
 import { BrowserLogin } from "./components/browser-login";
 
