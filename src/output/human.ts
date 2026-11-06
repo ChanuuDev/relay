@@ -190,15 +190,16 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
     wrappers?: { path: string; status: string }[];
     hosts?: { host?: string; path: string; status: string; detail?: string }[];
     instructions?: { host?: string; path: string; status: string; detail?: string }[];
-    skills?: { host: string; path: string; status: string; detail?: string }[];
-    skill?: string; targets?: { host: string; path: string; status: string; detail?: string }[];
+    // install-hooks는 설치한 스킬 사본(객체)을, install-skills는 설치한 스킬 이름(문자열)을 skills에 담는다.
+    skills?: Array<{ host: string; path: string; status: string; detail?: string } | string>;
+    targets?: { skill?: string; host: string; path: string; status: string; detail?: string }[];
   };
   const row = (label: string, status: string, file: string, detail?: string, names = HOOK_STATUS) =>
     `${label}  ${names[status] ?? status}  ${file}${detail ? `  (${detail})` : ""}`;
   if (typeof data.markdown === "string") return plain(data.markdown.replace(/\n$/, "").split("\n"));
-  if (data.targets && data.skill) {
+  if (data.targets && data.skills?.every(skill => typeof skill === "string")) {
     return plain([
-      `스킬  ${data.skill}`,
+      `스킬  ${data.skills.join(", ")}`,
       ...data.targets.map(target => row(target.host, target.status, target.path, target.detail, SKILL_STATUS)),
     ]);
   }
@@ -209,7 +210,7 @@ export function render(value: unknown, space = terminalWidth()): Line[] {
       ...((data.wrappers ?? []).map(wrapper => row("래퍼", wrapper.status, wrapper.path))),
       ...(data.hosts.map(host => row(host.host ?? "host", host.status, host.path, host.detail))),
       ...((data.instructions ?? []).map(item => row(`${item.host} 시작 안내`, item.status, item.path, item.detail))),
-      ...((data.skills ?? []).map(item => row(`${item.host} 스킬`, item.status, item.path, item.detail, SKILL_STATUS))),
+      ...((data.skills ?? []).flatMap(item => typeof item === "string" ? [] : [row(`${item.host} 스킬`, item.status, item.path, item.detail, SKILL_STATUS)])),
     ]);
   }
   // A chain is the session plus its line of work; the rows are places in that line, not a table.

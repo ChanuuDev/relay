@@ -23,6 +23,10 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   // The declared work state is an update option, never a lifecycle the skill manages.
   expect(original).toContain("--status working|blocked|handoff|done");
   expect(original).not.toMatch(/--status (active|completed|interrupted|abandoned)\b/);
+  // relay-memo comes along, so an agent in the project can read a memo ID copied from the notes app.
+  const memo = path.join(dir, ".agents/skills/relay-memo");
+  expect(readFileSync(path.join(memo, "SKILL.md"), "utf8")).toBe(readFileSync(path.join(root, "skills/relay-memo/SKILL.md"), "utf8"));
+  expect(readFileSync(path.join(memo, "agents/openai.yaml"), "utf8")).toBe(readFileSync(path.join(root, "skills/relay-memo/agents/openai.yaml"), "utf8"));
   expect(install("codex").exitCode).toBe(0);
   writeFileSync(target, original + "\nUser customization\n");
   expect(install("codex").exitCode).not.toBe(0);
@@ -34,6 +38,8 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   expect(installed).toContain("argument-hint: codex|claude|grok|cursor");
   // The agent must be able to invoke the skill itself; /relay-session stays available either way.
   expect(installed).not.toContain("disable-model-invocation");
+  expect(readFileSync(path.join(dir, ".claude/skills/relay-memo/SKILL.md"), "utf8"))
+    .toBe(readFileSync(path.join(root, "skills/relay-memo/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: <memo-id|folder-id|query>\n"));
   expect(install("grok").exitCode).toBe(0);
   const grokSkill = path.join(dir, ".grok/skills/relay-session/SKILL.md");
   expect(readFileSync(grokSkill, "utf8")).toBe(installed);

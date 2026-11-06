@@ -15,7 +15,7 @@ Relay는 **AI Agent 세션, 메모, 파일 탐색기, 뷰어, 계산기 등 업�
 Windows 10/11 x64에서 사용합니다. 설치한 앱을 실행할 때는 Node.js·Bun·관리자 권한이 필요 없습니다.
 
 1. 배포받은 `installer/Relay-Setup-1.0.0.exe`를 실행합니다. 기존 앱을 업데이트할 때도 최신 Setup EXE를 실행하세요.
-2. 설치가 끝나면 Relay를 엽니다. 첫 실행에서 CLI·Agent 훅·`relay-session` 스킬도 함께 구성됩니다.
+2. 설치가 끝나면 Relay를 엽니다. 첫 실행에서 CLI·Agent 훅·`relay-session`·`relay-memo` 스킬도 함께 구성됩니다.
 3. 아래 안내에 따라 **로컬 서버** 또는 **원격 서버**를 고릅니다.
 
 설치 파일은 [installer 폴더 안내](installer/README.md)를 참고하세요. 소스에서 설치 EXE를 만들려면 [Windows 앱과 원격 서버](#windows-앱과-원격-서버)의 빌드 절차를 따릅니다. CLI만 설치하려면 같은 폴더의 `relay.exe`·`install-cli.ps1`·`install.cmd`를 함께 두고 `install.cmd`를 실행하세요.
@@ -106,7 +106,7 @@ npm run build
 .\scripts\install-cli.ps1
 ```
 
-설치 스크립트는 `%USERPROFILE%\.local\bin\relay.exe`를 설치하고 사용자 PATH, `relay://` 링크, Agent 훅과 `relay-session` 스킬을 구성합니다. 이미 빌드된 실행 파일이 있으면 설치 스크립트만 실행하면 됩니다. 설치 후 일반 실행에는 Node.js·Bun·관리자 권한이 필요 없습니다.
+설치 스크립트는 `%USERPROFILE%\.local\bin\relay.exe`를 설치하고 사용자 PATH, `relay://` 링크, Agent 훅과 `relay-session`·`relay-memo` 스킬을 구성합니다. 이미 빌드된 실행 파일이 있으면 설치 스크립트만 실행하면 됩니다. 설치 후 일반 실행에는 Node.js·Bun·관리자 권한이 필요 없습니다.
 
 ```powershell
 relay --version
@@ -183,6 +183,7 @@ Dock에서 메모와 파일 탐색기, 계산기 등을 함께 열어 두고 창
   바깥(https) 그림은 GitHub처럼 그 주소에서 바로 받습니다. 스크립트·인라인 스타일·틀(iframe)은 어디서도 실행하지 않습니다.
 - **자동 저장**: 메모는 Relay DB에 저장됩니다. 서버 연결이 끊긴 동안의 변경은 브라우저에 보관했다가 다시 연결되면 전송합니다.
 - **파일로 보관**: 개별 메모는 `.md`로 내려받고, 전체 메모·폴더는 메모가 쓰는 그림과 함께 JSON으로 내보내 다른 PC나 저장소에 가져옵니다.
+- **AI 에이전트에 넘기기**: 왼쪽 트리에서 메모나 폴더를 우클릭해 **메모 ID 복사**·**폴더 ID 복사**를 누르거나, 오른쪽 내용 막대 끝의 **ID 복사**를 누릅니다(막대를 우클릭해도 같은 메뉴가 열립니다). 클립보드에는 `Relay 메모를 참조해 주세요. 메모 ID: <ID>` 한 줄이 들어가므로, Agent 대화창에 붙여 넣기만 하면 Agent가 아래 [메모를 AI 맥락으로 쓰기](#메모를-ai-맥락으로-쓰기)의 방법으로 읽습니다.
 
 ```powershell
 relay notes export "C:\backup\relay-notes.json"
@@ -190,6 +191,23 @@ relay notes import "C:\backup\relay-notes.json"
 ```
 
 가져오기는 기존 메모에 합치는 방식입니다. 없는 항목은 추가하고, 같은 ID는 더 최근에 수정한 쪽을 남기며, 기존 항목을 삭제하지 않습니다.
+
+#### 메모를 AI 맥락으로 쓰기
+
+Agent는 `relay memo`로 메모를 읽고, 사용자가 요청하면 메모 API로 쓰거나 고칩니다. 방법은 [skills/relay-memo](skills/relay-memo/SKILL.md) 스킬에 있고 `relay install-skills`가 함께 설치하므로, 복사한 한 줄을 붙여 넣으면 Agent가 스스로 스킬을 따릅니다.
+
+```powershell
+relay memo --list                      # 폴더 트리와 메모 ID (본문 없음)
+relay memo --list --folder <폴더 ID>    # 그 폴더 아래만
+relay memo --find <메모 ID>             # 제목·위치·수정 시각과 Markdown 본문
+relay memo --find <폴더 ID>             # 폴더 목록과 그 아래 모든 메모의 본문
+relay memo --search "배포 일정"          # 폴더 이름·제목·본문 검색(낱말이 모두 든 항목과 맞은 줄)
+```
+
+- ID는 앞 6자 이상만 줘도 겹치지 않으면 찾습니다. 순서는 메모 앱 트리와 같습니다.
+- `--json`이면 `item`이 메모 API와 같은 모양이라 고쳐서 그대로 다시 보낼 수 있습니다. 한글은 `\uXXXX`로 적혀 Windows PowerShell 5.1에서 읽어도 깨지지 않습니다. `api`는 쓰기에 쓸 이 PC의 Relay 웹 서버 주소입니다.
+- 쓰기·고치기는 `POST /api/v1/notes`에 `{"upserts": [항목], "deletes": [ID]}`를 `Content-Type: application/json`, `Origin: http://127.0.0.1:<포트>` 헤더와 함께 보냅니다. 열어 둔 메모 앱은 3초 안팎으로 바뀐 내용을 그립니다.
+- 원격 모드로 설정한 PC에서는 원격 서버의 메모를 읽고, 쓰기도 이 PC의 Relay 웹 서버를 거쳐 원격 서버에 저장됩니다.
 
 ### 파일을 찾고 내용 확인하기
 
@@ -344,7 +362,7 @@ CLI 설치 또는 `relay install-hooks`로 스킬·세션 훅·시작 안내를 
 
 ### 스킬 설치
 
-[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를 담은 스킬입니다. `relay install-skills`가 이 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
+[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를, [skills/relay-memo](skills/relay-memo/SKILL.md)는 메모 앱에서 복사한 ID로 메모를 읽고 메모 API로 쓰는 방법을 담은 스킬입니다. `relay install-skills`가 두 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
 
 ```powershell
 relay install-skills
@@ -353,9 +371,9 @@ relay install-skills --force
 
 | 도구 | 설치 위치 | 비고 |
 | --- | --- | --- |
-| Claude Code | `~/.claude/skills/relay-session` | `argument-hint` 포함 |
-| Grok | `$GROK_HOME/skills/relay-session` (기본 `~/.grok/skills/relay-session`) | `argument-hint` 포함 |
-| Codex | `~/.codex/skills/relay-session` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `agents/openai.yaml` 포함 |
+| Claude Code | `~/.claude/skills/relay-session`, `~/.claude/skills/relay-memo` | `argument-hint` 포함 |
+| Grok | `$GROK_HOME/skills/<스킬>` (기본 `~/.grok/skills/<스킬>`) | `argument-hint` 포함 |
+| Codex | `~/.codex/skills/<스킬>` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `agents/openai.yaml` 포함. `relay-memo`는 Codex가 스스로 불러 쓸 수 있음 |
 | Cursor | 별도 사본 없음 | Cursor가 `~/.claude/skills`와 `~/.codex/skills`를 함께 읽으므로 위 사본을 그대로 씁니다 |
 
 스킬 폴더는 심볼릭 링크나 정션으로 연결하지 않습니다. 링크는 가리키던 폴더가 옮겨지거나 지워지면 끊어지고, 그러면 Agent가 "심볼릭 링크 문제로 스킬을 못 쓴다"고 보고합니다. `install-skills`는 설치 위치에 링크가 있으면 링크 항목만 지우고 실제 사본으로 바꾸며, 링크가 가리키던 폴더는 건드리지 않습니다. 기존 사본의 내용이 다르면 덮어쓰지 않고 `건너뜀`으로 알리므로 확인한 뒤 `--force`로 교체합니다. Claude Code는 `~/.agents/skills`를 읽지 않으므로 그 폴더에 복사하거나 연결하는 방식은 쓰지 않습니다.
@@ -368,7 +386,7 @@ relay install-skills --force
 .\scripts\install-skill.ps1 -Agent grok -ProjectDirectory "C:\workspace\my-project"
 ```
 
-각각 `.agents/skills/relay-session`, `.claude/skills/relay-session`, `.grok/skills/relay-session`에 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code와 Grok에서는 `/relay-session grok`으로 Grok 기록을 조회할 수 있습니다.
+각각 `.agents/skills/`, `.claude/skills/`, `.grok/skills/` 아래 `relay-session`과 `relay-memo`로 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code와 Grok에서는 `/relay-session grok`으로 Grok 기록을 조회하고, `$relay-memo <메모 ID>`·`/relay-memo <메모 ID>`로 메모를 읽힐 수 있습니다.
 
 ### 프로젝트 지침
 
@@ -450,13 +468,16 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay continue <이전 ID> --parent-provider <제공자> ...` | 이전 세션에 현재 세션 연결. 나머지 옵션은 `record`와 같음 |
 | `relay pin <ID>` / `relay unpin <ID>` | 보관 기간 자동 삭제와 종료 정리에서 제외, 또는 해제 |
 | `relay delete <ID> [--provider] [--force]` | 기록과 이력 삭제. 이어받은 세션이 있으면 `--force`로 연결을 끊고 삭제 |
+| `relay memo --list [--folder <폴더 ID>]` | 메모 폴더 트리와 메모·폴더 ID(본문 없음). AI 에이전트가 메모를 찾을 때 |
+| `relay memo --find <ID>` | 메모의 제목·위치·본문, 폴더면 그 아래 모든 메모. ID 앞 6자 이상도 받음 |
+| `relay memo --search <낱말>` | 폴더 이름·메모 제목·본문 검색(띄어 쓴 낱말이 모두 든 항목과 맞은 줄) |
 | `relay notes export <파일>` / `relay notes import <파일>` | 모든 메모·폴더를 JSON 파일로 내보내기, 내보낸 파일을 합치기(없는 항목은 넣고 같은 항목은 더 최근 쪽을 남김, 지우지 않음). 다른 PC·저장소로 메모를 옮길 때 |
 | `relay install-hooks [--bin-dir <경로>]` | SessionStart·SessionEnd 훅·시작 안내 등록 및 스킬 설치 |
-| `relay install-skills [--force]` | `relay-session` 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
+| `relay install-skills [--force]` | `relay-session`·`relay-memo` 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
 | `relay web [--open] [--port <번호>] [--headless] [--close] [--reload] [--free-port]` | 업무 화면의 로컬 서버 실행, 백그라운드 실행, 종료, 다시 시작, 예약된 포트 풀기 |
 | `relay open-url <relay://web?port=번호>` | 브라우저가 연 `relay://` 링크 처리(설치 스크립트가 Windows에 등록). 그 포트에 백그라운드 서버를 켬 |
 
-전역 옵션은 `--data-dir <절대경로>`와 `--json`입니다. Agent나 스크립트에서는 `--json`을 붙이세요. 성공 결과는 stdout, 실패는 stderr에 JSON 하나로 출력됩니다. 종료 코드는 `0` 성공, `2` 입력·설정 오류, `3` 기록 없음(`SESSION_NOT_FOUND`), `4` 충돌(`PARENT_CONFLICT`, `SESSION_EXISTS`, `AMBIGUOUS_SESSION_ID`, `SESSION_LINKED`), `5` 저장소 오류, `6` 서버 시작·종료 실패입니다.
+전역 옵션은 `--data-dir <절대경로>`와 `--json`입니다. Agent나 스크립트에서는 `--json`을 붙이세요. 성공 결과는 stdout, 실패는 stderr에 JSON 하나로 출력됩니다. 종료 코드는 `0` 성공, `2` 입력·설정 오류, `3` 기록·메모 없음(`SESSION_NOT_FOUND`, `NOTE_NOT_FOUND`), `4` 충돌(`PARENT_CONFLICT`, `SESSION_EXISTS`, `AMBIGUOUS_SESSION_ID`, `SESSION_LINKED`), `5` 저장소 오류, `6` 서버 시작·종료 실패입니다.
 
 ### 조회 별칭
 
@@ -543,7 +564,7 @@ relay web --reload
 
 설치 위치는 `-InstallDirectory <절대경로>`, PATH 등록 생략은 `-NoPath`로 지정합니다. `-Force`는 바뀐 스킬 사본도 교체합니다.
 
-제거하려면 서버를 종료하고 설치된 `relay.exe`·`relay-hook-*.cmd`, 각 도구 설정의 Relay 훅, 사용자 스킬 폴더의 `relay-session`을 삭제합니다. 설치 스크립트가 등록한 사용자 프로토콜 키 `HKCU\Software\Classes\relay`와 사용자 PATH의 설치 경로도 정리합니다. 설치형 앱은 앱 창이나 브라우저의 앱 관리 메뉴에서 제거합니다. 저장 데이터까지 지우려면 별도로 Relay 저장소 폴더와 브라우저 사이트 데이터를 삭제합니다.
+제거하려면 서버를 종료하고 설치된 `relay.exe`·`relay-hook-*.cmd`, 각 도구 설정의 Relay 훅, 사용자 스킬 폴더의 `relay-session`·`relay-memo`를 삭제합니다. 설치 스크립트가 등록한 사용자 프로토콜 키 `HKCU\Software\Classes\relay`와 사용자 PATH의 설치 경로도 정리합니다. 설치형 앱은 앱 창이나 브라우저의 앱 관리 메뉴에서 제거합니다. 저장 데이터까지 지우려면 별도로 Relay 저장소 폴더와 브라우저 사이트 데이터를 삭제합니다.
 
 ## 문제 해결
 
@@ -558,6 +579,7 @@ relay web --reload
 | 세션을 못 찾거나 엉뚱한 프로젝트가 나옴 | provider·저장소·검색 범위 확인. `latest <별칭> --cwd <절대경로>`로 프로젝트 제한 |
 | 세션이 사라짐 | 훅 자동 기록만 남은 세션의 종료 정리 또는 30일 보관 정책 확인. 오래 남길 세션은 `pin` |
 | `relay-session` 스킬이 없거나 링크 오류 | `relay install-skills`로 실제 사본 설치. 프로젝트 사본은 `scripts/install-skill.ps1` 사용 |
+| Agent가 복사한 메모 ID를 못 읽음 | `relay memo --find <ID>`가 되는지 확인하고, `relay-memo` 스킬이 없으면 `relay install-skills`. 쓰기가 403이면 `Origin` 헤더가 서버 주소와 같은지 확인 |
 | Codex 훅이 실행되지 않음 | `/hooks`에서 시작·종료·압축 훅 신뢰. 별도 `CODEX_HOME`을 쓰면 그 환경에서 `relay install-hooks` 실행 |
 | Cursor 세션이 기록되지 않음 | `~/.cursor/hooks.json`의 Relay 항목 확인. 클라우드 Agent는 세션 훅을 실행하지 않음 |
 | 압축 뒤 Agent가 맥락을 잃음 | `relay show <ID> --provider <provider> --history --json`으로 요약 이력 확인 후 실제 파일과 대조 |
@@ -575,7 +597,7 @@ npm run check
 
 ### 로컬 API
 
-서버는 `127.0.0.1`에 바인딩하며 Host·Origin 검사와 CSP를 적용합니다. 세션의 진행 기록은 CLI로 남기고, 화면은 세션 정리와 각 업무 도구의 API를 사용합니다. 쓰기 요청은 같은 출처의 JSON POST로 제한하며, 파일 조회도 다른 출처의 요청을 제한합니다.
+서버는 `127.0.0.1`에 바인딩하며 Host·Origin 검사와 CSP를 적용합니다. 세션의 진행 기록은 CLI로 남기고, 화면은 세션 정리와 각 업무 도구의 API를 사용합니다. 쓰기 요청은 같은 출처의 JSON POST로 제한하며(`Origin`이 서버 주소와 같아야 합니다. curl 같은 도구는 `Origin: http://127.0.0.1:<포트>`를 붙여 보냅니다), 파일 조회도 다른 출처의 요청을 제한합니다.
 
 | API | 용도 |
 | --- | --- |
@@ -584,7 +606,7 @@ npm run check
 | `GET /api/v1/sessions/:id` | 세션 상세·부모·자식 첫 페이지 |
 | `GET /api/v1/sessions/:id/updates` · `/children` · `/chain` | 요약 이력·자식 목록·전체 연결 흐름 |
 | `POST /api/v1/sessions/:id/actions` | 작업 상태·고정·종료·종료 취소·삭제 |
-| `GET /api/v1/notes` · `POST /api/v1/notes` | 메모 트리 조회·변경 묶음 저장 |
+| `GET /api/v1/notes` · `POST /api/v1/notes` | 메모 트리 조회·변경 묶음 저장(`{ "upserts": [항목], "deletes": [ID] }`). AI 에이전트의 쓰기·고치기도 이 API를 씁니다 |
 | `GET /api/v1/notes/export` · `POST /api/v1/notes/import` | 메모·폴더(쓰는 그림 포함) 내보내기·합치기 |
 | `POST /api/v1/notes/images` · `GET /api/v1/notes/images/:id` | 메모 그림 올리기(`{ "data": base64 }`, 장당 10MB)·보기. `id`는 내용의 sha256 |
 | `GET /api/v1/calculator/history` · `POST /api/v1/calculator/history` | 계산 이력 조회·추가·삭제·전체 삭제 |

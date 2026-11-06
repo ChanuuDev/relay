@@ -248,9 +248,11 @@ test("CLI install-hooks writes into RELAY_USER_HOME and --bin-dir", () => {
   expect(data.hosts.every((h: { status: string }) => h.status === "added")).toBe(true);
   expect(JSON.parse(readFileSync(path.join(home(), ".cursor", "hooks.json"), "utf8")).hooks.sessionStart).toHaveLength(1);
   expect(data.instructions[0].status).toBe("added");
-  expect(data.skills.map((skill: { host: string }) => skill.host)).toEqual(["claude", "grok", "codex"]);
+  expect(data.skills.map((skill: { skill: string; host: string }) => `${skill.skill}:${skill.host}`)).toEqual(["relay-session:claude", "relay-session:grok", "relay-session:codex",
+    "relay-memo:claude", "relay-memo:grok", "relay-memo:codex"]);
   for (const agent of ["claude", "grok", "codex"]) {
     expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-session", "SKILL.md"), "utf8")).toContain("relay update");
+    expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-memo", "SKILL.md"), "utf8")).toContain("relay memo --find <ID>");
   }
 });
 

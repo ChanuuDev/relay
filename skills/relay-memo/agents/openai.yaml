@@ -1,0 +1,6 @@
+interface:
+  display_name: "Relay Memo"
+  short_description: "Relay 메모·폴더를 ID나 검색으로 읽고, 요청하면 메모 API로 쓰거나 고치기"
+  default_prompt: "$relay-memo로 Relay 메모 ID <ID>를 읽어 주세요."
+policy:
+  allow_implicit_invocation: true

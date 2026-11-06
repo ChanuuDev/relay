@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { labelOf as coreLabel, memoReference, plainLine } from "@relay/core";
 
 /** 폴더와 메모는 parentId로 트리를 이룬다. null은 최상위다. 메모 본문(body)은 Markdown 원문이다.
  *  내용은 Relay 저장소(relay.db)에 두고 `/api/v1/notes`로 읽고 쓴다. 이 브라우저에는 펼친 폴더·고른 항목과 아직 보내지 못한 변경만 남는다. */
@@ -22,36 +23,10 @@ const MAX_TITLE = 200;
 const MAX_BODY = 200_000;
 const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
 
-/** 글로 보이지 않는 줄: 코드 울타리, 구분선, 표 구분 줄. */
-const SKIP_LINE = /^\s*(?:`{3,}|~{3,}|(?:[-*_]\s*){3,}$|\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$)/;
-/** Markdown 한 줄에서 문법 기호를 걷어 낸 글. 트리 이름과 카드 미리 보기에 쓴다. */
-export function plainLine(line: string) {
-  if (SKIP_LINE.test(line)) return "";
-  return line
-    .replace(/^\s{0,3}(?:#{1,6}\s+|(?:>\s?)+)/, "")
-    .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/(\*\*|__|~~|`)/g, "")
-    .replace(/(^|[^\w*])[*_](?=\S)([^*_]*?\S)[*_](?=$|[^\w*])/g, "$1$2")
-    .replace(/&nbsp;|\u00a0/g, " ")
-    .replace(/\\([\\`*_{}[\]()#+\-.!>|~])/g, "$1")
-    .replace(/\s*\|\s*/g, " ")
-    .trim();
-}
-/** 본문 전체를 나누지 않고 글이 있는 첫 줄만 찾는다(긴 메모에서 입력마다 부른다). */
-function firstLine(text: string) {
-  for (let start = 0; start < text.length;) {
-    const end = text.indexOf("\n", start);
-    const line = plainLine(text.slice(start, end === -1 ? undefined : end));
-    if (line) return line;
-    if (end === -1) break;
-    start = end + 1;
-  }
-  return "";
-}
+// 이름 규칙과 「메모 ID 복사」 문구는 `relay memo` CLI와 같이 쓰므로 공용 코어에 있다.
+export { memoReference, plainLine };
 /** 트리와 카드에 보일 이름. 메모는 제목이 없으면 본문 첫 줄을 쓴다. */
-export const labelOf = (item: Item) => (item.kind === "folder" ? item.name : item.title.trim() || firstLine(item.body).slice(0, 80) || "새 메모");
+export const labelOf: (item: Item) => string = coreLabel;
 /** 메모 카드의 미리 보기(서식 기호 없이). 제목을 본문 첫 줄에서 빌렸으면 그 다음 줄부터 보인다. */
 export function previewOf(note: Note) {
   const lines = note.body.split("\n").map(plainLine).filter(Boolean);

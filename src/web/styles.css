@@ -885,6 +885,10 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-crumb > svg { width: 11px; height: 11px; opacity: .6; }
 .notes-crumb > span { padding: 2px 5px; color: var(--foreground); overflow: hidden; text-overflow: ellipsis; }
 .note-time { flex-shrink: 0; }
+/* 내용 막대 끝의 「ID 복사」: 막대 글씨와 같은 크기·색으로 조용히 두고, 올리면 또렷해진다. */
+.notes-copy-id { flex-shrink: 0; margin-right: -8px; color: inherit; font-size: inherit; }
+.notes-copy-id svg { width: 12px; height: 12px; }
+.folder-view .notes-copy-id { margin-left: auto; }
 .note-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* 위쪽 서식 도구: 되돌리기 · 문단 스타일 · 글자 서식 · 목록 · 블록 · 링크·표 | 보기 전환 · 내려받기 */

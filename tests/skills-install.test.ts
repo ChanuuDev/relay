@@ -10,7 +10,7 @@ afterEach(() => cleanup(dir));
 
 const home = () => path.join(dir, "home");
 const codexHome = () => path.join(home(), ".codex");
-const skillDir = (host: string) => path.join(home(), host, "skills", "relay-session");
+const skillDir = (host: string, skill = "relay-session") => path.join(home(), host, "skills", skill);
 function install(force = false, codexHomes = [codexHome()]) {
   return installSkills({ homeDirectory: home(), codexHomes, force });
 }
@@ -22,8 +22,11 @@ function run(...args: string[]) {
 test("install-skills writes a real copy for Claude, Grok and Codex and is idempotent", () => {
   const first = install();
   expect(first.schemaVersion).toBe(1);
-  expect(first.skill).toBe("relay-session");
-  expect(first.targets.map(t => [t.host, t.status])).toEqual([["claude", "added"], ["grok", "added"], ["codex", "added"]]);
+  expect(first.skills).toEqual(["relay-session", "relay-memo"]);
+  // Skill by skill, so the relay-session rows come first as they always have.
+  expect(first.targets.map(t => [t.skill, t.host, t.status])).toEqual([
+    ["relay-session", "claude", "added"], ["relay-session", "grok", "added"], ["relay-session", "codex", "added"],
+    ["relay-memo", "claude", "added"], ["relay-memo", "grok", "added"], ["relay-memo", "codex", "added"]]);
   const source = readFileSync(path.join(root, "skills/relay-session/SKILL.md"), "utf8");
   const claude = readFileSync(path.join(skillDir(".claude"), "SKILL.md"), "utf8");
   expect(claude).toContain("argument-hint: codex|claude|grok|cursor");
@@ -39,6 +42,27 @@ test("install-skills writes a real copy for Claude, Grok and Codex and is idempo
   expect(existsSync(path.join(skillDir(".grok"), "agents"))).toBe(false);
   expect(lstatSync(skillDir(".claude")).isSymbolicLink()).toBe(false);
   expect(install().targets.every(t => t.status === "unchanged")).toBe(true);
+});
+
+test("install-skills also installs relay-memo, which tells an agent how to read a copied memo ID and write through the notes API", () => {
+  install();
+  const source = readFileSync(path.join(root, "skills/relay-memo/SKILL.md"), "utf8");
+  const claude = readFileSync(path.join(skillDir(".claude", "relay-memo"), "SKILL.md"), "utf8");
+  expect(claude).toBe(source.replace(/^---\n/, "---\nargument-hint: <memo-id|folder-id|query>\n"));
+  expect(claude).toBe(skillFiles("claude", "relay-memo")["SKILL.md"]);
+  expect(readFileSync(path.join(skillDir(".grok", "relay-memo"), "SKILL.md"), "utf8")).toBe(claude);
+  expect(readFileSync(path.join(skillDir(".codex", "relay-memo"), "SKILL.md"), "utf8")).toBe(source);
+  // Codex may pick it up by itself when a pasted line names a Relay memo.
+  expect(readFileSync(path.join(skillDir(".codex", "relay-memo"), "agents/openai.yaml"), "utf8")).toContain("allow_implicit_invocation: true");
+  expect(existsSync(path.join(skillDir(".claude", "relay-memo"), "agents"))).toBe(false);
+  // The skill answers the line the notes app copies, and names the commands and the API it relies on.
+  for (const text of ["name: relay-memo", "Relay 메모를 참조해 주세요. 메모 ID: <ID>", "Relay 메모 폴더를 참조해 주세요. 폴더 ID: <ID>",
+    "relay memo --find <ID>", "relay memo --list", "relay memo --search", "POST <api>/api/v1/notes", "Origin: <api>", "upserts", "deletes",
+    "/api/v1/notes/images", "relay web --headless"]) expect(source).toContain(text);
+  // One skill's edited copy never blocks the other.
+  writeFileSync(path.join(skillDir(".claude", "relay-memo"), "SKILL.md"), "edited");
+  const again = install().targets.filter(t => t.host === "claude");
+  expect(again.map(t => [t.skill, t.status])).toEqual([["relay-session", "unchanged"], ["relay-memo", "skipped"]]);
 });
 
 test("install-skills replaces a dangling junction with a real copy", () => {
@@ -116,8 +140,8 @@ test("install-skills keeps an edited copy unless --force is given", () => {
 test("install-skills covers CODEX_HOME as well as ~/.codex", () => {
   const orca = path.join(dir, "orca-codex-home");
   const result = install(false, [orca, codexHome()]);
-  expect(result.targets.filter(t => t.host === "codex").map(t => t.path))
-    .toEqual([path.join(orca, "skills", "relay-session"), skillDir(".codex")]);
+  expect(result.targets.filter(t => t.host === "codex").map(t => t.path)).toEqual([
+    path.join(orca, "skills", "relay-session"), skillDir(".codex"), path.join(orca, "skills", "relay-memo"), skillDir(".codex", "relay-memo")]);
   expect(existsSync(path.join(orca, "skills", "relay-session", "agents", "openai.yaml"))).toBe(true);
   expect(existsSync(path.join(skillDir(".codex"), "agents", "openai.yaml"))).toBe(true);
 });
@@ -125,14 +149,16 @@ test("install-skills covers CODEX_HOME as well as ~/.codex", () => {
 test("CLI install-skills writes into RELAY_USER_HOME and reports JSON or a table", () => {
   const json = run("--json");
   expect(json.exitCode).toBe(0);
-  const data = JSON.parse(json.stdout.toString()) as { schemaVersion: number; skill: string; targets: { host: string; status: string }[] };
+  const data = JSON.parse(json.stdout.toString()) as { schemaVersion: number; skills: string[]; targets: { skill: string; host: string; status: string }[] };
   expect(data.schemaVersion).toBe(1);
-  expect(data.skill).toBe("relay-session");
-  expect(data.targets.map(t => t.host)).toEqual(["claude", "grok", "codex"]);
+  expect(data.skills).toEqual(["relay-session", "relay-memo"]);
+  expect(data.targets.map(t => `${t.skill}:${t.host}`)).toEqual(["relay-session:claude", "relay-session:grok", "relay-session:codex",
+    "relay-memo:claude", "relay-memo:grok", "relay-memo:codex"]);
   expect(data.targets.every(t => t.status === "added")).toBe(true);
   const table = run();
   expect(table.exitCode).toBe(0);
-  expect(table.stdout.toString()).toContain("relay-session");
+  expect(table.stdout.toString()).toContain("스킬  relay-session, relay-memo");
+  expect(table.stdout.toString()).toContain(path.join("skills", "relay-memo"));
   expect(table.stdout.toString()).toContain("이미 설치됨");
   expect(run("--force").exitCode).toBe(0);
 });

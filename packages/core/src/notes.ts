@@ -156,6 +156,45 @@ export function parseExportImages(raw: unknown): Array<{ id: string; data: strin
   });
 }
 
+// ── 이름과 AI 에이전트 참조 ───────────────────────────────
+// 메모 앱 트리, `relay memo` CLI, 클립보드 문구가 같은 이름 규칙을 쓴다.
+
+/** 글로 보이지 않는 줄: 코드 울타리, 구분선, 표 구분 줄. */
+const SKIP_LINE = /^\s*(?:`{3,}|~{3,}|(?:[-*_]\s*){3,}$|\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$)/;
+/** Markdown 한 줄에서 문법 기호를 걷어 낸 글. 트리 이름과 카드 미리 보기에 쓴다. */
+export function plainLine(line: string) {
+  if (SKIP_LINE.test(line)) return "";
+  return line
+    .replace(/^\s{0,3}(?:#{1,6}\s+|(?:>\s?)+)/, "")
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|`)/g, "")
+    .replace(/(^|[^\w*])[*_](?=\S)([^*_]*?\S)[*_](?=$|[^\w*])/g, "$1$2")
+    .replace(/&nbsp;|\u00a0/g, " ")
+    .replace(/\\([\\`*_{}[\]()#+\-.!>|~])/g, "$1")
+    .replace(/\s*\|\s*/g, " ")
+    .trim();
+}
+/** 본문 전체를 나누지 않고 글이 있는 첫 줄만 찾는다(긴 메모에서 입력마다 부른다). */
+export function firstLine(text: string) {
+  for (let start = 0; start < text.length;) {
+    const end = text.indexOf("\n", start);
+    const line = plainLine(text.slice(start, end === -1 ? undefined : end));
+    if (line) return line;
+    if (end === -1) break;
+    start = end + 1;
+  }
+  return "";
+}
+/** 트리와 카드에 보일 이름. 메모는 제목이 없으면 본문 첫 줄을 쓴다. */
+export const labelOf = (item: { kind: "folder"; name: string } | { kind: "note"; title: string; body: string }) =>
+  (item.kind === "folder" ? item.name : item.title.trim() || firstLine(item.body).slice(0, 80) || "새 메모");
+
+/** 메모 앱이 「메모 ID 복사」로 클립보드에 넣는 한 줄. AI 에이전트는 이 ID로 `relay memo --find <ID>`를 부른다. */
+export const memoReference = (item: { id: string; kind: "folder" | "note" }) =>
+  (item.kind === "folder" ? `Relay 메모 폴더를 참조해 주세요. 폴더 ID: ${item.id}` : `Relay 메모를 참조해 주세요. 메모 ID: ${item.id}`);
+
 /** 가져오기 병합 규칙: 없으면 넣고, 있으면 가져온 쪽이 더 최근에 고쳤을 때만 바꾸며, 종류가 다르거나 같으면 둔다. */
 export function mergeDecision(existing: NoteItem | null, incoming: NoteItem): "add" | "update" | "keep" {
   if (!existing) return "add";

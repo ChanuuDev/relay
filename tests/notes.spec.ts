@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
-import { env, ready, useRelayServer } from "./web-helpers";
+import { cli, env, ready, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -450,6 +450,45 @@ test("메모 창: 메모는 Relay DB에 저장되어 다른 브라우저에서�
   // 서버를 다시 띄워도(같은 저장소) 그대로다.
   await page.reload();
   await expect(item(page, "다른 창에서 쓴 메모")).toBeVisible();
+});
+
+test("메모 창: 메모·폴더 ID를 복사해 AI 에이전트에 넘기고, 에이전트가 relay memo로 읽어 메모 API로 고친 내용이 열린 편집기에 보인다", async ({ page, context, request }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await seed(page, SAMPLE, { selected: "n-weekly", expanded: ["f-work", "f-meet"] });
+  await expect.poll(async () => (await saved(page)).items.length).toBe(SAMPLE.length);
+  const notes = page.locator(win("notes"));
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  // 왼쪽 트리에서 메모를 우클릭하면 「메모 ID 복사」, 폴더는 「폴더 ID 복사」가 있다. 클립보드에는 참조해 달라는 한 줄과 ID가 들어간다.
+  await item(page, "회고").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "메모 ID 복사" }).click();
+  await expect.poll(clipboard).toBe("Relay 메모를 참조해 주세요. 메모 ID: n-retro");
+  await expect(notes.locator(".notes-undo")).toContainText("메모 ID를 복사했습니다");
+  await item(page, "회의").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "폴더 ID 복사" }).click();
+  await expect.poll(clipboard).toBe("Relay 메모 폴더를 참조해 주세요. 폴더 ID: f-meet");
+  // 오른쪽 내용 막대의 「ID 복사」 단추와, 막대를 우클릭해 여는 메뉴도 같다.
+  await item(page, "주간 회의").click();
+  await notes.getByRole("button", { name: "메모 ID 복사" }).click();
+  await expect.poll(clipboard).toBe("Relay 메모를 참조해 주세요. 메모 ID: n-weekly");
+  await item(page, "업무").click();
+  await notes.locator(".folder-view .notes-content-bar").click({ button: "right", position: { x: 8, y: 8 } });
+  await page.getByRole("menuitem", { name: "폴더 ID 복사" }).click();
+  await expect.poll(clipboard).toBe("Relay 메모 폴더를 참조해 주세요. 폴더 ID: f-work");
+  await item(page, "주간 회의").click();
+
+  // 에이전트는 받은 ID로 읽는다. 폴더는 그 아래 메모를 본문까지 함께 받는다.
+  const found = cli(["memo", "--find", "n-weekly"]);
+  expect(found.item).toMatchObject({ id: "n-weekly", kind: "note", parentId: "f-meet", title: "주간 회의" });
+  expect(found.path.map((folder: { name: string }) => folder.name)).toEqual(["업무", "회의"]);
+  expect(cli(["memo", "--find", "f-meet"]).items.map((entry: { item: { id: string } }) => entry.item.id).sort()).toEqual(["n-retro", "n-weekly"]);
+  expect(cli(["memo", "--search", "세션 인계"]).items.map((hit: { id: string }) => hit.id)).toEqual(["n-retro"]);
+  // relay-memo 스킬이 안내하는 요청 그대로 고친다. 열어 둔 편집기는 저장 번호를 보고 몇 초 안에 새 본문을 그린다.
+  const response = await request.post(`${env.url}/api/v1/notes`, { headers: { Origin: env.url, "Content-Type": "application/json" },
+    data: JSON.stringify({ upserts: [{ ...found.item, body: `${found.item.body}\n- 에이전트가 더한 줄`, updatedAt: Date.now() }], deletes: [] }) });
+  expect(response.status()).toBe(200);
+  await expect(notes.locator(".note-prose")).toContainText("에이전트가 더한 줄", { timeout: 10000 });
+  await expect(notes.locator(".notes-sync")).toHaveText("Relay DB에 저장됨");
+  expect((await saved(page)).items.find((entry: { id: string }) => entry.id === "n-weekly").body).toBe(`${found.item.body}\n- 에이전트가 더한 줄`);
 });
 
 test("메모 창: 모든 메모를 JSON 파일로 내보내고, 다른 PC에서 고친 파일을 가져와 합친다", async ({ page }) => {

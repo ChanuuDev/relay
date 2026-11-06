@@ -2,13 +2,19 @@ import { lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmdirSync
 import path from "node:path";
 import { storageError } from "../errors";
 import { codexHomes, grokHome, homeDirectory, type HookChange } from "../hooks/install";
-import skillSource from "../../skills/relay-session/SKILL.md" with { type: "text" };
-import openaiSource from "../../skills/relay-session/agents/openai.yaml" with { type: "text" };
+import sessionSource from "../../skills/relay-session/SKILL.md" with { type: "text" };
+import sessionOpenai from "../../skills/relay-session/agents/openai.yaml" with { type: "text" };
+import memoSource from "../../skills/relay-memo/SKILL.md" with { type: "text" };
+import memoOpenai from "../../skills/relay-memo/agents/openai.yaml" with { type: "text" };
 
 export type SkillHost = "claude" | "grok" | "codex";
-export const SKILL_NAME = "relay-session";
+/** 세션 기록(relay-session)과 메모 읽기·쓰기(relay-memo). 둘 다 같은 규칙으로 설치한다. */
+export const SKILL_NAMES = ["relay-session", "relay-memo"] as const;
+export type SkillName = typeof SKILL_NAMES[number];
+export const SKILL_NAME: SkillName = "relay-session";
 
 export interface SkillInstallEntry {
+  skill: SkillName;
   host: SkillHost;
   path: string;
   status: HookChange;
@@ -17,7 +23,7 @@ export interface SkillInstallEntry {
 
 export interface SkillInstallResult {
   schemaVersion: 1;
-  skill: typeof SKILL_NAME;
+  skills: SkillName[];
   targets: SkillInstallEntry[];
 }
 
@@ -30,17 +36,22 @@ export interface SkillInstallOptions {
   force?: boolean;
 }
 
-// The skill ships inside the executable, so an installation never depends on a checkout or on a link to one.
-const SKILL_TEXT = skillSource as unknown as string;
-const OPENAI_TEXT = openaiSource as unknown as string;
-
-/** The aliases a reader may pass to the skill. Cursor reads the Claude and Codex copies, so it gets no copy of its own. */
+/** The aliases a reader may pass to relay-session. Cursor reads the Claude and Codex copies, so it gets no copy of its own. */
 export const ARGUMENT_HINT = "argument-hint: codex|claude|grok|cursor";
+/** What a reader passes to relay-memo: the ID the notes app copied, or words to search for. ASCII so the PowerShell installer can write it as is. */
+export const MEMO_ARGUMENT_HINT = "argument-hint: <memo-id|folder-id|query>";
+
+// The skills ship inside the executable, so an installation never depends on a checkout or on a link to one.
+const SOURCES: Record<SkillName, { skill: string; openai: string; hint: string }> = {
+  "relay-session": { skill: sessionSource as unknown as string, openai: sessionOpenai as unknown as string, hint: ARGUMENT_HINT },
+  "relay-memo": { skill: memoSource as unknown as string, openai: memoOpenai as unknown as string, hint: MEMO_ARGUMENT_HINT },
+};
 
 /** Claude Code and Grok read argument-hint from the frontmatter; Codex reads agents/openai.yaml instead. */
-export function skillFiles(host: SkillHost): Record<string, string> {
-  if (host === "codex") return { "SKILL.md": SKILL_TEXT, "agents/openai.yaml": OPENAI_TEXT };
-  return { "SKILL.md": SKILL_TEXT.replace(/^---(\r?\n)/, (_match, eol: string) => `---${eol}${ARGUMENT_HINT}${eol}`) };
+export function skillFiles(host: SkillHost, skill: SkillName = SKILL_NAME): Record<string, string> {
+  const source = SOURCES[skill];
+  if (host === "codex") return { "SKILL.md": source.skill, "agents/openai.yaml": source.openai };
+  return { "SKILL.md": source.skill.replace(/^---(\r?\n)/, (_match, eol: string) => `---${eol}${source.hint}${eol}`) };
 }
 
 /** Where each host reads user-level skills from. */
@@ -81,13 +92,13 @@ function writeFile(file: string, content: string) {
   renameSync(temp, file);
 }
 
-function installTarget(host: SkillHost, root: string, force: boolean): SkillInstallEntry {
-  const dir = path.join(root, "skills", SKILL_NAME);
+function installTarget(skill: SkillName, host: SkillHost, root: string, force: boolean): SkillInstallEntry {
+  const dir = path.join(root, "skills", skill);
   try {
-    const files = skillFiles(host);
+    const files = skillFiles(host, skill);
     const notes: string[] = [];
     const top = inspect(dir);
-    if (top.kind === "file") return { host, path: dir, status: "skipped", detail: "스킬 폴더 자리에 파일이 있습니다." };
+    if (top.kind === "file") return { skill, host, path: dir, status: "skipped", detail: "스킬 폴더 자리에 파일이 있습니다." };
     // A skill folder that is itself a link breaks as soon as its target moves, so the link gives way to a real copy.
     if (top.kind === "link") {
       removeLink(dir);
@@ -103,7 +114,7 @@ function installTarget(host: SkillHost, root: string, force: boolean): SkillInst
     });
     // Compare everything before writing anything, so a user-edited copy is kept unless replacement is explicit.
     if (!force && states.some(s => s.state === "differs")) {
-      return { host, path: dir, status: "skipped", detail: "기존 스킬 내용이 다릅니다. 확인 후 --force로 교체하세요." };
+      return { skill, host, path: dir, status: "skipped", detail: "기존 스킬 내용이 다릅니다. 확인 후 --force로 교체하세요." };
     }
     for (const s of states) {
       if (s.state === "same") continue;
@@ -111,17 +122,20 @@ function installTarget(host: SkillHost, root: string, force: boolean): SkillInst
       writeFile(s.file, s.content);
     }
     const status: HookChange = states.every(s => s.state === "same") ? "unchanged" : top.kind === "directory" ? "updated" : "added";
-    return { host, path: dir, status, ...(notes.length ? { detail: notes.join("; ") } : {}) };
+    return { skill, host, path: dir, status, ...(notes.length ? { detail: notes.join("; ") } : {}) };
   } catch (error) {
     const code = (error as { code?: string })?.code;
-    return { host, path: dir, status: "skipped", detail: `파일을 쓸 수 없습니다${code ? ` (${code})` : ""}.` };
+    return { skill, host, path: dir, status: "skipped", detail: `파일을 쓸 수 없습니다${code ? ` (${code})` : ""}.` };
   }
 }
 
+/** Every skill on every host, skill by skill, so the relay-session rows come first as they always have. */
 export function installSkills(options: SkillInstallOptions = {}): SkillInstallResult {
   try {
     const force = options.force === true;
-    return { schemaVersion: 1, skill: SKILL_NAME, targets: skillRoots(options).map(({ host, root }) => installTarget(host, root, force)) };
+    const roots = skillRoots(options);
+    return { schemaVersion: 1, skills: [...SKILL_NAMES],
+      targets: SKILL_NAMES.flatMap(skill => roots.map(({ host, root }) => installTarget(skill, host, root, force))) };
   } catch (error) {
     throw storageError(error);
   }

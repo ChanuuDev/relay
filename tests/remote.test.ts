@@ -42,6 +42,9 @@ beforeEach(() => {
       else if (route === "/api/v1/files/stat") result = { kind: "file", size: 6, link: false };
       else if (route === "/api/v1/files/content") return new Response("abc", { status: request.headers.has("Range") ? 206 : 200, headers: { "Content-Type": "text/plain", "Content-Range": "bytes 0-2/6" } });
       else if (route === "/api/v1/import") result = { schemaVersion: 1 };
+      else if (route === "/api/v1/notes" && request.method === "GET") result = { schemaVersion: 1, revision: 7, items: [
+        { id: "remote-folder", kind: "folder", parentId: null, name: "원격 폴더", position: null, createdAt: 1, updatedAt: 1 },
+        { id: "remote-note", kind: "note", parentId: "remote-folder", title: "원격 메모", body: "서버에 있는 본문", position: null, createdAt: 2, updatedAt: 3 }] };
       else if (route.startsWith("/api/v1/notes/images/")) return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable", ETag: '"x"' } });
       else result = { schemaVersion: 1, ok: true };
       if (key) responses.set(key, result);
@@ -112,6 +115,16 @@ test("실제 CLI와 훅은 원격 HTTP를 사용하고 지연 훅은 2초 안에
   expect(JSON.parse(out).hookSpecificOutput).toBeDefined();
   expect(Date.now() - started).toBeLessThan(2200);
   expect(new RemoteClient(config()).list().pending.length).toBeGreaterThan(0);
+});
+test("relay memo는 원격 모드에서 원격 서버의 메모를 읽는다", async () => {
+  saveConfig();
+  const found = await cliAsync(f.dir, ["memo", "--find", "remote-note"]);
+  expect(found.code).toBe(0);
+  expect(found.data).toMatchObject({ revision: 7, item: { id: "remote-note", body: "서버에 있는 본문" }, path: [{ id: "remote-folder", name: "원격 폴더" }] });
+  expect(received.at(-1)).toMatchObject({ route: "/api/v1/notes" });
+  expect((await cliAsync(f.dir, ["memo", "--search", "본문"])).data.items.map((hit: { id: string }) => hit.id)).toEqual(["remote-note"]);
+  unavailable = true;
+  expect((await cliAsync(f.dir, ["memo", "--list"])).code).not.toBe(0);
 });
 test("웹은 출처 검사를 유지하며 원격 파일 경로·Range·로컬 health를 보존한다", async () => {
   const handler = remoteHandler(config(), () => Response.json({ local: true }));

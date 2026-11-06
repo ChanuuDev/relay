@@ -7,6 +7,9 @@ import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db/database";
 import { NoteStore } from "../src/notes/notes.store";
 import { quote } from "../src/web/lib/format";
+import { handler } from "../src/web/server";
+import { SessionRepository } from "../src/session/session.repository";
+import { SessionService } from "../src/session/session.service";
 
 describe("CLI processes", () => {
   let dir: string;
@@ -523,6 +526,84 @@ describe("CLI processes", () => {
       expect(cli(dir, ["notes", "export", path.join(other, "없는 폴더", "x.json")]).data.error.code).toBe("FILE_WRITE_FAILED");
       expect(cli(other, ["notes", "export", file]).data).toMatchObject({ notes: 1, folders: 1 });
     } finally { cleanup(other); }
+  });
+
+  test("memo lists, finds and searches notes for an AI agent, and an edit sent to the notes API the way relay-memo shows comes back through memo --find", async () => {
+    const config = loadConfig(dir);
+    const db = openDatabase(config);
+    const store = new NoteStore(db);
+    store.apply({ upserts: [
+      { id: "folder-work", kind: "folder", parentId: null, name: "업무", position: null, createdAt: 1, updatedAt: 1 },
+      { id: "folder-design", kind: "folder", parentId: "folder-work", name: "설계", position: null, createdAt: 1, updatedAt: 1 },
+      { id: "note-meeting", kind: "note", parentId: "folder-work", title: "회의록", body: "## 결정\n\n- 배포는 **금요일**", position: null, createdAt: 2, updatedAt: 5 },
+      { id: "note-api", kind: "note", parentId: "folder-design", title: "", body: "# API 설계\n\nPOST /api/v1/notes", position: null, createdAt: 3, updatedAt: 4 },
+      { id: "note-todo", kind: "note", parentId: null, title: "할 일", body: "- [ ] 배포 확인", position: null, createdAt: 4, updatedAt: 6 },
+    ], deletes: [] });
+    const plain = (args: string[]) => Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), ...args, "--data-dir", dir], { stdout: "pipe", stderr: "pipe" });
+    try {
+      // 목록은 메모 앱 트리 순서(폴더 먼저·이름 순)이고 본문은 담지 않는다. api는 쓰기에 쓸 이 PC의 Relay 웹 서버 주소다.
+      const list = cli(dir, ["memo", "--list"]).data;
+      expect(list).toMatchObject({ schemaVersion: 1, revision: 1, api: "http://127.0.0.1:7474", folder: null, notes: 3, folders: 2 });
+      expect(list.items.map((row: { id: string; depth: number; label: string }) => [row.id, row.depth, row.label])).toEqual([
+        ["folder-work", 0, "업무"], ["folder-design", 1, "설계"], ["note-api", 2, "API 설계"], ["note-meeting", 1, "회의록"], ["note-todo", 0, "할 일"]]);
+      expect(list.items[0]).toMatchObject({ kind: "folder", notes: 2 });
+      expect(list.items[2].path).toEqual([{ id: "folder-work", name: "업무" }, { id: "folder-design", name: "설계" }]);
+      expect(JSON.stringify(list)).not.toContain("POST /api/v1/notes");
+      expect(cli(dir, ["memo", "--list", "--folder", "folder-design"]).data.items.map((row: { id: string }) => row.id)).toEqual(["note-api"]);
+      expect(cli(dir, ["memo", "--list", "--folder", "note-api"]).data.error.code).toBe("INVALID_ARGUMENT");
+
+      // 찾기는 메모 API와 같은 모양의 항목을 돌려준다. 폴더는 그 아래 항목을 트리 순서로, 메모 본문까지 담는다.
+      const found = cli(dir, ["memo", "--find", "note-meeting"]).data;
+      expect(found.item).toEqual({ id: "note-meeting", kind: "note", parentId: "folder-work", title: "회의록", body: "## 결정\n\n- 배포는 **금요일**", position: null, createdAt: 2, updatedAt: 5 });
+      expect(found.path).toEqual([{ id: "folder-work", name: "업무" }]);
+      const folder = cli(dir, ["memo", "--find", "folder-work"]).data;
+      expect(folder.items.map((entry: { item: { id: string }; depth: number }) => [entry.item.id, entry.depth])).toEqual([["folder-design", 0], ["note-api", 1], ["note-meeting", 0]]);
+      expect(folder.items[1].item.body).toBe("# API 설계\n\nPOST /api/v1/notes");
+      // ID 앞부분(6자 이상)도 받고, 겹치면 더 길게 달라고 한다.
+      expect(cli(dir, ["memo", "--find", "note-a"]).data.item.id).toBe("note-api");
+      const ambiguous = cli(dir, ["memo", "--find", "folder"]);
+      expect(ambiguous.code).toBe(2); expect(ambiguous.data.error.details.matches.sort()).toEqual(["folder-design", "folder-work"]);
+      const missing = cli(dir, ["memo", "--find", "nothing-here"]);
+      expect(missing.code).toBe(3); expect(missing.stdout).toBe(""); expect(missing.data.error.code).toBe("NOTE_NOT_FOUND");
+
+      // 검색은 띄어 쓴 낱말이 모두 든 항목을 찾고 맞은 줄을 서식 없이 보인다. 메모는 최근에 고친 것부터.
+      expect(cli(dir, ["memo", "--search", "배포 금요일"]).data).toMatchObject({ query: "배포 금요일", total: 1, items: [{ id: "note-meeting", path: [{ name: "업무" }], lines: ["배포는 금요일"] }] });
+      expect(cli(dir, ["memo", "--search", "배포"]).data.items.map((hit: { id: string }) => hit.id)).toEqual(["note-todo", "note-meeting"]);
+      expect(cli(dir, ["memo", "--search", "설계"]).data.items.map((hit: { id: string; kind: string }) => [hit.id, hit.kind])).toEqual([["folder-design", "folder"], ["note-api", "note"]]);
+      expect(cli(dir, ["memo", "--search", "없는말"]).data.total).toBe(0);
+      for (const args of [["--list", "--find", "x"], ["--find", "x", "--search", "y"], ["--find", "x", "--folder", "y"], ["--search", " "]]) {
+        expect(cli(dir, ["memo", ...args]).data.error.code).toBe("INVALID_ARGUMENT");
+      }
+
+      // 사람과 에이전트가 읽는 글: 목록은 ID를 다 보이고, 메모는 위치와 본문을, 폴더는 목록 뒤에 메모마다 본문을 잇는다.
+      const tree = plain(["memo", "--list"]).stdout.toString();
+      expect(tree).toContain("Relay 메모 · 메모 3개 · 폴더 2개\n\n- [폴더] 업무 (메모 2개) · ID: folder-work\n  - [폴더] 설계 (메모 1개) · ID: folder-design\n    - API 설계 · ");
+      expect(tree).toEndWith("메모 읽기: relay memo --find <ID>\n");
+      const note = plain(["memo", "--find", "note-meeting"]).stdout.toString();
+      expect(note).toStartWith("# 회의록\n\n- 메모 ID: note-meeting\n- 위치: 업무\n- 수정: ");
+      expect(note).toEndWith("\n\n## 결정\n\n- 배포는 **금요일**\n");
+      // 제목이 없는 메모는 본문 첫 줄이 이름이라 제목 줄을 따로 붙이지 않는다.
+      expect(plain(["memo", "--find", "note-api"]).stdout.toString()).toStartWith("- 메모 ID: note-api\n- 위치: 업무 › 설계\n");
+      const tree2 = plain(["memo", "--find", "folder-work"]).stdout.toString();
+      expect(tree2).toStartWith("# 폴더: 업무\n\n- 폴더 ID: folder-work\n- 위치: 최상위\n- 담긴 것: 메모 2개 · 하위 폴더 1개\n\n## 목록\n\n- [폴더] 설계 · ID: folder-design\n  - API 설계 · ID: note-api\n- 회의록 · ID: note-meeting\n");
+      expect(tree2).toContain("\n---\n\n## 회의록\n\n- 메모 ID: note-meeting\n");
+      expect(plain(["memo", "--search", "배포 금요일"]).stdout.toString()).toContain("- [메모] 회의록 · 업무 · ");
+      expect(plain(["memo"]).stdout.toString()).toContain("Usage: relay memo");
+
+      // 에이전트는 찾은 항목을 고쳐 메모 API로 보낸다. curl처럼 Origin과 JSON만 붙이고(브라우저의 Sec-Fetch-Site 없음), 새 메모는 새 ID로 넣는다.
+      const handle = handler(new SessionService(new SessionRepository(db), 0), config, { notes: store });
+      const now = Date.now();
+      const write = (headers: Record<string, string>) => handle(new Request("http://127.0.0.1:7474/api/v1/notes", { method: "POST",
+        headers: { host: "127.0.0.1:7474", "content-type": "application/json", ...headers },
+        body: JSON.stringify({ upserts: [{ ...found.item, body: `${found.item.body}\n- 에이전트가 더한 줄`, updatedAt: now },
+          { id: "note-agent", kind: "note", parentId: "folder-work", title: "에이전트 요약", body: "요약", position: null, createdAt: now, updatedAt: now }], deletes: [] }) }));
+      // Origin이 없으면(다른 사이트에서 보낸 폼 등) 받지 않는다.
+      expect((await write({})).status).toBe(403);
+      expect(cli(dir, ["memo", "--find", "note-meeting"]).data.item.body).not.toContain("에이전트");
+      expect((await write({ origin: "http://127.0.0.1:7474" })).status).toBe(200);
+      expect(cli(dir, ["memo", "--find", "note-meeting"]).data.item).toMatchObject({ body: "## 결정\n\n- 배포는 **금요일**\n- 에이전트가 더한 줄", updatedAt: now });
+      expect(cli(dir, ["memo", "--find", "folder-work"]).data.items.map((entry: { item: { id: string } }) => entry.item.id)).toContain("note-agent");
+    } finally { db.close(); }
   });
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -9,7 +9,7 @@ import { DesktopMenu, type MenuEntry } from "../desktop/menu";
 import { NoteDocument } from "./note-editor";
 import { SplitView } from "../desktop/split-view";
 import {
-  childMap, exportNotes, importNotes, isWithin, labelOf, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
+  childMap, exportNotes, importNotes, isWithin, labelOf, memoReference, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type Row,
 } from "../../lib/notes";
 import { useNoteAlert } from "../../lib/note-images";
@@ -133,6 +133,20 @@ export function NotesWindow() {
     });
   }
 
+  /** AI 에이전트에 붙여 넣을 한 줄(참조해 달라는 문구와 ID)을 복사한다. 에이전트는 relay memo --find <ID>로 읽는다. */
+  async function copyReference(id: string) {
+    const item = useNotes.getState().items[id];
+    if (!item) return;
+    const kind = item.kind === "folder" ? "폴더" : "메모";
+    let next: Notice;
+    try {
+      await navigator.clipboard.writeText(memoReference(item));
+      next = { tone: "done", text: `${kind} ID를 복사했습니다. AI 에이전트에 붙여 넣으면 이 ${kind}를 참조합니다.` };
+    } catch { next = { tone: "error", text: `${kind} ID를 복사하지 못했습니다. 브라우저의 클립보드 권한을 확인하세요.` }; }
+    dismissTrash();
+    setNotice((current) => (current?.tone === "progress" ? current : next));
+  }
+
   function openMenu(kind: Menu["kind"], id: string | null, left: number, top: number) {
     menuNext.current = { focus: id ?? selected };
     leavingRef.current = false;
@@ -199,6 +213,8 @@ export function NotesWindow() {
       ] satisfies MenuEntry[] : []),
       { kind: "item", id: "rename", label: item.kind === "folder" ? "이름 바꾸기" : "제목 바꾸기", onSelect: rename },
       { kind: "item", id: "move", label: "다른 폴더로 이동…", onSelect: moveTo },
+      { kind: "separator", id: "sep-copy" },
+      { kind: "item", id: "copy-id", label: item.kind === "folder" ? "폴더 ID 복사" : "메모 ID 복사", onSelect: () => void copyReference(item.id) },
       { kind: "separator", id: "sep-del" },
       { kind: "item", id: "delete", label: "삭제", onSelect: () => { menuNext.current.focus = item.parentId ?? null; removeItem(item.id); } },
     ];
@@ -243,8 +259,10 @@ export function NotesWindow() {
         {status === "ready" && sync === "offline" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버에 저장하지 못했습니다. 변경은 이 브라우저에 남겨 두었다가 연결되면 다시 저장합니다.</span></div>}
         {status === "ready" && sync === "rejected" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버가 마지막 변경을 받지 않았습니다. 다시 고치면 다시 저장을 시도합니다.</span></div>}
         {current?.kind === "note"
-          ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open} />
+          ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open}
+              onCopyId={() => void copyReference(current.id)} onMenu={(left, top) => openMenu("item", current.id, left, top)} />
           : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")}
+              onCopyId={(id) => void copyReference(id)} onMenu={(id, left, top) => openMenu("item", id, left, top)}
               onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} onImport={() => fileRef.current?.click()}
               empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
       </section>} />
@@ -495,19 +513,34 @@ function Crumbs({ items, parentId, onOpen, current }: { items: Items; parentId: 
   </nav>;
 }
 
-function NoteEditor({ note, items, onBack, onOpen }: { note: Note; items: Items; onBack: () => void; onOpen: (id: string) => void }) {
+/** 내용 막대 오른쪽 끝의 「ID 복사」. AI 에이전트에 이 메모·폴더를 ID 하나로 넘긴다. */
+function CopyIdButton({ kind, onCopy }: { kind: Item["kind"]; onCopy: () => void }) {
+  const label = kind === "folder" ? "폴더 ID 복사" : "메모 ID 복사";
+  return <Button type="button" variant="ghost" size="xs" className="notes-copy-id" aria-label={label}
+    title={`${label}: AI 에이전트에 붙여 넣어 이 ${kind === "folder" ? "폴더" : "메모"}를 참조하게 합니다`} onClick={onCopy}>
+    <Copy aria-hidden="true" /><span>ID 복사</span>
+  </Button>;
+}
+/** 내용 막대를 우클릭하면 트리의 항목 메뉴(ID 복사 포함)를 그 자리에 연다. 단추·경로 위에서는 브라우저 메뉴를 두지 않는다. */
+const barMenu = (open: (left: number, top: number) => void) => (event: ReactMouseEvent) => { event.preventDefault(); open(event.clientX, event.clientY); };
+
+function NoteEditor({ note, items, onBack, onOpen, onCopyId, onMenu }: {
+  note: Note; items: Items; onBack: () => void; onOpen: (id: string) => void; onCopyId: () => void; onMenu: (left: number, top: number) => void;
+}) {
   return <div className="note-editor">
-    <div className="notes-content-bar">
+    <div className="notes-content-bar" onContextMenu={barMenu(onMenu)}>
       <Button type="button" variant="ghost" size="xs" className="notes-back" onClick={onBack}><ChevronLeft aria-hidden="true" />목록</Button>
       <Crumbs items={items} parentId={note.parentId} onOpen={onOpen} />
       <time className="note-time" dateTime={new Date(note.updatedAt).toISOString()}>{dateFormat.format(note.updatedAt)}</time>
+      <CopyIdButton kind="note" onCopy={onCopyId} />
     </div>
     <NoteDocument note={note} />
   </div>;
 }
 
-function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onNewNote, onNewFolder, onImport }: {
+function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onNewNote, onNewFolder, onImport, onCopyId, onMenu }: {
   folder: Folder | null; items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; empty: boolean; loading: boolean; onOpen: (id: string) => void; onBack: () => void;
+  onCopyId: (id: string) => void; onMenu: (id: string, left: number, top: number) => void;
   onNewNote: (parentId: string | null) => void; onNewFolder: (parentId: string | null) => void; onImport: () => void;
 }) {
   const id = folder?.id ?? null;
@@ -528,9 +561,10 @@ function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack
     </div>
   </div>;
   return <div className="folder-view">
-    <div className="notes-content-bar">
+    <div className="notes-content-bar" onContextMenu={folder ? barMenu((left, top) => onMenu(folder.id, left, top)) : undefined}>
       <Button type="button" variant="ghost" size="xs" className="notes-back" onClick={onBack}><ChevronLeft aria-hidden="true" />목록</Button>
       {folder && <Crumbs items={items} parentId={folder.parentId} onOpen={onOpen} current={folder.name} />}
+      {folder && <CopyIdButton kind="folder" onCopy={() => onCopyId(folder.id)} />}
     </div>
     <div className="folder-sheet">
       <header className="folder-head">

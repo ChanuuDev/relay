@@ -15,6 +15,8 @@ import { SESSION_COMPACT_PROMPT, SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { transcriptModels } from "./hooks/transcript";
 import { EXPORT_FORMAT, NoteStore, parseExport, parseExportImages, type NoteItem } from "./notes/notes.store";
+import { findText, listText, MemoIndex, searchText } from "./notes/memo";
+import type { NoteList } from "@relay/core";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
@@ -178,6 +180,38 @@ notes.command("import <file>").description("내보낸 JSON 파일의 메모를 �
       return [result, `메모를 가져왔습니다: 추가 ${result.added} · 갱신 ${result.updated} · 그대로 ${result.kept}`];
     });
   });
+
+// AI 에이전트가 메모를 컨텍스트로 읽는다. 쓰기와 고치기는 메모 API(POST /api/v1/notes)로 하며, 방법은 relay-memo 스킬에 있다.
+program.command("memo").description("AI 에이전트용 메모 읽기: 목록·찾기·검색 (쓰기·고치기는 메모 API, relay-memo 스킬 참고)")
+  .option("--list", "폴더 트리와 메모 ID 목록 (본문 없음)")
+  .option("--folder <id>", "--list를 이 폴더 아래로 좁힘")
+  .option("--find <id>", "메모 ID로 제목·위치·본문 읽기. 폴더 ID면 그 아래 모든 메모를 함께 보임 (ID 앞 6자 이상도 받음)")
+  .option("--search <text>", "폴더 이름·메모 제목·본문 검색 (띄어 쓴 낱말이 모두 든 항목)")
+  .action(async (o: { list?: boolean; folder?: string; find?: string; search?: string }, c: Command) => {
+    const picked = [o.list === true, o.find !== undefined, o.search !== undefined].filter(Boolean).length;
+    if (picked > 1) invalid("--list, --find, --search 중 하나만 지정하세요.");
+    if (o.folder !== undefined && !o.list) invalid("--folder는 --list와 함께 씁니다.");
+    if (!picked) return void process.stdout.write(c.helpInformation());
+    const index = await memoIndex(loadConfig(c.optsWithGlobals().dataDir));
+    const [data, text] = o.list ? withText(index.list(o.folder), listText)
+      : o.find !== undefined ? withText(index.find(o.find), findText) : withText(index.search(o.search!), searchText);
+    process.stdout.write(c.optsWithGlobals().json ? `${asciiJson(data)}\n` : text.replace(/\n*$/, "\n"));
+  });
+const withText = <T,>(data: T, text: (value: T) => string): [T, string] => [data, text(data)];
+/** 한글 등 ASCII 밖 글자를 \uXXXX로 적은 JSON. Windows PowerShell 5.1은 다른 프로그램의 출력을 시스템 코드 페이지(CP949 등)로 읽어
+ *  UTF-8 한글을 깨뜨리는데, 에이전트가 그 값을 고쳐 메모 API로 돌려보내면 메모가 망가진다. 이렇게 적으면 어느 셸에서 읽어도 같은 값이다. */
+const asciiJson = (value: unknown) => JSON.stringify(value).replace(/[\u007f-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
+/** 메모 목록 하나로 찾기·검색을 한다. 원격 모드면 원격 서버의 메모를 읽는다. api는 쓰기에 쓸 이 PC의 Relay 웹 서버 주소다. */
+async function memoIndex(config: ReturnType<typeof loadConfig>): Promise<MemoIndex> {
+  const api = `http://${config.webHost}:${config.webPort}`;
+  if (config.mode === "remote") {
+    const data = await new RemoteClient(config).json<NoteList>("/api/v1/notes");
+    return new MemoIndex(data.items, data.revision, api);
+  }
+  const db = openDatabase(config, true);
+  try { const data = new NoteStore(db).list(); return new MemoIndex(data.items, data.revision, api); } finally { db.close(); }
+}
 
 /** 메모 저장소를 열어 한 가지 일을 하고 닫는다. --json이면 결과 객체를, 아니면 한 줄 안내를 stdout에 쓴다. */
 type ExportedImages = ReturnType<typeof parseExportImages>;
