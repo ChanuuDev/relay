@@ -8,6 +8,10 @@ test("standalone binary outside source: CLI → table → detail/history → rec
   const errors: string[] = []; page.on("pageerror", err => errors.push(err.message));
   expect(spawnSync(binary, ["--version"], { cwd: env.dir, encoding: "utf8", env: spawnEnv }).stdout.trim()).toBe(version);
   expect(spawnSync(binary, ["--help"], { cwd: env.dir, encoding: "utf8", env: spawnEnv }).stdout).toContain("Usage: relay");
+  // 빌드한 실행 파일은 커밋과 빌드 시각을 싣는다. 설치형 앱이 이 값으로 더 새 CLI를 옛 동봉본으로 되돌리지 않는다.
+  const built = JSON.parse(spawnSync(binary, ["version", "--json"], { cwd: env.dir, encoding: "utf8", env: spawnEnv }).stdout);
+  expect(built).toMatchObject({ schemaVersion: 1, version, revision: expect.stringMatching(/^[0-9a-f]{40}$/) });
+  expect(Date.now() - Date.parse(built.builtAt)).toBeGreaterThanOrEqual(0);
   const occupied = spawnSync(binary, ["web", "--data-dir", env.dir, "--port", String(env.port)], { cwd: env.dir, encoding: "utf8", timeout: 5000, env: spawnEnv });
   expect(occupied.status).toBe(6); expect(occupied.stdout).toBe(""); expect(occupied.stderr).toContain("PORT_IN_USE");
   await ready(page); await expect(page.getByText("저장된 세션이 없습니다.", { exact: false })).toBeVisible();

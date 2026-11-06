@@ -53,7 +53,7 @@ Windows 10/11 x64에서 사용합니다. 설치한 앱을 실행할 때는 Node.
 | 포트, 저장소·로그 폴더, 훅·스킬 재설치, outbox 전송 | 같은 설정 창의 **서버·Agent 연동 설정** |
 | 테마, 글자 크기, 바탕화면, 창 배치 | 앱 화면 하단 Dock의 **설정** |
 
-Electron 앱과 제목 표시줄 변경은 최신 **Setup EXE**로 업데이트하면 반영됩니다. CLI 업데이트에는 `installer/install.cmd`를 사용합니다. 로그인 때는 기본적으로 창을 열지 않고 트레이에서 시작합니다.
+Electron 앱과 제목 표시줄 변경은 최신 **Setup EXE**로 업데이트하면 반영됩니다. CLI 업데이트에는 `installer/install.cmd`를 사용합니다. 앱은 켤 때 동봉한 `relay.exe`가 설치된 것보다 **나중에 빌드된 경우에만** CLI를 바꿉니다(`relay version --json`의 빌드 시각으로 비교). 그래서 소스에서 `install-cli.ps1`로 더 새 CLI를 설치한 뒤 옛 Setup EXE로 설치한 앱을 켜도 CLI가 되돌아가지 않습니다. 로그인 때는 기본적으로 창을 열지 않고 트레이에서 시작합니다.
 
 Agent 연동은 설치 뒤 각 도구를 다시 시작해 확인하세요. Codex는 `/hooks`에서 시작·종료 훅을 각각 신뢰해야 실행됩니다. 자세한 절차는 [Agent 연동](#agent-연동)에 있습니다.
 
@@ -472,6 +472,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay memo --find <ID>` | 메모의 제목·위치·본문, 폴더면 그 아래 모든 메모. ID 앞 6자 이상도 받음 |
 | `relay memo --search <낱말>` | 폴더 이름·메모 제목·본문 검색(띄어 쓴 낱말이 모두 든 항목과 맞은 줄) |
 | `relay notes export <파일>` / `relay notes import <파일>` | 모든 메모·폴더를 JSON 파일로 내보내기, 내보낸 파일을 합치기(없는 항목은 넣고 같은 항목은 더 최근 쪽을 남김, 지우지 않음). 다른 PC·저장소로 메모를 옮길 때 |
+| `relay version` | 실행 파일의 버전·커밋·빌드 시각. `--json`이면 `{ version, revision, builtAt }`(소스 실행은 `null`) |
 | `relay install-hooks [--bin-dir <경로>]` | SessionStart·SessionEnd 훅·시작 안내 등록 및 스킬 설치 |
 | `relay install-skills [--force]` | `relay-session`·`relay-memo` 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
 | `relay web [--open] [--port <번호>] [--headless] [--close] [--reload] [--free-port]` | 업무 화면의 로컬 서버 실행, 백그라운드 실행, 종료, 다시 시작, 예약된 포트 풀기 |

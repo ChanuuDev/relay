@@ -29,6 +29,8 @@ describe("CLI processes", () => {
     const invalid = cli(dir, ["latest"]); expect(invalid.code).toBe(2); expect(invalid.stdout).toBe("");
     const unknown = cli(dir, ["list", "--nope"]); expect(unknown.code).toBe(2); expect(unknown.data.error.code).toBe("INVALID_ARGUMENT");
     expect(cli(dir, ["web"]).code).toBe(2);
+    // 소스에서 실행하면 커밋·빌드 시각이 없다(빌드한 실행 파일만 싣는다).
+    expect(cli(dir, ["version"]).data).toEqual({ schemaVersion: 1, version: JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version, revision: null, builtAt: null });
   });
 
   test("an internal ID suggests an executable lookup in the same store without mutating records", () => {

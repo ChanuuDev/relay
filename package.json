@@ -13,7 +13,7 @@
     "relay": "bun run src/index.ts",
     "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test tests/database.test.ts tests/session.test.ts tests/cli.test.ts tests/api.test.ts tests/calculator.test.ts tests/files.test.ts tests/highlight.test.ts tests/control.test.ts tests/output.test.ts tests/interactive.test.ts tests/install.test.ts tests/hooks-install.test.ts tests/skills-install.test.ts tests/pwa.test.ts tests/office.test.ts tests/office-buildings.test.ts tests/pets.test.ts tests/remote.test.ts tests/server-cli.test.ts tests/secret-scan.test.ts",
+    "test": "bun test tests/database.test.ts tests/session.test.ts tests/cli.test.ts tests/api.test.ts tests/calculator.test.ts tests/files.test.ts tests/highlight.test.ts tests/control.test.ts tests/output.test.ts tests/interactive.test.ts tests/install.test.ts tests/hooks-install.test.ts tests/skills-install.test.ts tests/pwa.test.ts tests/office.test.ts tests/office-buildings.test.ts tests/pets.test.ts tests/remote.test.ts tests/server-cli.test.ts tests/secret-scan.test.ts tests/desktop-install.test.ts",
     "test:web": "playwright test",
     "check": "npm run scan:secrets && npm run typecheck && npm test && npm run build && npm run test:web && npm run check:server && npm run check:desktop",
     "build:web": "bun run scripts/build-web.ts",

@@ -170,7 +170,11 @@ test("상세 필터 행은 0에서 윗줄부터 펼쳐지고, 접히는 중에 �
   await page.clock.install();
   await ready(page);
   // 화면이 뜨는 데 1초를 넘기면(검증 전체를 돌릴 때 PC가 바쁘면) 테스트 쪽 시각으로는 이미 지난 때라 멈출 수 없다. 화면의 시계에서 잰다.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
+  // 화면 시계는 잰 뒤에도 흐르므로, 멈추기 전에 그 1초가 다 지나 버리면 지금 시각에서 다시 잰다.
+  for (let attempt = 0; ; attempt++) {
+    try { await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000); break; }
+    catch (error) { if (attempt >= 4 || !String(error).includes("to the past")) throw error; }
+  }
   const toggle = page.getByRole("button", { name: "상세 필터", exact: true });
   const box = () => page.evaluate(() => {
     const reveal = document.querySelector(".advanced-reveal")!.getBoundingClientRect();

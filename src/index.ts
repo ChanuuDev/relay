@@ -336,6 +336,13 @@ program.command("migrate").requiredOption("--to-remote", "로컬 데이터를 �
     process.stdout.write(JSON.stringify(result) + "\n");
   });
 
+program.command("version").description("실행 파일의 버전·커밋·빌드 시각. 설치형 앱은 이 값으로 동봉한 relay.exe가 더 새것일 때만 설치를 바꾼다")
+  .action((_o, c: Command) => {
+    const info = { schemaVersion: 1, version, revision: process.env.RELAY_BUILD_REVISION || null, builtAt: process.env.RELAY_BUILT_AT || null };
+    process.stdout.write(c.optsWithGlobals().json ? `${JSON.stringify(info)}\n`
+      : `Relay ${version}${info.revision ? ` · 커밋 ${info.revision.slice(0, 7)}` : ""}${info.builtAt ? ` · 빌드 ${info.builtAt}` : " · 소스 실행"}\n`);
+  });
+
 program.command("install-hooks").description("Claude/Grok/Codex 세션 훅·시작 안내 등록 및 스킬 설치")
   .option("--bin-dir <path>", "relay.exe와 훅 래퍼를 둘 절대경로")
   .action((o, c: Command) => {
