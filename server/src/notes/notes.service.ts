@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
-import { and, asc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
-import { EXPORT_FORMAT, mergeDecision, type NoteApplied, type NoteBatch, type NoteExport, type NoteImportResult, type NoteItem, type NoteList } from "@relay/core";
+import { and, asc, eq, inArray, isNotNull, lt, notInArray, sql } from "drizzle-orm";
+import { EXPORT_FORMAT, checkImage, imageIdsIn, mergeDecision, noteImageUrl, type NoteApplied, type NoteBatch, type NoteExport, type NoteImage, type NoteImageExport,
+  type NoteImageType, type NoteImportResult, type NoteItem, type NoteList } from "@relay/core";
 import { DB, lockUser, schema, type Db } from "../db/database.js";
 
-const { notes, notesMeta } = schema;
+const { notes, notesMeta, noteImages } = schema;
+/** 쓰는 메모가 없는 그림을 지우기까지 기다리는 시간. 로컬 서버와 같다. */
+export const IMAGE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 type Row = typeof notes.$inferSelect;
 
 const toItem = (row: Row): NoteItem => (row.kind === "folder"
@@ -49,14 +54,67 @@ export class NotesService {
     });
   }
 
+  /** 다른 환경으로 옮길 파일. 메모가 가리키는 그림을 base64로 담는다(그림이 없으면 images 키를 넣지 않는다). */
   async exportAll(userId: string, now = new Date()): Promise<NoteExport> {
-    return { format: EXPORT_FORMAT, schemaVersion: 1, exportedAt: now.toISOString(), items: (await this.list(userId)).items };
+    const { items } = await this.list(userId);
+    const ids = [...new Set(items.flatMap((item) => (item.kind === "note" ? imageIdsIn(item.body) : [])))];
+    const images: NoteImageExport[] = [];
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const rows = await this.db.select({ id: noteImages.id, type: noteImages.type, data: noteImages.data }).from(noteImages)
+        .where(and(eq(noteImages.userId, userId), inArray(noteImages.id, ids.slice(offset, offset + 100))));
+      for (const row of rows) images.push({ id: row.id, type: row.type as NoteImageType, data: Buffer.from(row.data).toString("base64") });
+    }
+    return { format: EXPORT_FORMAT, schemaVersion: 1, exportedAt: now.toISOString(), items, ...(images.length ? { images } : {}) };
+  }
+
+  /** 그림을 저장한다. 같은 내용이면 이미 있는 것을 그대로 쓴다. */
+  async saveImage(userId: string, bytes: Uint8Array, now = Date.now()): Promise<NoteImage> {
+    const type = checkImage(bytes);
+    const id = sha256(bytes);
+    await this.db.insert(noteImages).values({ userId, id, type, size: bytes.length, data: bytes, createdAt: now }).onConflictDoNothing();
+    return { schemaVersion: 1, id, type, size: bytes.length, url: noteImageUrl(id) };
+  }
+
+  async image(userId: string, id: string): Promise<{ type: NoteImageType; data: Uint8Array } | null> {
+    const [row] = await this.db.select({ type: noteImages.type, data: noteImages.data }).from(noteImages)
+      .where(and(eq(noteImages.userId, userId), eq(noteImages.id, id))).limit(1);
+    return row ? { type: row.type as NoteImageType, data: row.data } : null;
+  }
+
+  /** 어느 메모도 가리키지 않은 채 IMAGE_GRACE_MS가 지난 그림을 지운다. 지운 수를 돌려준다. */
+  async pruneImages(now = Date.now()): Promise<number> {
+    const old = await this.db.select({ userId: noteImages.userId, id: noteImages.id }).from(noteImages).where(lt(noteImages.createdAt, now - IMAGE_GRACE_MS));
+    let removed = 0;
+    for (const userId of new Set(old.map((row) => row.userId))) {
+      const used = new Set((await this.db.select({ body: notes.body }).from(notes)
+        .where(and(eq(notes.userId, userId), eq(notes.kind, "note"), sql`strpos(${notes.body}, ${"/api/v1/notes/images/"}) > 0`)))
+        .flatMap((row) => imageIdsIn(row.body)));
+      const unused = old.filter((row) => row.userId === userId && !used.has(row.id)).map((row) => row.id);
+      for (let offset = 0; offset < unused.length; offset += 100) {
+        const deleted = await this.db.delete(noteImages).where(and(eq(noteImages.userId, userId), inArray(noteImages.id, unused.slice(offset, offset + 100))))
+          .returning({ id: noteImages.id });
+        removed += deleted.length;
+      }
+    }
+    return removed;
+  }
+
+  /** 가져온 그림을 넣는다. 내용의 해시가 id와 다르거나 받지 않는 형식이면 버린다. */
+  private async mergeImages(userId: string, images: Array<{ id: string; data: string }>, tx: Db, now = Date.now()) {
+    for (const image of images) {
+      const bytes = Buffer.from(image.data, "base64");
+      let type: NoteImageType;
+      try { type = checkImage(bytes); } catch { continue; }
+      if (sha256(bytes) !== image.id) continue;
+      await tx.insert(noteImages).values({ userId, id: image.id, type, size: bytes.length, data: bytes, createdAt: now }).onConflictDoNothing();
+    }
   }
 
   /** 가져온 항목을 합친다. 없는 항목은 넣고, 있는 항목은 가져온 쪽이 더 최근에 고쳤을 때만 바꾸며, 아무것도 지우지 않는다. */
-  async merge(userId: string, items: NoteItem[]): Promise<NoteImportResult> {
+  async merge(userId: string, items: NoteItem[], images: Array<{ id: string; data: string }> = []): Promise<NoteImportResult> {
     return this.db.transaction(async (tx) => {
       await lockUser(tx, userId);
+      await this.mergeImages(userId, images, tx);
       const ids = items.map((item) => item.id);
       const existing = new Map<string, NoteItem>();
       if (ids.length) {

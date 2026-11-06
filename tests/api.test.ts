@@ -4,7 +4,7 @@ import { loadConfig } from "../src/config";
 import { openDatabase } from "../src/db/database";
 import { RelayError } from "../src/errors";
 import { fixture, input } from "./helpers";
-import { NoteStore } from "../src/notes/notes.store";
+import { IMAGE_GRACE_MS, NoteStore } from "../src/notes/notes.store";
 import { HOOK_SUMMARY } from "../src/session/session.service";
 import { CalculatorStore, MAX_HISTORY } from "../src/calculator/calculator.store";
 
@@ -359,6 +359,117 @@ describe("Notes API: the only write the web server accepts", () => {
     expect(postExport.status).toBe(405); expect(postExport.headers.get("Allow")).toBe("GET");
     expect((await importFile(good, {}, async (url, init) => send(`${url}?x=1`, init))).status).toBe(400);
     expect((await importFile(good)).status).toBe(200);
+  });
+});
+
+describe("Note images API: pictures pasted into notes", () => {
+  let f: ReturnType<typeof fixture>;
+  let store: NoteStore;
+  let send: (url: string, init?: RequestInit) => Promise<Response>;
+  const origin = "http://127.0.0.1:7474";
+  // 1×1 PNG·GIF와 JPEG 서명만 있는 바이트. 서버는 파일 머리의 서명으로 형식을 알아낸다.
+  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  const GIF = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+  const sha = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+  const write = (url: string, body: unknown, headers: Record<string, string> = {}, to = send) => to(url, {
+    method: "POST", body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: { origin, "content-type": "application/json", "sec-fetch-site": "same-origin", ...headers },
+  });
+  const upload = (body: unknown, headers: Record<string, string> = {}) => write("/api/v1/notes/images", body, headers);
+  const count = () => f.db.query("SELECT count(*) AS n FROM note_images").get();
+  const connect = (target: ReturnType<typeof fixture>, notes: NoteStore) => {
+    const handle = handler(target.service, target.config, { notes });
+    return async (url: string, init: RequestInit = {}) => handle(new Request(`http://127.0.0.1:7474${url}`, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+  };
+  beforeEach(() => { f = fixture(); store = new NoteStore(f.db); send = connect(f, store); });
+  afterEach(() => f.close());
+
+  test("stores a picture once under its sha256 and serves it isolated and cacheable to this screen only", async () => {
+    const first = await upload({ data: PNG.toString("base64") });
+    expect(first.status).toBe(200);
+    const image = await first.json() as { schemaVersion: number; id: string; type: string; size: number; url: string };
+    expect(image).toEqual({ schemaVersion: 1, id: sha(PNG), type: "image/png", size: PNG.length, url: `/api/v1/notes/images/${sha(PNG)}` });
+    // 같은 그림은 다시 올려도 한 장만 남는다.
+    expect(await (await upload({ data: PNG.toString("base64") })).json()).toEqual(image);
+    expect(count()).toEqual({ n: 1 });
+    const read = await send(image.url, { headers: { "sec-fetch-site": "same-origin" } });
+    expect(read.status).toBe(200);
+    expect(read.headers.get("content-type")).toBe("image/png");
+    expect(read.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(read.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(read.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(read.headers.get("etag")).toBe(`"${image.id}"`);
+    expect(Buffer.from(await read.arrayBuffer()).equals(PNG)).toBe(true);
+    expect((await send(image.url, { headers: { "if-none-match": `"${image.id}"` } })).status).toBe(304);
+    // 다른 사이트(같은 컴퓨터의 다른 포트 포함)는 그림을 읽지 못한다.
+    for (const site of ["same-site", "cross-site"]) expect((await send(image.url, { headers: { "sec-fetch-site": site } })).status, site).toBe(403);
+    expect((await send(`/api/v1/notes/images/${"0".repeat(64)}`)).status).toBe(404);
+    expect((await send("/api/v1/notes/images/not-a-hash")).status).toBe(404);
+    expect((await send(`${image.url}?size=1`)).status).toBe(400);
+    const get = await send("/api/v1/notes/images");
+    expect(get.status).toBe(405); expect(get.headers.get("Allow")).toBe("POST");
+    expect((await send(image.url, { method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}" })).status).toBe(405);
+  });
+
+  test("takes only real raster pictures as JSON from the same-origin screen", async () => {
+    const good = { data: PNG.toString("base64") };
+    for (const [headers, status] of [[{ origin: "" }, 403], [{ origin: "http://evil.example" }, 403], [{ "sec-fetch-site": "cross-site" }, 403],
+      [{ "sec-fetch-site": "same-site" }, 403], [{ "content-type": "text/plain" }, 415]] as Array<[Record<string, string>, number]>) {
+      expect((await upload(good, headers)).status, JSON.stringify(headers)).toBe(status);
+    }
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    for (const [body, code] of [
+      [{ data: svg.toString("base64") }, "UNSUPPORTED_MEDIA_TYPE"], [{ data: Buffer.from("plain text").toString("base64") }, "UNSUPPORTED_MEDIA_TYPE"],
+      [{ data: "" }, "INVALID_ARGUMENT"], [{ data: "not base64!" }, "INVALID_ARGUMENT"], [{ data: 1 }, "INVALID_ARGUMENT"], [[], "INVALID_ARGUMENT"], ["{", "INVALID_ARGUMENT"],
+      [{ ...good, type: "image/png" }, "INVALID_ARGUMENT"], [{ data: Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64") }, "PAYLOAD_TOO_LARGE"],
+    ] as Array<[unknown, string]>) {
+      const response = await upload(body);
+      expect((await response.json()).error.code, JSON.stringify(body).slice(0, 60)).toBe(code);
+    }
+    expect((await upload(good, { "content-length": String(17 * 1024 * 1024) })).status).toBe(413);
+    expect(count()).toEqual({ n: 0 });
+    for (const bytes of [GIF, JPEG]) expect((await upload({ data: bytes.toString("base64") })).status).toBe(200);
+    expect(count()).toEqual({ n: 2 });
+  });
+
+  test("exports the pictures notes point at and imports them only when their content matches the id", async () => {
+    const { url, id } = await (await upload({ data: PNG.toString("base64") })).json() as { url: string; id: string };
+    await upload({ data: GIF.toString("base64") });
+    store.apply({ upserts: [{ id: "n1", kind: "note", parentId: null, title: "그림", body: `앞\n\n![](${url})\n`, position: null, createdAt: 1, updatedAt: 1 }], deletes: [] });
+    const file = await (await send("/api/v1/notes/export")).json() as { items: unknown[]; images: unknown[] };
+    // 메모가 가리키지 않는 GIF는 담지 않는다.
+    expect(file.images).toEqual([{ id, type: "image/png", data: PNG.toString("base64") }]);
+    const other = fixture();
+    try {
+      const to = connect(other, new NoteStore(other.db));
+      expect((await write("/api/v1/notes/import", { ...file, images: "x" }, {}, to)).status).toBe(400);
+      expect((await write("/api/v1/notes/import", { ...file, images: [{ id: "short", data: "" }] }, {}, to)).status).toBe(400);
+      // 내용이 id와 다른 그림은 버린다.
+      const forged = { id: sha(GIF), type: "image/gif", data: PNG.toString("base64") };
+      const merged = await write("/api/v1/notes/import", { ...file, images: [...file.images, forged] }, {}, to);
+      expect(merged.status).toBe(200);
+      expect(await merged.json()).toMatchObject({ added: 1, updated: 0, kept: 0 });
+      expect(Buffer.from(await (await to(url)).arrayBuffer()).equals(PNG)).toBe(true);
+      expect((await to(`/api/v1/notes/images/${sha(GIF)}`)).status).toBe(404);
+      expect((await (await to("/api/v1/notes")).json()).items[0].body).toContain(url);
+    } finally { other.close(); }
+  });
+
+  test("prunes pictures no note has pointed at for 30 days", () => {
+    const used = store.saveImage(PNG, 0);
+    const unused = store.saveImage(GIF, 0);
+    store.apply({ upserts: [{ id: "n1", kind: "note", parentId: null, title: "", body: `![](${used.url})`, position: null, createdAt: 1, updatedAt: 1 }], deletes: [] });
+    const recent = store.saveImage(JPEG, IMAGE_GRACE_MS);
+    expect(store.pruneImages(IMAGE_GRACE_MS + 1)).toBe(1);
+    expect(store.image(unused.id)).toBeNull();
+    expect(store.image(used.id)?.type).toBe("image/png");
+    expect(store.image(recent.id)?.type).toBe("image/jpeg");
+    // 그림을 가리키던 메모를 지우면 30일 뒤에 정리된다.
+    store.apply({ upserts: [], deletes: ["n1"] });
+    expect(store.pruneImages(IMAGE_GRACE_MS + 1)).toBe(1);
+    expect(store.pruneImages(2 * IMAGE_GRACE_MS + 1)).toBe(1);
+    expect(count()).toEqual({ n: 0 });
   });
 });
 

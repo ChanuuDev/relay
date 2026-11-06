@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/007_init.sql" with { type: "text" };
+import schema from "./migrations/008_init.sql" with { type: "text" };
 
-export const DB_VERSION = 7;
+export const DB_VERSION = 8;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -122,9 +122,22 @@ function migrateV6(db: Database) {
   db.exec("ALTER TABLE notes ADD COLUMN position REAL;");
 }
 
+// v8 keeps the pictures pasted into notes. A note body only points at /api/v1/notes/images/<sha256>, so the same
+// picture is stored once. Sessions, notes and calculations are untouched.
+function migrateV7(db: Database) {
+  db.exec(`CREATE TABLE note_images (
+  id TEXT PRIMARY KEY CHECK(length(id) = 64),
+  type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`);
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current < 0 || current > 6) {
+  if (current < 0 || current > 7) {
     checkVersion(db);
     return;
   }
@@ -145,6 +158,7 @@ function initializeOrMigrate(db: Database) {
       migrateV4(db);
       migrateV5(db);
       migrateV6(db);
+      migrateV7(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 2) {
       migrateV2(db);
@@ -152,24 +166,32 @@ function initializeOrMigrate(db: Database) {
       migrateV4(db);
       migrateV5(db);
       migrateV6(db);
+      migrateV7(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 3) {
       migrateV3(db);
       migrateV4(db);
       migrateV5(db);
       migrateV6(db);
+      migrateV7(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 4) {
       migrateV4(db);
       migrateV5(db);
       migrateV6(db);
+      migrateV7(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 5) {
       migrateV5(db);
       migrateV6(db);
+      migrateV7(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 6) {
       migrateV6(db);
+      migrateV7(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 7) {
+      migrateV7(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);

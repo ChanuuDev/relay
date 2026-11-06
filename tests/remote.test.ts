@@ -42,6 +42,7 @@ beforeEach(() => {
       else if (route === "/api/v1/files/stat") result = { kind: "file", size: 6, link: false };
       else if (route === "/api/v1/files/content") return new Response("abc", { status: request.headers.has("Range") ? 206 : 200, headers: { "Content-Type": "text/plain", "Content-Range": "bytes 0-2/6" } });
       else if (route === "/api/v1/import") result = { schemaVersion: 1 };
+      else if (route.startsWith("/api/v1/notes/images/")) return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable", ETag: '"x"' } });
       else result = { schemaVersion: 1, ok: true };
       if (key) responses.set(key, result);
       return Response.json(result);
@@ -123,6 +124,27 @@ test("웹은 출처 검사를 유지하며 원격 파일 경로·Range·로컬 h
   expect(response.headers.get("Content-Security-Policy")).toContain("sandbox");
   const health = await (await request("/api/v1/health")).text();
   expect(health).toContain('"mode":"remote"'); expect(health).not.toContain("test-token");
+});
+test("웹은 메모 그림 올리기·보기를 원격 서버로 중계하고 보관·격리 헤더를 지킨다", async () => {
+  const handler = remoteHandler(config(), () => Response.json({ local: true }));
+  const request = (route: string, init: RequestInit = {}) => handler(new Request("http://127.0.0.1:7474" + route, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+  const upload = await request("/api/v1/notes/images", { method: "POST", body: JSON.stringify({ data: "iVBORw==" }),
+    headers: { origin: "http://127.0.0.1:7474", "sec-fetch-site": "same-origin", "Content-Type": "application/json" } });
+  expect(upload.status).toBe(200);
+  expect(received.at(-1)).toMatchObject({ route: "/api/v1/notes/images", body: { data: "iVBORw==" } });
+  // 저장 묶음(8MB)보다 큰 그림 본문도 받는다(16MB까지).
+  const big = await request("/api/v1/notes/images", { method: "POST", body: JSON.stringify({ data: "A".repeat(9 * 1024 * 1024) }),
+    headers: { origin: "http://127.0.0.1:7474", "sec-fetch-site": "same-origin", "Content-Type": "application/json" } });
+  expect(big.status).toBe(200);
+  const image = await request(`/api/v1/notes/images/${"a".repeat(64)}`, { headers: { "sec-fetch-site": "same-origin" } });
+  expect(image.status).toBe(200);
+  expect(image.headers.get("Content-Type")).toBe("image/png");
+  expect(image.headers.get("Cache-Control")).toBe("private, max-age=31536000, immutable");
+  expect(image.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
+  expect(new Uint8Array(await image.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+  expect((await request(`/api/v1/notes/images/${"a".repeat(64)}`, { headers: { "sec-fetch-site": "same-site" } })).status).toBe(403);
+  // 주소 꼴이 틀리면 원격으로 보내지 않고 로컬 처리로 넘긴다.
+  expect(await (await request("/api/v1/notes/images/not-a-hash")).json()).toEqual({ local: true });
 });
 test("출처 간 붙여넣기는 로컬에 스트리밍하고 성공 뒤에만 이동 원본을 지운다", async () => {
   const handler = remoteHandler(config(), () => new Response(null, { status: 404 }));

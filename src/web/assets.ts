@@ -3,6 +3,8 @@ import themeScript from "./public/theme.js" with { type: "text" };
 import manifest from "./public/manifest.webmanifest" with { type: "text" };
 import serviceWorker from "./public/sw.js" with { type: "text" };
 import js from "./generated/app.js" with { type: "text" };
+import mermaidFrameJs from "./generated/mermaid-frame.js" with { type: "text" };
+import mermaidFrame from "./public/mermaid-frame.html" with { type: "text" };
 import css from "./generated/style.css" with { type: "text" };
 import wallpaperDark from "./public/wallpaper-dark.jpg" with { type: "file" };
 import wallpaperLight from "./public/wallpaper-light.jpg" with { type: "file" };
@@ -51,7 +53,10 @@ export type Asset = { body: string; type: string } | { file: string; type: strin
 const image = (file: string, type: string): Asset => ({ file, type, cache: "public, max-age=86400" });
 
 /** 화면 자산과 실행 파일의 커밋 식별자. HTML과 health가 같은 값을 써 재설치 뒤 열린 화면을 새로 고친다. */
-export const buildId = Bun.hash(`${html as unknown as string}\0${js}\0${css}\0${serviceWorker}\0${process.env.RELAY_BUILD_REVISION ?? ""}`).toString(36);
+export const buildId = Bun.hash(`${html as unknown as string}\0${js}\0${css}\0${serviceWorker}\0${mermaidFrameJs}\0${process.env.RELAY_BUILD_REVISION ?? ""}`).toString(36);
+
+/** 메모의 Mermaid 다이어그램을 그리는 숨은 틀. 서버가 이 틀에만 맞는 보안 헤더를 붙여 보낸다(security.ts의 diagramHeaders). */
+export const mermaidFrameHtml = mermaidFrame as unknown as string;
 
 // Bun's ambient *.html type describes HTML bundles, but the explicit text loader returns a string.
 export const assets = new Map<string, Asset>([
@@ -62,6 +67,7 @@ export const assets = new Map<string, Asset>([
   ["/manifest.webmanifest", { body: manifest, type: "application/manifest+json; charset=utf-8" }],
   ["/sw.js", { body: serviceWorker, type: "text/javascript; charset=utf-8" }],
   ["/app.js", { body: js, type: "text/javascript; charset=utf-8" }],
+  ["/mermaid-frame.js", { body: mermaidFrameJs, type: "text/javascript; charset=utf-8" }],
   ["/style.css", { body: css, type: "text/css; charset=utf-8" }],
   ["/wallpaper-dark.jpg", image(wallpaperDark, "image/jpeg")],
   ["/wallpaper-light.jpg", image(wallpaperLight, "image/jpeg")],

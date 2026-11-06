@@ -9,6 +9,8 @@ import v3Schema from "../src/db/migrations/003_init.sql" with { type: "text" };
 import v4Schema from "../src/db/migrations/004_init.sql" with { type: "text" };
 import v5Schema from "../src/db/migrations/005_init.sql" with { type: "text" };
 import v6Schema from "../src/db/migrations/006_init.sql" with { type: "text" };
+import v7Schema from "../src/db/migrations/007_init.sql" with { type: "text" };
+import v8Schema from "../src/db/migrations/008_init.sql" with { type: "text" };
 import { CalculatorStore } from "../src/calculator/calculator.store";
 import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
@@ -150,6 +152,29 @@ describe("Database record migration", () => {
       expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 0 });
       expect(db.query("SELECT count(*) AS n FROM sessions").get()).toEqual({ n: 2 });
     } finally { db.close(); }
+  });
+
+  test("v7 databases gain the note pictures table in place, keep their notes and match a fresh v8 schema", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v7Schema);
+    db.exec("PRAGMA user_version = 7");
+    db.query("INSERT INTO notes (id, kind, parent_id, title, body, position, created_at, updated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("n", "note", null, "메모", "본문", 2, 1, 1, 1);
+    const before = db.query("SELECT * FROM notes").all();
+    db.close();
+    const fresh = new Database(":memory:");
+    fresh.exec(v8Schema);
+    const schemaOf = (target: Database) => target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all();
+    const writer = openDatabase(loadConfig(dir));
+    try {
+      expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(writer.query("SELECT * FROM notes").all()).toEqual(before);
+      expect(schemaOf(writer)).toEqual(schemaOf(fresh));
+      const notes = new NoteStore(writer);
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+      const image = notes.saveImage(png);
+      expect(Buffer.from(notes.image(image.id)!.data).equals(png)).toBe(true);
+      expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { writer.close(); fresh.close(); }
   });
 
   test("v6 notes gain an empty position in place, keep their order and accept a dragged order", () => {

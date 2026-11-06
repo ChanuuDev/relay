@@ -1,6 +1,7 @@
 import type { Config } from "../config";
 import { errorBody, RelayError } from "../errors";
 import { RemoteClient } from "./client";
+import { MAX_IMAGE_UPLOAD_BYTES } from "@relay/core";
 import { checkRequest, checkWrite, MAX_IMPORT_BYTES, securityHeaders } from "../web/security";
 import { PID_HEADER } from "../web/control";
 import { places } from "../files/files.service";
@@ -28,7 +29,9 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
     if (!url.pathname.startsWith("/api/v1/")) return fallback(request);
     try {
       checkRequest(request, config.webPort);
-      const client = new RemoteClient(config, url.pathname.includes("files") ? 120_000 : 8000);
+      // 그림 올리기(최대 16MB)와 파일은 오래 걸릴 수 있다.
+      const image = url.pathname.startsWith("/api/v1/notes/images");
+      const client = new RemoteClient(config, url.pathname.includes("files") || image ? 120_000 : 8000);
       if (url.pathname === "/api/v1/health" && request.method === "GET") {
         let status: Record<string, unknown> = { reachable: false };
         const started = Date.now();
@@ -47,14 +50,14 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
       let body: unknown;
       const fileApi = url.pathname === "/api/v1/files" || url.pathname.startsWith("/api/v1/files/");
       const explicitFiles = url.pathname === "/api/v1/remote/files" || url.pathname.startsWith("/api/v1/remote/files/");
-      const dataApi = /^\/api\/v1\/(sessions(?:\/[^/]+(?:\/(?:updates|children|chain|actions))?)?|notes(?:\/export|\/import)?|calculator\/history)$/.test(url.pathname);
+      const dataApi = /^\/api\/v1\/(sessions(?:\/[^/]+(?:\/(?:updates|children|chain|actions))?)?|notes(?:\/export|\/import|\/images(?:\/[0-9a-f]{64})?)?|calculator\/history)$/.test(url.pathname);
       if (!["GET", "POST", "PUT"].includes(request.method)) throw new RelayError("METHOD_NOT_ALLOWED", "지원하지 않는 HTTP 메서드입니다.", 2, 405);
-      if ((fileApi || explicitFiles) && request.method === "GET") {
+      if ((fileApi || explicitFiles || image) && request.method === "GET") {
         const site = request.headers.get("sec-fetch-site");
         if (site !== null && site !== "same-origin" && site !== "none") throw new RelayError("FORBIDDEN", "이 화면에서 보낸 파일 조회만 받습니다.", 2, 403);
       }
       if (request.method === "POST" && (fileApi || explicitFiles || dataApi)) {
-        const limit = /\/(import|save)$/.test(url.pathname) ? MAX_IMPORT_BYTES : 8 * 1024 * 1024;
+        const limit = /\/(import|save)$/.test(url.pathname) ? MAX_IMPORT_BYTES : image ? MAX_IMAGE_UPLOAD_BYTES : 8 * 1024 * 1024;
         checkWrite(request, config.webPort, limit);
         const reader = request.body?.getReader();
         const chunks: Uint8Array[] = []; let total = 0;
@@ -103,6 +106,12 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
       }
       // 파일 HTML/SVG 같은 활성 콘텐츠에는 로컬 fileResponse와 같은 격리를 건다.
       if (url.pathname.endsWith("/content")) outgoing.set("Content-Security-Policy", "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+      // 메모 그림은 내용이 바뀌지 않으므로 원격 서버가 정한 보관 기간을 따르고, 문서로 열어도 아무것도 실행하지 않게 한다.
+      if (image && request.method === "GET") {
+        const cache = response.headers.get("cache-control");
+        if (cache) outgoing.set("Cache-Control", cache);
+        outgoing.set("Content-Security-Policy", "default-src 'none'; sandbox");
+      }
       return new Response(response.body, { status: response.status, headers: outgoing });
     } catch (error) {
       const failure = error instanceof RelayError ? error : new RelayError("INTERNAL_ERROR", "원격 요청을 처리하지 못했습니다.", 5, 500);

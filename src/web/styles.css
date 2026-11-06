@@ -975,6 +975,45 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .note-prose hr { margin: 1.3em 0; border: 0; border-top: 1px solid var(--border); }
 .note-prose hr.ProseMirror-selectednode { border-top-color: var(--notes-accent); }
 .note-prose img { max-width: 100%; border-radius: 8px; }
+/* 메모 그림: 본문 폭 안에서 원래 크기까지 보이고, 고르면 강조색 테두리가 둘린다 */
+.note-prose img.note-image { display: block; height: auto; margin: .9em 0; border-radius: 10px; background: var(--muted);
+  box-shadow: 0 0 0 1px var(--border), 0 1px 3px rgba(0, 0, 0, .08); }
+.ProseMirror-focused img.note-image.ProseMirror-selectednode { outline: 2px solid var(--notes-accent); outline-offset: 3px; }
+/* 올리는 동안: 고른 그림을 흐리게 미리 보이고 가운데에 유리 질감의 진행 표시를 얹는다 */
+.note-image-uploading { position: relative; display: flex; align-items: center; justify-content: center; width: fit-content; max-width: 100%;
+  min-width: 180px; min-height: 104px; margin: .9em 0; border-radius: 10px; overflow: hidden; background: var(--muted); box-shadow: 0 0 0 1px var(--border);
+  user-select: none; vertical-align: top; }
+.note-image-uploading img { display: block; max-width: 100%; max-height: 320px; border-radius: 0; opacity: .5; filter: saturate(.85); }
+.note-image-uploading-badge { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding: 6px 13px 6px 11px; border-radius: 999px;
+  font-size: var(--fs-12); font-weight: 500; line-height: 1.4; color: var(--foreground); white-space: nowrap;
+  background: color-mix(in srgb, var(--background) 76%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .14), 0 0 0 .5px var(--border); }
+.note-spinner { width: 13px; height: 13px; flex-shrink: 0; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--notes-accent) 24%, transparent);
+  border-top-color: var(--notes-accent); animation: note-spin .8s linear infinite; }
+@keyframes note-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .note-spinner { animation-duration: 2.4s; } }
+
+/* Mermaid 다이어그램: 카드 위쪽에 그림, 커서가 들어가면 아래에 코드가 열린다. 바탕은 다이어그램 테마(mermaid-frame.ts)와 같은 색이다 */
+.note-diagram { --diagram-bg: #f8f8fa; position: relative; margin: .9em 0; border-radius: 12px; background: var(--diagram-bg); overflow: hidden;
+  box-shadow: 0 0 0 1px var(--border); transition: box-shadow .15s ease-out; }
+.dark .note-diagram { --diagram-bg: #232326; }
+.note-diagram.is-editing, .ProseMirror-focused .note-diagram.ProseMirror-selectednode { box-shadow: 0 0 0 1.5px var(--notes-accent), 0 0 0 4.5px color-mix(in srgb, var(--notes-accent) 15%, transparent); }
+.note-diagram-preview { display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 76px; padding: 22px 20px; overflow-x: auto; justify-content: center;
+  scrollbar-width: thin; }
+.note-diagram-preview[title] { cursor: pointer; }
+.note-diagram-preview img { display: block; flex-shrink: 0; max-width: 100%; height: auto; border-radius: 0; transition: opacity .15s ease-out; }
+.note-diagram-message { margin: 0; font-size: var(--fs-12); line-height: 1.6; color: var(--muted-foreground); text-align: center; }
+.note-diagram[data-state="loading"] .note-diagram-message::before { content: ""; display: inline-block; width: 11px; height: 11px; margin: 0 8px -1px 0; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--notes-accent) 24%, transparent); border-top-color: var(--notes-accent); animation: note-spin .8s linear infinite; }
+.note-diagram[data-state="error"] .note-diagram-preview img { opacity: .3; }
+.note-diagram[data-state="error"] .note-diagram-message { align-self: stretch; padding: 9px 12px; border-radius: 8px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono); font-size: var(--fs-11); color: var(--destructive); background: color-mix(in srgb, var(--destructive) 8%, transparent); }
+.note-prose .note-diagram-source { display: none; margin: 0; border-radius: 0; box-shadow: none; }
+.note-diagram.is-editing .note-diagram-source, .note-diagram[data-state="empty"] .note-diagram-source, .note-diagram[data-state="error"] .note-diagram-source { display: block; }
+.note-diagram-source::before { content: "Mermaid"; float: right; margin-left: 12px; font-family: var(--font-sans); font-size: 10px; font-weight: 600; letter-spacing: .07em;
+  text-transform: uppercase; color: color-mix(in srgb, var(--terminal-fg) 42%, transparent); user-select: none; pointer-events: none; }
+/* 다이어그램을 그리는 숨은 틀(화면 밖). 크기를 재야 하므로 숨기지 않고 밖으로만 뺀다 */
+.mermaid-frame { position: fixed; top: 0; left: -10000px; width: 760px; height: 600px; border: 0; opacity: 0; pointer-events: none; }
 .note-prose .tableWrapper { margin: .9em 0; overflow-x: auto; }
 .note-prose table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-13); line-height: 1.6; }
 .note-prose th, .note-prose td { position: relative; min-width: 60px; padding: 6px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }

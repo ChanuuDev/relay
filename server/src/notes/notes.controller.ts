@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Headers, HttpCode, Post, Query, Res } from "@nestjs/common";
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { RelayError, exportFileName, parseBatch, parseExport } from "@relay/core";
+import { IMAGE_ID, RelayError, exportFileName, parseBatch, parseExport, parseExportImages, parseImageUpload } from "@relay/core";
 import { Auth, type AuthContext } from "../common/decorators.js";
 import { NotesService } from "./notes.service.js";
 
@@ -43,6 +43,28 @@ export class NotesController {
   @HttpCode(200)
   importAll(@Auth() auth: AuthContext, @Body() body: unknown, @Query() query: Record<string, unknown>) {
     noQuery(query, "메모 가져오기");
-    return this.notes.merge(auth.userId, parseExport(body));
+    return this.notes.merge(auth.userId, parseExport(body), parseExportImages(body));
+  }
+
+  /** 붙여 넣거나 고른 그림 한 장을 `{ data: base64 }`로 받는다. 돌려준 url을 본문에 넣는다. */
+  @Post("images")
+  @HttpCode(200)
+  saveImage(@Auth() auth: AuthContext, @Body() body: unknown, @Query() query: Record<string, unknown>) {
+    noQuery(query, "그림 올리기");
+    return this.notes.saveImage(auth.userId, Buffer.from(parseImageUpload(body).data, "base64"));
+  }
+
+  /** 그림 보기. id가 내용의 해시라 오래 보관해도 되고, 문서로 열어도 아무것도 실행하지 않게 격리한다. */
+  @Get("images/:id")
+  async image(@Auth() auth: AuthContext, @Param("id") id: string, @Query() query: Record<string, unknown>,
+    @Headers("if-none-match") ifNoneMatch: string | undefined, @Res() response: Response) {
+    noQuery(query, "그림 보기");
+    if (!IMAGE_ID.test(id)) throw new RelayError("INVALID_ARGUMENT", "그림 id가 올바르지 않습니다.");
+    const tag = `"${id}"`;
+    if (ifNoneMatch === tag) { response.status(304).setHeader("ETag", tag).setHeader("Cache-Control", "private, max-age=31536000, immutable").end(); return; }
+    const image = await this.notes.image(auth.userId, id);
+    if (!image) throw new RelayError("NOT_FOUND", "그림이 없습니다.", 3, 404);
+    response.setHeader("ETag", tag).setHeader("Cache-Control", "private, max-age=31536000, immutable").setHeader("Content-Type", image.type)
+      .setHeader("Content-Security-Policy", "default-src 'none'; sandbox").send(Buffer.from(image.data));
   }
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
-import { ready, useRelayServer } from "./web-helpers";
+import { env, ready, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -592,4 +592,124 @@ test("감사용 스크린샷: 서식 편집기와 Markdown 원문", async ({ pag
   await page.getByRole("button", { name: "Markdown", exact: true }).click();
   await page.waitForTimeout(200);
   await page.screenshot({ path: test.info().outputPath("notes-source-light.png") });
+});
+
+/** 캔버스로 그린 PNG를 실제 클립보드에 넣는다. 색이 다르면 다른 그림(다른 id)이다. */
+async function copyPicture(page: Page, color: string) {
+  await page.evaluate(async (fill) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 180;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = fill; context.fillRect(0, 0, 320, 180);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob! })]);
+  }, color);
+}
+const IMAGE = /!\[\]\(\/api\/v1\/notes\/images\/[0-9a-f]{64}\)/;
+
+test("메모 창: 붙여 넣은 그림은 서버에 올려 본문에 넣고, Mermaid 코드 블록은 다이어그램으로 그린다", async ({ page, context }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await ready(page);
+  await page.locator(dock("메모")).click();
+  const notes = page.locator(win("notes"));
+  await notes.getByRole("button", { name: "새 메모" }).first().click();
+  await expect(page.getByLabel("제목", { exact: true })).toBeFocused();
+  await page.keyboard.type("그림과 다이어그램");
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
+  await page.keyboard.type("캡처");
+  await page.keyboard.press("Enter");
+
+  // 화면 캡처처럼 그림만 든 클립보드를 붙여 넣으면 그 자리에 그림이 들어가고, 커서는 그림 다음 줄에 남는다.
+  await copyPicture(page, "#0f9478");
+  await page.keyboard.press("Control+V");
+  const image = notes.locator(".note-prose img.note-image");
+  await expect(image).toHaveAttribute("src", /^\/api\/v1\/notes\/images\/[0-9a-f]{64}$/);
+  await expect(notes.locator(".note-image-uploading")).toHaveCount(0);
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth)).toBe(320);
+  await page.keyboard.type("다음 줄");
+  const body = async () => ((await saved(page)).items as Array<{ title: string; body: string }>).find((entry) => entry.title === "그림과 다이어그램")?.body ?? "";
+  await expect.poll(body).toMatch(new RegExp(`^캡처\\n\\n${IMAGE.source}\\n\\n다음 줄`));
+  const src = (await image.getAttribute("src"))!;
+  const served = await page.request.get(env.url + src);
+  expect(served.status()).toBe(200);
+  expect(served.headers()["content-type"]).toBe("image/png");
+  expect(served.headers()["content-security-policy"]).toBe("default-src 'none'; sandbox");
+
+  // 도구 단추로 넣은 다이어그램은 코드가 열린 채 그려지고, Esc로 코드를 닫는다.
+  await page.keyboard.press("Enter");
+  await notes.getByRole("button", { name: "Mermaid 다이어그램 넣기" }).click();
+  const diagram = notes.locator(".note-diagram");
+  await expect(diagram).toHaveAttribute("data-state", "ready", { timeout: 30000 });
+  await expect(diagram.locator("img")).toHaveAttribute("src", /^blob:/);
+  await expect(diagram.locator("img")).toHaveAttribute("alt", "Mermaid 다이어그램 (flowchart LR)");
+  await expect(diagram).toHaveClass(/is-editing/);
+  await expect(diagram.locator(".note-diagram-source")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(diagram).not.toHaveClass(/is-editing/);
+  await expect(diagram.locator(".note-diagram-source")).toBeHidden();
+  await expect.poll(body).toContain("```mermaid\nflowchart LR\n  A[아이디어] --> B{검토}");
+
+  // 다이어그램을 누르면 코드가 다시 열리고, 문법이 틀리면 오류를 보이며 고치면 다시 그린다.
+  await diagram.locator(".note-diagram-preview").click();
+  await expect(diagram).toHaveClass(/is-editing/);
+  await page.keyboard.type(" -->");
+  await expect(diagram).toHaveAttribute("data-state", "error", { timeout: 15000 });
+  await expect(diagram.getByRole("alert")).toContainText(/Parse error|error/i);
+  for (let i = 0; i < 4; i++) await page.keyboard.press("Backspace");
+  await expect(diagram).toHaveAttribute("data-state", "ready", { timeout: 15000 });
+
+  // Markdown 보기에서도 그림을 붙여 넣으면 커서 자리에 그림 한 줄이 들어가고, 서식 보기로 돌아오면 그림 둘과 다이어그램이 보인다.
+  await notes.getByRole("button", { name: "Markdown", exact: true }).click();
+  const source = notes.locator("textarea#note-body");
+  await source.focus();
+  await source.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(element.value.length, element.value.length));
+  await copyPicture(page, "#3a6ff7");
+  await page.keyboard.press("Control+V");
+  await expect(source).toHaveValue(new RegExp(`\`\`\`\\n+${IMAGE.source}\\n$`));
+  await notes.getByRole("button", { name: "서식", exact: true }).click();
+  await expect(image).toHaveCount(2);
+  await expect(diagram).toHaveAttribute("data-state", "ready", { timeout: 30000 });
+
+  // 새로 고쳐도 그림과 다이어그램이 남는다.
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("메모")).click();
+  await item(page, "그림과 다이어그램").click();
+  await expect(image).toHaveCount(2);
+  await expect(diagram).toHaveAttribute("data-state", "ready", { timeout: 30000 });
+  await expect.poll(() => image.first().evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(320);
+  expect(errors).toEqual([]);
+});
+
+test("메모 창: 글과 그림이 함께 든 클립보드는 글을 붙이고, 그림 단추로 고른 파일은 커서 자리에 넣는다", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await seed(page, [{ id: "n", kind: "note", parentId: null, title: "표", body: "첫 줄" }], { selected: "n" });
+  const notes = page.locator(win("notes"));
+  await page.locator(".note-prose").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  // 엑셀처럼 글과 그 글을 찍은 그림을 함께 넣으면 글이 들어간다.
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas"); canvas.width = 10; canvas.height = 10;
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob!, "text/plain": new Blob(["가\t나"], { type: "text/plain" }) })]);
+  });
+  await page.keyboard.press("Control+V");
+  await expect(notes.locator(".note-prose")).toContainText("가");
+  await expect(notes.locator(".note-prose img.note-image")).toHaveCount(0);
+  // 그림 넣기 단추는 파일 고르기 창을 연다.
+  const chooser = page.waitForEvent("filechooser");
+  await notes.getByRole("button", { name: "그림 넣기" }).click();
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  await (await chooser).setFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
+  await expect(notes.locator(".note-prose img.note-image")).toHaveCount(1);
+  await expect.poll(async () => ((await saved(page)).items as Array<{ id: string; body: string }>).find((entry) => entry.id === "n")?.body).toMatch(IMAGE);
+  // 받지 않는 파일(글)은 안내만 보인다.
+  const again = page.waitForEvent("filechooser");
+  await notes.getByRole("button", { name: "그림 넣기" }).click();
+  await (await again).setFiles({ name: "note.png", mimeType: "image/png", buffer: Buffer.from("not really a picture") });
+  await expect(notes.locator(".notes-undo[role=alert]")).toContainText("그림을 넣지 못했습니다");
+  await expect(notes.locator(".note-prose img.note-image")).toHaveCount(1);
 });

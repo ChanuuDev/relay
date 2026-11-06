@@ -175,11 +175,13 @@ export function visibleRows(items: Items, expanded: Record<string, true>, map = 
   return rows;
 }
 
+/** 본문에 남는 그림 주소. 검색어가 주소나 해시에 걸리지 않도록 찾기 전에 걷어 낸다. */
+const IMAGE_URL = /\/api\/v1\/notes\/images\/[0-9a-f]{64}/g;
 /** 제목·본문·폴더 이름에서 찾는다. 대소문자는 가리지 않는다. */
 export function search(items: Items, query: string): Item[] {
   const needle = query.trim().toLocaleLowerCase("ko-KR");
   if (!needle) return [];
-  const hit = (text: string) => text.toLocaleLowerCase("ko-KR").includes(needle);
+  const hit = (text: string) => (text.includes("/api/v1/notes/images/") ? text.replace(IMAGE_URL, "") : text).toLocaleLowerCase("ko-KR").includes(needle);
   return Object.values(items)
     .filter((item) => (item.kind === "folder" ? hit(item.name) : hit(item.title) || hit(item.body)))
     .sort((a, b) => (a.kind !== b.kind ? (a.kind === "folder" ? -1 : 1)

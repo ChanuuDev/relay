@@ -5,19 +5,22 @@ import { openDatabase } from "../db/database";
 import { errorBody, RelayError } from "../errors";
 import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
-import { exportFileName, NoteStore, parseBatch, parseExport } from "../notes/notes.store";
+import { exportFileName, MAX_IMAGE_UPLOAD_BYTES, NOTE_IMAGES_PATH, NoteStore, parseBatch, parseExport, parseExportImages, parseImageUpload } from "../notes/notes.store";
 import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.store";
 import { copyToClipboard, deleteItems, fileResponse, listDirectory, makeFolder, openPath, pasteItems, places, renameItem, saveFile, statPath, systemLauncher, systemRemover, type FileClipboardWriter, type Launcher, type Remover } from "../files/files.service";
 import { api, parseAction } from "./api";
-import { assets } from "./assets";
+import { assets, mermaidFrameHtml } from "./assets";
 import { PID_HEADER, portFailure } from "./control";
-import { checkRequest, checkWrite, MAX_IMPORT_BYTES, playerHeaders, securityHeaders } from "./security";
+import { checkRequest, checkWrite, diagramHeaders, MAX_IMPORT_BYTES, playerHeaders, securityHeaders } from "./security";
 import { playerHtml, playerTarget } from "./youtube-player";
 import { PLAYER_PATH } from "./youtube-shared";
+import { MERMAID_FRAME_PATH } from "./lib/mermaid";
 
 export const NOTES_PATH = "/api/v1/notes";
 export const NOTES_EXPORT_PATH = "/api/v1/notes/export";
 export const NOTES_IMPORT_PATH = "/api/v1/notes/import";
+/** 메모 그림 한 장. 주소의 id는 내용의 sha256이라 내용이 바뀌지 않으므로 오래 보관해도 된다. */
+export const NOTE_IMAGE = /^\/api\/v1\/notes\/images\/([0-9a-f]{64})$/;
 export const FILES_PATH = "/api/v1/files";
 export const FILES_OPEN_PATH = "/api/v1/files/open";
 export const FILES_PASTE_PATH = "/api/v1/files/paste";
@@ -37,7 +40,7 @@ export const SESSION_ACTIONS = /^\/api\/v1\/sessions\/([^/]+)\/actions$/;
 
 /** 화면이 쓰는 저장소와 기능. 준 것만 그 경로가 열린다. */
 export interface Features {
-  /** 메모 저장(POST /api/v1/notes)·내보내기·가져오기(POST /api/v1/notes/import) */
+  /** 메모 저장(POST /api/v1/notes)·내보내기·가져오기(POST /api/v1/notes/import)·그림 올리기(POST /api/v1/notes/images)와 보기(GET /api/v1/notes/images/:id) */
   notes?: NoteStore;
   /** 로컬 디스크를 읽는 GET /api/v1/files*, 탐색기·기본 앱으로 넘기는 POST /api/v1/files/open, 복사·이동 POST /api/v1/files/paste, 휴지통 이동 POST /api/v1/files/delete,
    *  새 폴더 POST /api/v1/files/mkdir, 이름 바꾸기 POST /api/v1/files/rename, 시스템 파일 복사 POST /api/v1/files/clipboard, 뷰어 저장 POST /api/v1/files/save.
@@ -95,8 +98,31 @@ export function handler(service: SessionService, config: Config, { notes, files,
       checkWrite(request, config.webPort, MAX_IMPORT_BYTES);
       if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "메모 가져오기는 query를 받지 않습니다.");
       const target = store();
-      return Response.json(target.merge(parseExport(await readBody(request))), { headers });
+      const body = await readBody(request);
+      return Response.json(target.merge(parseExport(body), parseExportImages(body)), { headers });
     } catch (error) { return failed(error, "POST"); }
+  };
+  /** 붙여 넣거나 고른 그림 한 장을 base64 JSON으로 받는다. 쓰기 검사는 같고 크기 상한만 그림에 맞춘다. */
+  const saveImage = async (request: Request) => {
+    try {
+      checkWrite(request, config.webPort, MAX_IMAGE_UPLOAD_BYTES);
+      if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "그림 올리기는 query를 받지 않습니다.");
+      const target = store();
+      const { data } = parseImageUpload(await readBody(request));
+      return Response.json(target.saveImage(Buffer.from(data, "base64")), { headers });
+    } catch (error) { return failed(error, "POST"); }
+  };
+  /** 그림 보기. 파일 내용처럼 이 화면(같은 출처)에서만 읽고, 문서로 열어도 아무것도 실행하지 않게 격리한다. */
+  const readImage = (request: Request, url: URL, id: string) => {
+    const site = request.headers.get("sec-fetch-site");
+    if (site !== null && site !== "same-origin" && site !== "none") throw new RelayError("FORBIDDEN", "이 화면에서 보낸 요청만 받습니다.", 2, 403);
+    if (url.search) throw new RelayError("INVALID_ARGUMENT", "그림 보기는 query를 받지 않습니다.");
+    const tag = `"${id}"`;
+    const cache = { ETag: tag, "Cache-Control": "private, max-age=31536000, immutable" };
+    if (request.headers.get("if-none-match") === tag) return new Response(null, { status: 304, headers: { ...headers, ...cache } });
+    const image = store().image(id);
+    if (!image) throw new RelayError("NOT_FOUND", "그림이 없습니다.", 3, 404);
+    return new Response(image.data as Uint8Array<ArrayBuffer>, { headers: { ...headers, ...cache, "Content-Type": image.type, "Content-Security-Policy": "default-src 'none'; sandbox" } });
   };
   /** 탐색기에서 보기·기본 앱으로 열기. 메모 저장과 같은 쓰기 검사(같은 출처 JSON)를 거친다. */
   const openFile = async (request: Request) => {
@@ -165,14 +191,16 @@ export function handler(service: SessionService, config: Config, { notes, files,
       const notesPath = url.pathname === NOTES_PATH;
       const exportPath = Boolean(notes) && url.pathname === NOTES_EXPORT_PATH;
       const importPath = Boolean(notes) && url.pathname === NOTES_IMPORT_PATH;
+      const uploadPath = Boolean(notes) && url.pathname === NOTE_IMAGES_PATH;
+      const image = notes ? NOTE_IMAGE.exec(url.pathname) : null;
       const filesPath = Boolean(files) && (url.pathname === FILES_PATH || url.pathname.startsWith(`${FILES_PATH}/`));
       const actionPath = Boolean(writer) && SESSION_ACTIONS.test(url.pathname);
       const calculatorPath = Boolean(calculator) && url.pathname === CALCULATOR_PATH;
       if ((notesPath && notes) || calculatorPath) allow = "GET, POST";
-      if (importPath || actionPath || (filesPath && FILES_WRITE_PATHS.has(url.pathname))) allow = "POST";
+      if (importPath || uploadPath || actionPath || (filesPath && FILES_WRITE_PATHS.has(url.pathname))) allow = "POST";
       const player = url.pathname === PLAYER_PATH;
       checkRequest(request, config.webPort, { allowCrossSite: player });
-      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : actionPath ? "세션 정리" : filesPath && url.pathname === FILES_SAVE_PATH ? "저장" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
+      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : uploadPath ? "그림 올리기" : actionPath ? "세션 정리" : filesPath && url.pathname === FILES_SAVE_PATH ? "저장" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
       if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? `${calculatorPath ? "계산 이력" : "메모"}는 GET 조회와 POST 저장만 허용합니다.` : "GET 조회만 허용합니다.", 2, 405);
       if (notesPath) return listNotes(request, url);
       if (calculatorPath) {
@@ -180,8 +208,10 @@ export function handler(service: SessionService, config: Config, { notes, files,
         return Response.json(calculator!.list(), { headers });
       }
       if (exportPath) return exportNotes(url);
+      if (image) return readImage(request, url, image[1]!);
       if (filesPath) return readFiles(request, url);
       if (player) return new Response(playerHtml(playerTarget(url)), { headers: { ...playerHeaders(config.webPort), ...pid, "Content-Type": "text/html; charset=utf-8" } });
+      if (url.pathname === MERMAID_FRAME_PATH) return new Response(mermaidFrameHtml, { headers: { ...diagramHeaders(), ...pid, "Content-Type": "text/html; charset=utf-8" } });
       if (url.pathname.startsWith("/api/")) return Response.json(api(url, service, config), { headers });
       const asset = assets.get(/^\/sessions\/[^/]+$/.test(url.pathname) ? "/" : url.pathname);
       if (!asset) throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);
@@ -194,6 +224,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
       const pathname = new URL(request.url).pathname;
       if (notes && pathname === NOTES_PATH) return saveNotes(request);
       if (notes && pathname === NOTES_IMPORT_PATH) return importNotes(request);
+      if (notes && pathname === NOTE_IMAGES_PATH) return saveImage(request);
       if (files && pathname === FILES_OPEN_PATH) return openFile(request);
       if (files && FILES_CHANGE_PATHS.has(pathname)) return writeFiles(request, pathname);
       if (files && pathname === FILES_SAVE_PATH) return saveText(request);
@@ -212,10 +243,13 @@ export function startServer(config: Config) {
   const writeDb = openDatabase(config);
   const service = new SessionService(new SessionRepository(db));
   const writer = new SessionService(new SessionRepository(writeDb), config.retentionDays);
+  const notes = new NoteStore(writeDb);
+  // 어느 메모도 가리키지 않은 지 오래된 그림은 서버를 켤 때 정리한다. 실패해도 화면은 연다.
+  try { notes.pruneImages(); } catch { /* 다음에 켤 때 다시 정리한다. */ }
   let server;
   try {
     server = Bun.serve({ hostname: config.webHost, port: config.webPort,
-      fetch: handler(service, config, { notes: new NoteStore(writeDb), files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb) }),
+      fetch: handler(service, config, { notes, files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb) }),
       maxRequestBodySize: config.mode === "remote" ? 256 * 1024 * 1024 : MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
     db.close(); writeDb.close();

@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, check, doublePrecision, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, customType, doublePrecision, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const stamp = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
+/** node-postgres는 Buffer, PGlite는 Uint8Array로 돌려준다. 둘 다 Uint8Array로 다룬다. */
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({ dataType: () => "bytea" });
 
 /** 1인 모델: 부트스트랩 때 기본 사용자 1행. 계정 기능은 나중에 여기에 붙는다. */
 export const users = pgTable("users", {
@@ -89,6 +91,19 @@ export const notes = pgTable("notes", {
   index("notes_user_parent_idx").on(t.userId, t.parentId),
   check("notes_kind_check", sql`${t.kind} IN ('folder', 'note')`),
   check("notes_parent_check", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`),
+]);
+
+/** 메모에 붙인 그림. id는 내용의 sha256이며, 사용자마다 따로 둔다. 본문은 /api/v1/notes/images/<id>로 가리킨다. */
+export const noteImages = pgTable("note_images", {
+  userId: text("user_id").notNull().references(() => users.id),
+  id: text("id").notNull(),
+  type: text("type").notNull(),
+  size: integer("size").notNull(),
+  data: bytea("data").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.userId, t.id] }),
+  check("note_images_id_check", sql`length(${t.id}) = 64`),
 ]);
 
 export const notesMeta = pgTable("notes_meta", {

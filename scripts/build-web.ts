@@ -7,6 +7,12 @@ export async function buildWeb() {
     target: "browser", minify: true, define: { "process.env.NODE_ENV": '"production"' },
   });
   if (!result.success) throw new AggregateError(result.logs, "WEB JavaScript build failed");
+  // Mermaid(약 5MB)는 메모에 다이어그램이 있을 때만 숨은 틀이 받도록 따로 묶는다.
+  const diagram = await Bun.build({
+    entrypoints: ["src/web/mermaid-frame.ts"], outdir: "src/web/generated", naming: "mermaid-frame.js",
+    target: "browser", format: "esm", minify: true, define: { "process.env.NODE_ENV": '"production"' },
+  });
+  if (!diagram.success) throw new AggregateError(diagram.logs, "WEB diagram build failed");
   const css = Bun.spawn([process.execPath, "node_modules/@tailwindcss/cli/dist/index.mjs",
     "-i", "src/web/styles.css", "-o", "src/web/generated/style.css", "--minify"],
     { stdout: "inherit", stderr: "inherit" });

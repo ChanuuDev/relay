@@ -6,8 +6,8 @@ export type NoteItem =
   | { id: string; kind: "folder"; parentId: string | null; name: string; position: number | null; createdAt: number; updatedAt: number }
   | { id: string; kind: "note"; parentId: string | null; title: string; body: string; position: number | null; createdAt: number; updatedAt: number };
 export type NoteBatch = { upserts: NoteItem[]; deletes: string[] };
-/** 다른 환경으로 옮기는 파일. format은 Relay 메모 파일인지 알아보는 표지다. */
-export type NoteExport = { format: typeof EXPORT_FORMAT; schemaVersion: 1; exportedAt: string; items: NoteItem[] };
+/** 다른 환경으로 옮기는 파일. format은 Relay 메모 파일인지 알아보는 표지다. images는 메모가 가리키는 그림이며, 그림이 없으면 키를 넣지 않는다. */
+export type NoteExport = { format: typeof EXPORT_FORMAT; schemaVersion: 1; exportedAt: string; items: NoteItem[]; images?: NoteImageExport[] };
 /** 가져오기 결과. kept는 같거나 이 환경 쪽이 더 최근이라 그대로 둔 항목 수다. */
 export type NoteImportResult = { schemaVersion: 1; revision: number; added: number; updated: number; kept: number };
 export type NoteList = { schemaVersion: 1; revision: number; items: NoteItem[] };
@@ -79,6 +79,81 @@ export function parseExport(raw: unknown, now = Date.now()): NoteItem[] {
   const items = new Map<string, NoteItem>();
   data.items.forEach((value, index) => { const item = parseNoteItem(value, `items[${index}]`, now); items.set(item.id, item); });
   return [...items.values()];
+}
+
+// ── 메모 그림 ─────────────────────────────────────────────
+// 그림은 본문과 따로 저장하고 본문에는 `![](/api/v1/notes/images/<id>)`만 남긴다. id는 내용의 sha256(16진수 64자)이라
+// 같은 그림은 한 번만 저장되고, 내보낸 파일을 다른 환경에 합쳐도 서로 부딪히지 않는다.
+
+export const NOTE_IMAGES_PATH = "/api/v1/notes/images";
+/** 그림 한 장의 최대 크기(원본 바이트). 4K 화면 캡처 PNG도 들어간다. */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** 그림 올리기 요청 본문의 상한. base64는 원본의 4/3배라 여유를 둔다. */
+export const MAX_IMAGE_UPLOAD_BYTES = 16 * 1024 * 1024;
+export const IMAGE_ID = /^[0-9a-f]{64}$/;
+const IMAGE_REF = /\/api\/v1\/notes\/images\/([0-9a-f]{64})(?![0-9a-f])/g;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+export const noteImageUrl = (id: string) => `${NOTE_IMAGES_PATH}/${id}`;
+/** 올린 그림의 응답. url을 본문에 그대로 넣는다. */
+export type NoteImage = { schemaVersion: 1; id: string; type: NoteImageType; size: number; url: string };
+/** 내보낸 파일에 담는 그림. data는 base64다. */
+export type NoteImageExport = { id: string; type: NoteImageType; data: string };
+export type NoteImageType = "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/avif";
+
+/** 본문이 가리키는 그림 id(겹치지 않게). */
+export function imageIdsIn(text: string): string[] {
+  const ids = new Set<string>();
+  for (const match of text.matchAll(IMAGE_REF)) ids.add(match[1]!);
+  return [...ids];
+}
+
+/** 파일 머리의 서명으로 그림 형식을 알아낸다. 화면이 보낸 형식은 믿지 않으며, SVG처럼 스크립트를 담을 수 있는 형식은 받지 않는다. */
+export function imageTypeOf(bytes: Uint8Array): NoteImageType | null {
+  const at = (offset: number, ...values: number[]) => values.every((value, index) => bytes[offset + index] === value);
+  const text = (offset: number, value: string) => at(offset, ...[...value].map((char) => char.charCodeAt(0)));
+  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "image/png";
+  if (at(0, 0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (text(0, "GIF87a") || text(0, "GIF89a")) return "image/gif";
+  if (text(0, "RIFF") && text(8, "WEBP")) return "image/webp";
+  if (text(4, "ftyp") && (text(8, "avif") || text(8, "avis"))) return "image/avif";
+  return null;
+}
+
+/** 그림 한 장을 검사한다. 비었거나 크거나 받지 않는 형식이면 거부한다. */
+export function checkImage(bytes: Uint8Array): NoteImageType {
+  if (!bytes.length) throw new RelayError("INVALID_ARGUMENT", "그림이 비어 있습니다.");
+  if (bytes.length > MAX_IMAGE_BYTES) throw new RelayError("PAYLOAD_TOO_LARGE", `그림은 ${MAX_IMAGE_BYTES / 1024 / 1024}MB까지 넣을 수 있습니다.`, 2, 413);
+  const type = imageTypeOf(bytes);
+  if (!type) throw new RelayError("UNSUPPORTED_MEDIA_TYPE", "PNG·JPEG·GIF·WebP·AVIF 그림만 넣을 수 있습니다.", 2, 415);
+  return type;
+}
+
+const base64 = (value: unknown, field: string) => {
+  if (typeof value !== "string" || !value) throw new RelayError("INVALID_ARGUMENT", `${field}는 base64 문자열이어야 합니다.`);
+  if (value.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4) throw new RelayError("PAYLOAD_TOO_LARGE", `그림은 ${MAX_IMAGE_BYTES / 1024 / 1024}MB까지 넣을 수 있습니다.`, 2, 413);
+  if (value.length % 4 !== 0 || !BASE64.test(value)) throw new RelayError("INVALID_ARGUMENT", `${field}가 올바른 base64가 아닙니다.`);
+  return value;
+};
+
+/** 그림 올리기 본문 `{ data: base64 }`를 검사한다. 형식과 크기는 풀어 낸 바이트로 checkImage가 다시 본다. */
+export function parseImageUpload(raw: unknown): { data: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new RelayError("INVALID_ARGUMENT", "그림 올리기 본문은 객체여야 합니다.");
+  const keys = Object.keys(raw);
+  if (keys.some((key) => key !== "data")) throw new RelayError("INVALID_ARGUMENT", "그림 올리기 본문은 data만 받습니다.");
+  return { data: base64((raw as { data?: unknown }).data, "data") };
+}
+
+/** 내보낸 파일의 그림 목록(없어도 된다). id·data 모양만 보고, 내용이 id와 맞는지는 저장소가 해시로 확인한다. */
+export function parseExportImages(raw: unknown): Array<{ id: string; data: string }> {
+  const images = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as { images?: unknown }).images : undefined;
+  if (images === undefined) return [];
+  if (!Array.isArray(images)) throw new RelayError("INVALID_ARGUMENT", "images는 배열이어야 합니다.");
+  if (images.length > MAX_NOTE_IMPORT) throw new RelayError("INVALID_ARGUMENT", `한 번에 그림 ${MAX_NOTE_IMPORT}장까지 가져옵니다.`);
+  return images.map((value, index) => {
+    const entry = value && typeof value === "object" ? value as Record<string, unknown> : null;
+    if (!entry || typeof entry.id !== "string" || !IMAGE_ID.test(entry.id)) throw new RelayError("INVALID_ARGUMENT", `images[${index}].id가 올바르지 않습니다.`);
+    return { id: entry.id, data: base64(entry.data, `images[${index}].data`) };
+  });
 }
 
 /** 가져오기 병합 규칙: 없으면 넣고, 있으면 가져온 쪽이 더 최근에 고쳤을 때만 바꾸며, 종류가 다르거나 같으면 둔다. */

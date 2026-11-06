@@ -15,9 +15,9 @@ export async function migrate(config: Config, dryRun: boolean) {
       const service = new SessionService(new SessionRepository(db));
       const sessions = service.repo.rows("", [], Number.MAX_SAFE_INTEGER, 0);
       const updates = db.query(`SELECT id, session_id AS sessionId, sequence, summary, status, created_at AS createdAt FROM session_updates ORDER BY session_id, sequence`).all() as NonNullable<ImportRequest["updates"]>;
-      const notes = new NoteStore(db).exportAll().items;
+      const exported = new NoteStore(db).exportAll();
       const calculations = new CalculatorStore(db).list().items;
-      return { sessions, updates, notes, calculations };
+      return { sessions, updates, notes: exported.items, calculations, images: exported.images ?? [] };
     }).deferred();
     const counts = Object.fromEntries(Object.entries(data).map(([key, rows]) => [key, rows.length]));
     if (dryRun) return { schemaVersion: 1, dryRun: true, counts };
@@ -30,6 +30,8 @@ export async function migrate(config: Config, dryRun: boolean) {
         results.push(await client.json("/api/v1/import", { [key]: rows.slice(offset, offset + 1000) }, crypto.randomUUID()));
       }
     }
+    // 메모가 가리키는 그림은 한 장씩 올린다. id가 내용의 해시라 다시 올려도 한 장만 남는다.
+    for (const image of data.images) results.push(await client.json("/api/v1/notes/images", { data: image.data }, crypto.randomUUID()));
     return { schemaVersion: 1, dryRun: false, counts, results };
   } finally { db.close(); }
 }

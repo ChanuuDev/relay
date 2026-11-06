@@ -25,6 +25,17 @@ export function playerHeaders(port: number) {
   };
 }
 
+/** Mermaid 다이어그램을 그리는 숨은 틀의 보안 헤더. mermaid가 SVG에 넣는 <style>·style 속성으로 글자 크기를 재므로 인라인 스타일만 더 허용한다.
+ *  스크립트는 이 서버의 것만 쓰고 바깥과 연결하지 않으며, 이 화면(같은 출처)만 틀로 넣을 수 있다. */
+export function diagramHeaders() {
+  return {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+    "Referrer-Policy": "no-referrer",
+  };
+}
+
 /** 메모 저장 한 번에 받는 최대 크기. 본문 하나는 20만 자까지라 여러 메모를 함께 보내도 넉넉하다. */
 export const MAX_WRITE_BYTES = 8 * 1024 * 1024;
 /** 메모 가져오기 한 번에 받는 최대 크기. 내보낸 파일 하나를 통째로 받으므로 저장 묶음보다 크다. 서버 전체의 본문 상한이기도 하다. */

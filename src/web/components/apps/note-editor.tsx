@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
@@ -8,14 +8,17 @@ import { Image } from "@tiptap/extension-image";
 import { Placeholder } from "@tiptap/extensions";
 import { Popover } from "radix-ui";
 import {
-  Bold, Code, Download, Heading1, Heading2, Heading3, Italic, Link, List, ListOrdered, ListTodo, Minus, Pilcrow, Redo2, SquareCode, Strikethrough, Table, TextQuote, Undo2, Unlink,
-  type LucideIcon,
+  Bold, Code, Download, Heading1, Heading2, Heading3, ImagePlus, Italic, Link, List, ListOrdered, ListTodo, Minus, Pilcrow, Redo2, SquareCode, Strikethrough, Table, TextQuote, Undo2, Unlink,
+  Workflow, type LucideIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { focusMenuOnOpen, followPointer } from "../desktop/menu";
 import { fileNameOf, labelOf, markdownFile, useNoteMode, useNotes, type Note } from "../../lib/notes";
+import { IMAGE_ACCEPT, imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
+import { DIAGRAM_SAMPLE } from "../../lib/mermaid";
+import { NoteCodeBlock, NoteImageUpload, appendToNote, insertDiagram, insertImages } from "./note-extensions";
 
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 const SHIFT = MOD === "⌘" ? "⇧" : "Shift+";
@@ -27,10 +30,13 @@ const BLOCKS: Array<{ value: Block; label: string; icon: LucideIcon }> = [
   { value: "h2", label: "제목 2", icon: Heading2 }, { value: "h3", label: "제목 3", icon: Heading3 },
 ];
 
-/** 본문은 Markdown으로 읽고 쓴다. 한 줄 바꿈도 줄바꿈으로 읽어(breaks) 예전 평문 메모의 줄이 합쳐지지 않는다. */
+/** 본문은 Markdown으로 읽고 쓴다. 한 줄 바꿈도 줄바꿈으로 읽어(breaks) 예전 평문 메모의 줄이 합쳐지지 않는다.
+ *  ```mermaid 코드 블록은 다이어그램으로 보인다(파일 뷰어의 Markdown 보기도 같은 확장을 쓴다). */
 export const extensions = [
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
+    // 코드 블록은 Mermaid 다이어그램을 그리는 NoteCodeBlock으로 바꾼다.
+    codeBlock: false,
     // 밑줄은 Markdown 표준 문법이 없어 뺀다.
     underline: false,
     link: { openOnClick: false, autolink: true, linkOnPaste: true, defaultProtocol: "https", HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" } },
@@ -38,11 +44,28 @@ export const extensions = [
   TaskList,
   TaskItem.configure({ nested: true }),
   TableKit.configure({ table: { resizable: false } }),
-  // 외부 그림은 CSP가 막지만, 원문에 있는 그림 문법은 서식 보기를 오가도 잃지 않게 둔다.
-  Image,
+  NoteCodeBlock,
+  // 메모 그림은 Relay 서버(/api/v1/notes/images)에 있다. 외부 그림은 CSP가 막지만, 원문에 있는 그림 문법은 서식 보기를 오가도 잃지 않게 둔다.
+  Image.configure({ HTMLAttributes: { class: "note-image", loading: "lazy", decoding: "async" } }),
   Placeholder.configure({ placeholder: "내용을 입력하세요" }),
   Markdown.configure({ markedOptions: { gfm: true, breaks: true }, indentation: { style: "space", size: 2 } }),
 ];
+/** 메모 편집기는 그림 붙여넣기·끌어 놓기도 받는다. */
+const noteExtensions = [...extensions, NoteImageUpload];
+
+/** Markdown 원문 칸의 커서 자리에 글을 넣는다. 브라우저의 되돌리기 기록에 남도록 insertText를 먼저 쓴다. */
+function insertAtCaret(source: HTMLTextAreaElement, text: string, onChange: (value: string) => void) {
+  source.focus();
+  if (!document.execCommand("insertText", false, text)) {
+    source.setRangeText(text, source.selectionStart, source.selectionEnd, "end");
+    onChange(source.value);
+  }
+}
+/** 블록(그림 한 줄·코드 블록)은 제 줄에 놓이도록 앞뒤에 줄을 바꾼다. */
+const asBlock = (source: HTMLTextAreaElement, text: string) => {
+  const before = source.value.slice(0, source.selectionStart);
+  return `${before && !before.endsWith("\n") ? "\n" : ""}${text}\n`;
+};
 
 /** 위쪽 서식 도구와 아래쪽 입력 창. 서식 보기에서는 고친 내용을 Markdown으로 바꿔 저장한다. */
 export function NoteDocument({ note }: { note: Note }) {
@@ -52,8 +75,9 @@ export function NoteDocument({ note }: { note: Note }) {
   // 이 창이 마지막으로 저장한 본문. 다른 곳(다른 탭·되살리기)에서 바뀐 본문만 편집기에 다시 넣는다.
   const emitted = useRef(note.body);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const editor = useEditor({
-    extensions,
+    extensions: noteExtensions,
     content: note.body,
     contentType: "markdown",
     // CSP(style-src 'self')가 인라인 <style>을 막으므로 기본 CSS는 styles.css에 옮겨 두었다.
@@ -77,6 +101,9 @@ export function NoteDocument({ note }: { note: Note }) {
     },
   }, [mode === "rich"]);
 
+  // 그림을 올리는 사이 편집기가 닫히면 이 메모 끝에 붙인다.
+  useEffect(() => { if (editor) editor.storage.noteImageUpload.noteId = note.id; }, [editor, note.id]);
+
   useEffect(() => {
     if (mode !== "rich" || !editor || note.body === emitted.current) return;
     emitted.current = note.body;
@@ -87,6 +114,47 @@ export function NoteDocument({ note }: { note: Note }) {
     if (mode === "rich") editor?.commands.focus(at);
     else { const source = sourceRef.current; source?.focus(); if (source && at === "end") source.setSelectionRange(source.value.length, source.value.length); }
   }
+  const setSource = (value: string) => { emitted.current = value; update(note.id, { body: value }); };
+  /** Markdown 원문 칸에 그림을 넣는다. 한 장씩 올리고, 그사이 칸이 닫히면 메모 끝에 붙인다. */
+  async function insertSourceImages(files: File[]) {
+    const failures: unknown[] = [];
+    for (const file of files) {
+      let url: string;
+      try { url = await uploadImage(file); } catch (error) { failures.push(error); continue; }
+      const source = sourceRef.current;
+      if (source?.isConnected) insertAtCaret(source, asBlock(source, imageMarkdown(url)), setSource);
+      else appendToNote(note.id, url);
+    }
+    if (failures.length) useNoteAlert.getState().say(uploadFailure(failures[0], files.length));
+  }
+  function addImages(files: File[]) {
+    if (!files.length) return;
+    if (mode === "rich" && editor) { editor.commands.focus(); void insertImages(editor, files); }
+    else void insertSourceImages(files);
+  }
+  function addDiagram() {
+    if (mode === "rich" && editor) { insertDiagram(editor); return; }
+    const source = sourceRef.current;
+    if (source) insertAtCaret(source, asBlock(source, `\`\`\`mermaid\n${DIAGRAM_SAMPLE}\n\`\`\``), setSource);
+  }
+  function pickImages(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    addImages(files);
+  }
+  function pasteSource(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = imageFilesOf(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    void insertSourceImages(files);
+  }
+  function dropSource(event: DragEvent<HTMLTextAreaElement>) {
+    const files = imageFilesOf(event.dataTransfer, false);
+    if (!files.length) return;
+    event.preventDefault();
+    void insertSourceImages(files);
+  }
+
   function download() {
     const url = URL.createObjectURL(new Blob([markdownFile(note)], { type: "text/markdown;charset=utf-8" }));
     const link = document.createElement("a");
@@ -96,7 +164,9 @@ export function NoteDocument({ note }: { note: Note }) {
   }
 
   return <>
-    <FormatToolbar editor={mode === "rich" ? editor : null} mode={mode} onMode={(next) => { emitted.current = note.body; setMode(next); }} onDownload={download} />
+    <FormatToolbar editor={mode === "rich" ? editor : null} mode={mode} onMode={(next) => { emitted.current = note.body; setMode(next); }} onDownload={download}
+      onImage={() => fileRef.current?.click()} onDiagram={addDiagram} />
+    <input ref={fileRef} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={pickImages} data-testid="note-image-file" />
     <div className="note-scroll" onMouseDown={(event) => {
       // 본문 아래 빈 곳을 누르면 본문 끝에 커서를 둔다.
       if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains("note-sheet")) { event.preventDefault(); focusBody("end"); }
@@ -109,14 +179,15 @@ export function NoteDocument({ note }: { note: Note }) {
           ? <EditorContent editor={editor} className="note-rich" />
           : <textarea id="note-body" ref={sourceRef} className="note-source" value={note.body} aria-label="본문" spellCheck={false}
               placeholder={"# 제목\n\n**굵게**, *기울임*, `코드`\n- 목록\n- [ ] 할 일"}
-              onChange={(event) => { emitted.current = event.target.value; update(note.id, { body: event.target.value }); }} />}
+              onChange={(event) => setSource(event.target.value)} onPaste={pasteSource} onDrop={dropSource}
+              onDragOver={(event) => { if (Array.from(event.dataTransfer.items).some((item) => item.kind === "file")) event.preventDefault(); }} />}
       </div>
     </div>
   </>;
 }
 
-function FormatToolbar({ editor, mode, onMode, onDownload }: {
-  editor: Editor | null; mode: "rich" | "source"; onMode: (mode: "rich" | "source") => void; onDownload: () => void;
+function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onDiagram }: {
+  editor: Editor | null; mode: "rich" | "source"; onMode: (mode: "rich" | "source") => void; onDownload: () => void; onImage: () => void; onDiagram: () => void;
 }) {
   const state = useEditorState({
     editor,
@@ -165,6 +236,12 @@ function FormatToolbar({ editor, mode, onMode, onDownload }: {
     <div className="format-group">
       <LinkTool editor={editor} active={Boolean(state?.link)} disabled={off || state.codeBlock} />
       <TableTool editor={editor} active={Boolean(state?.table)} disabled={off} />
+    </div>
+    <span className="format-sep" aria-hidden="true" />
+    <div className="format-group">
+      {/* 그림과 다이어그램은 Markdown 보기에서도 커서 자리에 넣는다. */}
+      <Tool icon={ImagePlus} label="그림 넣기" disabled={mode === "rich" && (off || state.codeBlock)} onClick={onImage} />
+      <Tool icon={Workflow} label="Mermaid 다이어그램 넣기" disabled={mode === "rich" && (off || state.codeBlock)} onClick={onDiagram} />
     </div>
     <div className="format-end">
       <div className="format-mode" role="group" aria-label="보기">

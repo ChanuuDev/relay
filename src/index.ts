@@ -14,7 +14,7 @@ import { gitClue } from "./git";
 import { SESSION_COMPACT_PROMPT, SESSION_START_PROMPT } from "./hooks/context";
 import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { transcriptModels } from "./hooks/transcript";
-import { EXPORT_FORMAT, NoteStore, parseExport } from "./notes/notes.store";
+import { EXPORT_FORMAT, NoteStore, parseExport, parseExportImages, type NoteItem } from "./notes/notes.store";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
@@ -170,20 +170,23 @@ notes.command("export <file>").description("모든 메모와 폴더를 JSON 파�
   }));
 notes.command("import <file>").description("내보낸 JSON 파일의 메모를 합침. 없는 항목은 넣고, 같은 항목은 더 최근에 고친 쪽을 남기며 아무것도 지우지 않음")
   .action((file: string, _o, c: Command) => {
-    const items = parseExport(readExport(path.resolve(file)));
+    const raw = readExport(path.resolve(file));
+    const items = parseExport(raw);
+    const images = parseExportImages(raw);
     return withNotes(c, true, async store => {
-      const result = await store.merge(items);
+      const result = await store.merge(items, images);
       return [result, `메모를 가져왔습니다: 추가 ${result.added} · 갱신 ${result.updated} · 그대로 ${result.kept}`];
     });
   });
 
 /** 메모 저장소를 열어 한 가지 일을 하고 닫는다. --json이면 결과 객체를, 아니면 한 줄 안내를 stdout에 쓴다. */
-async function withNotes(command: Command, write: boolean, action: (store: Pick<NoteStore, "exportAll" | "merge"> | { exportAll: () => Promise<ReturnType<NoteStore["exportAll"]>>; merge: (items: Parameters<NoteStore["merge"]>[0]) => Promise<ReturnType<NoteStore["merge"]>> }) => Promise<[unknown, string]>) {
+type ExportedImages = ReturnType<typeof parseExportImages>;
+async function withNotes(command: Command, write: boolean, action: (store: Pick<NoteStore, "exportAll" | "merge"> | { exportAll: () => Promise<ReturnType<NoteStore["exportAll"]>>; merge: (items: NoteItem[], images?: ExportedImages) => Promise<ReturnType<NoteStore["merge"]>> }) => Promise<[unknown, string]>) {
   const config = loadConfig(command.optsWithGlobals().dataDir);
   const db = config.mode === "remote" ? null : openDatabase(config, !write);
   const client = new RemoteClient(config);
   let output: [unknown, string];
-  try { output = await action(db ? new NoteStore(db) : { exportAll: () => client.json<ReturnType<NoteStore["exportAll"]>>("/api/v1/notes/export"), merge: items => client.json("/api/v1/notes/import", { format: EXPORT_FORMAT, schemaVersion: 1, items }) }); } finally { db?.close(); }
+  try { output = await action(db ? new NoteStore(db) : { exportAll: () => client.json<ReturnType<NoteStore["exportAll"]>>("/api/v1/notes/export"), merge: (items: NoteItem[], images: ExportedImages = []) => client.json<ReturnType<NoteStore["merge"]>>("/api/v1/notes/import", { format: EXPORT_FORMAT, schemaVersion: 1, items, ...(images.length ? { images } : {}) }) }); } finally { db?.close(); }
   process.stdout.write(`${command.optsWithGlobals().json ? JSON.stringify(output[0]) : output[1]}\n`);
 }
 

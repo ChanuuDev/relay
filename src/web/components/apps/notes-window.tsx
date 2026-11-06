@@ -12,6 +12,7 @@ import {
   childMap, exportNotes, importNotes, isWithin, labelOf, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type Row,
 } from "../../lib/notes";
+import { useNoteAlert } from "../../lib/note-images";
 
 const DRAG_TYPE = "application/x-relay-note";
 const UNDO_MS = 8000;
@@ -70,6 +71,13 @@ export function NotesWindow() {
     const timer = setTimeout(dismissTrash, UNDO_MS);
     return () => clearTimeout(timer);
   }, [trash, dismissTrash]);
+  // 편집기에서 생긴 안내(그림을 올리지 못함 등)는 아래 안내로 보인다. 내보내기·가져오기가 진행 중이면 그 안내를 가리지 않는다.
+  const alert = useNoteAlert((state) => state.alert);
+  useEffect(() => {
+    if (!alert) return;
+    useNoteAlert.getState().clear();
+    setNotice((current) => (current?.tone === "progress" ? current : { tone: "error", text: alert.text }));
+  }, [alert]);
   useEffect(() => {
     if (notice?.tone !== "done") return;
     const timer = setTimeout(() => setNotice(null), UNDO_MS);

@@ -1,10 +1,17 @@
 import type { Database } from "bun:sqlite";
-import { EXPORT_FORMAT, type NoteBatch, type NoteExport, type NoteImportResult, type NoteItem, mergeDecision } from "@relay/core";
+import { createHash } from "node:crypto";
+import { EXPORT_FORMAT, checkImage, imageIdsIn, mergeDecision, noteImageUrl, type NoteBatch, type NoteExport, type NoteImage, type NoteImageExport,
+  type NoteImageType, type NoteImportResult, type NoteItem } from "@relay/core";
 import { storageError } from "../errors";
 
 // 메모 항목의 모양·검사·내보내기 파일 규칙은 원격 서버와 같이 쓰므로 공용 코어에 있다. 여기에는 SQLite 저장소만 남긴다.
-export { EXPORT_FORMAT, MAX_BODY, MAX_NAME, exportFileName, parseBatch, parseExport, type NoteBatch, type NoteExport, type NoteItem } from "@relay/core";
+export { EXPORT_FORMAT, IMAGE_ID, MAX_BODY, MAX_IMAGE_UPLOAD_BYTES, MAX_NAME, NOTE_IMAGES_PATH, exportFileName, parseBatch, parseExport, parseExportImages, parseImageUpload,
+  type NoteBatch, type NoteExport, type NoteItem } from "@relay/core";
 export type ImportResult = NoteImportResult;
+
+/** 쓰는 사람이 없는 그림을 지우기까지 기다리는 시간. 지운 메모를 되살리거나 아직 보내지 못한 변경이 그 그림을 다시 가리킬 수 있다. */
+export const IMAGE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 type Row = { id: string; kind: "folder" | "note"; parent_id: string | null; name: string; title: string; body: string; position: number | null; created_at: number; updated_at: number };
 
@@ -46,16 +53,82 @@ export class NoteStore {
     } catch (error) { throw storageError(error); }
   }
 
-  /** 다른 환경으로 옮길 파일. 목록과 같은 항목에 표지와 만든 시각을 붙인다. */
+  /** 다른 환경으로 옮길 파일. 목록과 같은 항목에 표지와 만든 시각을 붙이고, 메모가 가리키는 그림을 base64로 담는다. */
   exportAll(now = new Date()): NoteExport {
-    return { format: EXPORT_FORMAT, schemaVersion: 1, exportedAt: now.toISOString(), items: this.list().items };
+    try {
+      return this.db.transaction(() => {
+        const { items } = this.list();
+        const images = this.exportImages(items);
+        const file: NoteExport = { format: EXPORT_FORMAT, schemaVersion: 1, exportedAt: now.toISOString(), items };
+        if (images.length) file.images = images;
+        return file;
+      })();
+    } catch (error) { throw storageError(error); }
+  }
+
+  /** 메모가 가리키는 그림(저장된 것만). */
+  exportImages(items: NoteItem[]): NoteImageExport[] {
+    const ids = new Set(items.flatMap((item) => (item.kind === "note" ? imageIdsIn(item.body) : [])));
+    const find = this.db.query("SELECT id, type, data FROM note_images WHERE id = ?");
+    const images: NoteImageExport[] = [];
+    for (const id of ids) {
+      const row = find.get(id) as { id: string; type: NoteImageType; data: Uint8Array } | null;
+      if (row) images.push({ id: row.id, type: row.type, data: Buffer.from(row.data).toString("base64") });
+    }
+    return images;
+  }
+
+  /** 그림을 저장한다. 같은 내용이면 이미 있는 것을 그대로 쓴다. */
+  saveImage(bytes: Uint8Array, now = Date.now()): NoteImage {
+    const type = checkImage(bytes);
+    const id = sha256(bytes);
+    try {
+      this.db.query("INSERT INTO note_images (id, type, size, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING").run(id, type, bytes.length, bytes, now);
+    } catch (error) { throw storageError(error); }
+    return { schemaVersion: 1, id, type, size: bytes.length, url: noteImageUrl(id) };
+  }
+
+  image(id: string): { type: NoteImageType; data: Uint8Array } | null {
+    try { return this.db.query("SELECT type, data FROM note_images WHERE id = ?").get(id) as { type: NoteImageType; data: Uint8Array } | null; }
+    catch (error) { throw storageError(error); }
+  }
+
+  /** 가져온 그림을 넣는다. 내용의 해시가 id와 다르거나 받지 않는 형식이면 버린다. 넣은 수를 돌려준다. */
+  mergeImages(images: Array<{ id: string; data: string }>, now = Date.now()): number {
+    let added = 0;
+    const insert = this.db.query("INSERT INTO note_images (id, type, size, data, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING");
+    for (const image of images) {
+      const bytes = Buffer.from(image.data, "base64");
+      let type: NoteImageType;
+      try { type = checkImage(bytes); } catch { continue; }
+      if (sha256(bytes) !== image.id) continue;
+      added += insert.run(image.id, type, bytes.length, bytes, now).changes;
+    }
+    return added;
+  }
+
+  /** 어느 메모도 가리키지 않은 채 IMAGE_GRACE_MS가 지난 그림을 지운다. 지운 수를 돌려준다. */
+  pruneImages(now = Date.now()): number {
+    try {
+      return this.db.transaction(() => {
+        const used = new Set((this.db.query("SELECT body FROM notes WHERE kind = 'note' AND instr(body, '/api/v1/notes/images/') > 0").all() as Array<{ body: string }>)
+          .flatMap((row) => imageIdsIn(row.body)));
+        const remove = this.db.query("DELETE FROM note_images WHERE id = ?");
+        let removed = 0;
+        for (const { id } of this.db.query("SELECT id FROM note_images WHERE created_at < ?").all(now - IMAGE_GRACE_MS) as Array<{ id: string }>) {
+          if (!used.has(id)) removed += remove.run(id).changes;
+        }
+        return removed;
+      })();
+    } catch (error) { throw storageError(error); }
   }
 
   /** 가져온 항목을 합친다. 없는 항목은 넣고, 있는 항목은 가져온 쪽이 더 최근에 고쳤을 때만 바꾸며, 아무것도 지우지 않는다.
    *  id가 같아도 종류가 다르면 이 환경의 것을 둔다. 바뀐 것이 없으면 저장 번호도 그대로다. */
-  merge(items: NoteItem[]): ImportResult {
+  merge(items: NoteItem[], images: Array<{ id: string; data: string }> = []): ImportResult {
     try {
       return this.db.transaction(() => {
+        this.mergeImages(images);
         const find = this.db.query("SELECT id, kind, parent_id, name, title, body, position, created_at, updated_at FROM notes WHERE id = ?");
         const changes: NoteItem[] = [];
         let added = 0, kept = 0;
