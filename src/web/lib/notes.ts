@@ -230,7 +230,8 @@ interface NotesState extends Saved {
   sync: NotesSync;
   select: (id: string | null) => void;
   setExpanded: (id: string, open: boolean) => void;
-  createNote: (parentId: string | null) => string;
+  /** 새 메모를 parentId 폴더 맨 위에 만든다. init을 주면 그 제목·본문으로 시작한다(끌어 놓은 글 파일). */
+  createNote: (parentId: string | null, init?: { title: string; body: string }) => string;
   createFolder: (parentId: string | null) => string;
   startRename: (id: string | null) => void;
   rename: (id: string, name: string) => void;
@@ -280,14 +281,14 @@ export const useNotes = create<NotesState>((set, get) => ({
     if (open) expanded[id] = true; else delete expanded[id];
     return { expanded };
   }),
-  createNote: (parentId) => {
+  createNote: (parentId, init) => {
     const id = newId();
     const now = Date.now();
     set((state) => {
       const items = leave(state.items, state.selected, id);
       const parent = parentId !== null && items[parentId]?.kind === "folder" ? parentId : null;
       // 새 메모는 그 폴더의 맨 위에 생긴다.
-      const next = { ...items, [id]: { id, kind: "note", parentId: parent, title: "", body: "", position: topPosition(items, parent), createdAt: now, updatedAt: now } satisfies Note };
+      const next = { ...items, [id]: { id, kind: "note", parentId: parent, title: init?.title.slice(0, MAX_TITLE) ?? "", body: init?.body.slice(0, MAX_BODY) ?? "", position: topPosition(items, parent), createdAt: now, updatedAt: now } satisfies Note };
       return { items: next, selected: id, renaming: null, expanded: reveal(next, state.expanded, parent) };
     });
     return id;

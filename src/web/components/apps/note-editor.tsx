@@ -12,7 +12,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { focusMenuOnOpen, followPointer } from "../desktop/menu";
 import { fileNameOf, labelOf, markdownFile, useNoteMode, useNotes, type Note } from "../../lib/notes";
 import { IMAGE_ACCEPT, imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
-import { NoteImageUpload, appendToNote, insertImages } from "./note-extensions";
+import { joinTexts, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
+import { NoteImageUpload, appendTextToNote, appendToNote, insertImages } from "./note-extensions";
 import { markdownExtensions } from "./markdown";
 import { alignColumn, insertRich, sourceSnippet, type InsertKind } from "./markdown/insert";
 
@@ -146,11 +147,26 @@ export function NoteDocument({ note }: { note: Note }) {
     event.preventDefault();
     void insertSourceImages(files);
   }
+  /** Markdown 원문 칸에 끌어 놓은 글 파일(.txt·.md)의 내용만 커서 자리에 넣는다. 그사이 칸이 닫히면 메모 끝에 붙인다. */
+  async function insertSourceTexts(files: File[]) {
+    const { texts, failures } = await readTextFiles(files);
+    if (failures.length) useNoteAlert.getState().say(textFailure(failures));
+    const text = joinTexts(texts);
+    if (!text) return;
+    const source = sourceRef.current;
+    if (source?.isConnected) insertAtCaret(source, text, setSource);
+    else appendTextToNote(note.id, text);
+  }
   function dropSource(event: DragEvent<HTMLTextAreaElement>) {
     const files = imageFilesOf(event.dataTransfer, false);
-    if (!files.length) return;
+    const texts = textFilesOf(event.dataTransfer.files);
+    if (!files.length && !texts.length) return;
     event.preventDefault();
-    void insertSourceImages(files);
+    // 파일을 놓으면 브라우저가 커서를 옮기지 않으므로, 놓은 자리를 알 수 있으면 그곳에 커서를 둔다.
+    const caret = document.caretPositionFromPoint?.(event.clientX, event.clientY);
+    if (caret?.offsetNode === event.currentTarget) { event.currentTarget.focus(); event.currentTarget.setSelectionRange(caret.offset, caret.offset); }
+    if (texts.length) void insertSourceTexts(texts);
+    if (files.length) void insertSourceImages(files);
   }
 
   function download() {

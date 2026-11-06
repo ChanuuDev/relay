@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { cli, env, ready, useRelayServer } from "./web-helpers";
 
 useRelayServer();
@@ -411,6 +411,82 @@ test("메모 창: 위쪽 서식 도구로 서식을 넣으면 아래 입력 창�
   expect(file.startsWith("# 서식 연습\n\n## 원문에서 고침\n")).toBe(true);
   // 편집기가 인라인 <style>을 넣지 않는다(CSP style-src 'self').
   expect(await page.locator("style[data-tiptap-style]").count()).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+type DropFile = { name: string; text?: string; bytes?: number[]; type?: string };
+/** 탐색기에서 파일을 끌어 놓듯 element의 (fx, fy) 비율 자리에 dragenter·dragover·drop을 차례로 보낸다. fy가 "line1"이면 글 칸의 첫 줄 높이다.
+ *  stop이 "over"면 놓기 전에 멈춘다. */
+async function dropFiles(target: Locator, files: DropFile[], at: { fx?: number; fy?: number | "line1" } = {}, stop: "over" | "drop" = "drop") {
+  await target.evaluate((element, [list, fx, fy, end]) => {
+    const data = new DataTransfer();
+    for (const file of list) data.items.add(new File([file.bytes ? new Uint8Array(file.bytes) : file.text ?? ""], file.name, { type: file.type ?? "" }));
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const y = fy === "line1" ? rect.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop) + parseFloat(style.lineHeight) / 2 : rect.top + rect.height * fy;
+    const init = { bubbles: true, cancelable: true, dataTransfer: data, clientX: rect.left + rect.width * fx, clientY: y };
+    element.dispatchEvent(new DragEvent("dragenter", init));
+    element.dispatchEvent(new DragEvent("dragover", init));
+    if (end === "drop") element.dispatchEvent(new DragEvent("drop", init));
+  }, [files, at.fx ?? 0.5, at.fy ?? 0.5, stop] as const);
+}
+
+test("메모 창: 트리에 끌어 놓은 txt·md 파일은 그 자리에 메모가 되고, 본문 칸에 놓으면 내용만 들어간다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"] });
+  const notes = page.locator(win("notes"));
+  const order = () => notes.getByRole("treeitem").evaluateAll((rows) => rows.map((row) => `${row.getAttribute("aria-level")}:${row.getAttribute("aria-label")}`));
+  const stored = async (title: string) => ((await saved(page)).items as Array<{ title: string; body: string; parentId: string | null }>).find((entry) => entry.title === title);
+
+  // 폴더 가운데로 끌고 오면 그 폴더가 놓을 곳으로 보이고, 놓으면 파일마다 메모가 그 폴더 맨 위에 파일 순서대로 생긴다.
+  // txt는 파일 이름이 제목이고, md가 제목 1로 시작하면 그 줄이 제목이 된다. 첫 메모가 열린다.
+  const files: DropFile[] = [
+    { name: "할 일.txt", text: "﻿출시 전 점검\r\n- 아이콘 확인\r\n", type: "text/plain" },
+    { name: "agenda.md", text: "# 3분기 회의\n\n- 안건 **정리**\n" },
+  ];
+  await dropFiles(item(page, "회의"), files, {}, "over");
+  await expect(item(page, "회의")).toHaveAttribute("data-drop", "");
+  await dropFiles(item(page, "회의"), files);
+  await expect.poll(order).toEqual(["1:아이디어", "2:메모 앱 아이콘 아이디어", "1:업무", "2:회의", "3:할 일", "3:3분기 회의", "3:주간 회의", "3:회고", "2:분기 계획", "1:장보기"]);
+  await expect(item(page, "회의")).not.toHaveAttribute("data-drop", "");
+  await expect(page.getByLabel("제목", { exact: true })).toHaveValue("할 일");
+  await expect(notes.locator(".notes-undo")).toContainText("메모 2개를 만들었습니다");
+  await expect.poll(async () => await stored("할 일")).toMatchObject({ parentId: "f-meet", body: "출시 전 점검\n- 아이콘 확인" });
+  await expect.poll(async () => await stored("3분기 회의")).toMatchObject({ parentId: "f-meet", body: "- 안건 **정리**" });
+
+  // 메모 행의 아래쪽 가장자리에 놓으면 그 뒤에 끼운다. BOM 없는 CP949(Windows 메모장) 파일도 읽고, 글 파일이 아닌 것은 건너뛴다.
+  await dropFiles(item(page, "장보기"), [
+    { name: "메모장.txt", bytes: [0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0xb8, 0xde, 0xb8, 0xf0] },
+    { name: "사진.png", bytes: [0x89, 0x50, 0x4e, 0x47], type: "image/png" },
+  ], { fx: 0.3, fy: 0.9 });
+  await expect.poll(order).toEqual(["1:아이디어", "2:메모 앱 아이콘 아이디어", "1:업무", "2:회의", "3:할 일", "3:3분기 회의", "3:주간 회의", "3:회고", "2:분기 계획", "1:장보기", "1:메모장"]);
+  await expect(notes.locator(".notes-undo")).toContainText("‘메모장’ 메모를 만들었습니다 · txt·md가 아닌 파일 1개는 건너뜀");
+  await expect.poll(async () => (await stored("메모장"))?.body).toBe("한글 메모");
+  // 그림만 끌고 오면 놓을 곳을 보이지 않고, 글 파일이 없는 놓기는 안내만 한다.
+  await dropFiles(item(page, "업무"), [{ name: "사진.png", bytes: [0x89, 0x50], type: "image/png" }], {}, "over");
+  await expect(item(page, "업무")).not.toHaveAttribute("data-drop", "");
+  await dropFiles(item(page, "업무"), [{ name: "보고서.pdf", bytes: [0x25, 0x50, 0x44, 0x46], type: "" }]);
+  await expect(notes.locator(".notes-undo")).toContainText("txt·md 파일만 메모로 넣을 수 있습니다.");
+  await expect(notes.getByRole("treeitem")).toHaveCount(11);
+
+  // 서식 보기의 본문 칸에 놓으면 파일이 아니라 내용만 놓은 자리에 들어가고, md는 서식으로 보인다.
+  await item(page, "장보기").click();
+  const prose = notes.locator(".note-prose");
+  await expect(prose).toContainText("우유, 달걀, 커피 원두");
+  await dropFiles(prose.locator("p").last(), [{ name: "추가.md", text: "# 주말\n\n- **빵**\n- 과일\n" }], { fx: 0.99 });
+  await expect(prose.locator("h1")).toHaveText("주말");
+  await expect(prose.locator("li strong")).toHaveText("빵");
+  await expect(notes.getByRole("treeitem")).toHaveCount(11);
+  await expect.poll(async () => (await stored("장보기"))?.body).toMatch(/^우유, 달걀, 커피 원두\n\n# 주말\n\n- \*\*빵\*\*\n- 과일\s*$/);
+  await expect(prose).not.toContainText("추가.md");
+
+  // Markdown 보기에서는 놓은 자리(여기서는 첫 줄 끝)에 내용이 글자 그대로 들어간다.
+  await notes.getByRole("button", { name: "Markdown", exact: true }).click();
+  const source = notes.locator("textarea#note-body");
+  await source.evaluate((element: HTMLTextAreaElement) => { element.focus(); element.setSelectionRange(0, 0); });
+  await dropFiles(source, [{ name: "덧붙임.txt", text: " · **두부**\n\n" }], { fx: 0.97, fy: "line1" });
+  await expect(source).toHaveValue(/^우유, 달걀, 커피 원두 · \*\*두부\*\*\n\n# 주말/);
+  await expect.poll(async () => (await stored("장보기"))?.body).toMatch(/^우유, 달걀, 커피 원두 · \*\*두부\*\*\n\n# 주말/);
   expect(errors).toEqual([]);
 });
 

@@ -13,6 +13,7 @@ import {
   type Folder, type Item, type Items, type Note, type Row,
 } from "../../lib/notes";
 import { useNoteAlert } from "../../lib/note-images";
+import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 
 const DRAG_TYPE = "application/x-relay-note";
 const UNDO_MS = 8000;
@@ -46,7 +47,7 @@ export function NotesWindow() {
   const trash = useNotes((state) => state.trash);
   const status = useNotes((state) => state.status);
   const sync = useNotes((state) => state.sync);
-  const { select, createNote, createFolder, remove, startRename, move, undoRemove, dismissTrash, setExpanded } = useNotes.getState();
+  const { select, createNote, createFolder, remove, startRename, move, place, undoRemove, dismissTrash, setExpanded } = useNotes.getState();
   const [query, setQuery] = useState("");
   const [pane, setPane] = useState<"tree" | "content">("tree");
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -105,6 +106,28 @@ export function NotesWindow() {
     // 좁은 창에서 보던 메모를 지우면 목록으로 돌아간다.
     const { items: next, selected: now } = useNotes.getState();
     if (!now || next[now]?.kind !== "note") setPane("tree");
+  }
+
+  /** 트리에 끌어 놓은 글 파일(.txt·.md)을 parentId 폴더의 index 자리부터 파일마다 메모로 만들고, 첫 메모를 연다. */
+  async function addTextFiles(dropped: File[], parentId: string | null, index: number) {
+    const files = textFilesOf(dropped);
+    if (!files.length) { setNotice((current) => (current?.tone === "progress" ? current : { tone: "error", text: NOT_TEXT })); return; }
+    const { texts, failures } = await readTextFiles(files);
+    const created: string[] = [];
+    for (const { file, text } of texts) {
+      // 읽는 사이 폴더가 지워졌으면 최상위 맨 위에 둔다.
+      const parent = parentId !== null && useNotes.getState().items[parentId]?.kind === "folder" ? parentId : null;
+      const id = createNote(parent, noteOfText(file.name, text));
+      place(id, parent, parent === parentId ? index + created.length : created.length);
+      created.push(id);
+    }
+    if (created[0]) { setQuery(""); dismissTrash(); open(created[0]); }
+    const skipped = dropped.length - files.length;
+    const first = created[0] ? useNotes.getState().items[created[0]] : undefined;
+    const next: Notice | null = failures.length ? { tone: "error", text: textFailure(failures) }
+      : created.length ? { tone: "done", text: `${created.length > 1 || !first ? `메모 ${created.length}개를` : `‘${labelOf(first)}’ 메모를`} 만들었습니다${skipped ? ` · txt·md가 아닌 파일 ${skipped}개는 건너뜀` : ""}.` }
+      : null;
+    if (next) setNotice((current) => (current?.tone === "progress" ? current : next));
   }
 
   /** 내보내기·가져오기는 한 번에 하나만 하고, 진행과 결과를 아래 안내로 보인다. 지우기 안내가 떠 있으면 걷는다. */
@@ -250,7 +273,8 @@ export function NotesWindow() {
         {query.trim()
           ? <SearchResults items={items} query={query} selected={selected} onOpen={open} />
           : <NotesTree items={items} map={tree.map} counts={tree.notes} expanded={expanded} selected={selected} onOpen={open}
-              onMenu={(id, left, top) => openMenu("item", id, left, top)} onDelete={removeItem} onToggle={setExpanded} />}
+              onMenu={(id, left, top) => openMenu("item", id, left, top)} onDelete={removeItem} onToggle={setExpanded}
+              onFiles={(files, parentId, index) => void addTextFiles(files, parentId, index)} />}
         <div className="notes-footer"><span>메모 {counts.notes}개{counts.folders ? ` · 폴더 ${counts.folders}개` : ""}</span><span className="notes-sync" data-sync={status === "ready" ? sync : status}>{status === "loading" ? "불러오는 중…" : status === "error" ? "서버 연결 대기"
           : sync === "saving" ? "저장 중…" : sync === "offline" ? "저장 대기 · 다시 시도 중" : sync === "rejected" ? "저장 실패" : "Relay DB에 저장됨"}</span></div>
       </aside>} main={
@@ -283,10 +307,12 @@ export function NotesWindow() {
 /** 끌어 놓을 자리. zone은 행의 위쪽(before)·아래쪽(after) 가장자리 또는 폴더 가운데(inside)이고, parentId·index가 실제로 들어갈 곳이다. */
 type DropAt = { row: string | null; zone: "before" | "after" | "inside"; parentId: string | null; index: number; depth: number };
 
-/** 폴더와 메모의 트리. 끌어서 순서를 바꾸거나 폴더로 옮기고, 화살표·Alt+화살표(순서)·F2·Delete·메뉴 키로 다룬다. */
-function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onDelete, onToggle }: {
+/** 폴더와 메모의 트리. 끌어서 순서를 바꾸거나 폴더로 옮기고, 화살표·Alt+화살표(순서)·F2·Delete·메뉴 키로 다룬다.
+ *  바깥에서 끌어 온 글 파일(.txt·.md)은 같은 자리 표시로 놓을 곳을 보이고, 놓으면 그 자리에 메모로 만든다(onFiles). */
+function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onDelete, onToggle, onFiles }: {
   items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; expanded: Record<string, true>; selected: string | null;
   onOpen: (id: string) => void; onMenu: (id: string, left: number, top: number) => void; onDelete: (id: string) => void; onToggle: (id: string, open: boolean) => void;
+  onFiles: (files: File[], parentId: string | null, index: number) => void;
 }) {
   const renaming = useNotes((state) => state.renaming);
   const { select, startRename, place } = useNotes.getState();
@@ -308,15 +334,15 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
     document.getElementById(rowId(selected))?.focus();
   }, [selected]);
 
-  /** 끌고 있는 항목을 놓을 자리. 행의 위·아래 4분의 1(메모는 반)은 그 사이에 끼우고, 폴더 가운데는 그 폴더 맨 위로 넣는다. 놓을 수 없으면 null. */
-  function dropAt(event: DragEvent, row: Row | null): DropAt | null {
-    const item = dragging ? items[dragging] : undefined;
-    if (!item) return null;
-    const siblingsOf = (parentId: string | null) => (map.get(parentId) ?? []).filter((entry) => entry.id !== item.id);
+  /** 끌고 있는 항목(files면 바깥 파일)을 놓을 자리. 행의 위·아래 4분의 1(메모는 반)은 그 사이에 끼우고, 폴더 가운데는 그 폴더 맨 위로 넣는다. 놓을 수 없으면 null. */
+  function dropAt(event: DragEvent, row: Row | null, files = false): DropAt | null {
+    const item = files ? null : dragging ? items[dragging] : undefined;
+    if (item === undefined) return null;
+    const siblingsOf = (parentId: string | null) => (map.get(parentId) ?? []).filter((entry) => entry.id !== item?.id);
     let at: DropAt;
     if (!row) at = { row: null, zone: "after", parentId: null, index: siblingsOf(null).length, depth: 0 };
     else {
-      if (row.item.id === item.id) return null;
+      if (row.item.id === item?.id) return null;
       const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
       const y = (event.clientY - rect.top) / Math.max(1, rect.height);
       const folder = row.item.kind === "folder";
@@ -327,17 +353,19 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
         at = { row: row.item.id, zone, parentId: row.item.id, index: 0, depth: row.depth + 1 };
       } else at = { row: row.item.id, zone, parentId: row.item.parentId, index: zone === "before" ? index : index + 1, depth: row.depth };
     }
-    if (item.kind === "folder" && at.parentId !== null && isWithin(items, at.parentId, item.id)) return null;
+    if (item?.kind === "folder" && at.parentId !== null && isWithin(items, at.parentId, item.id)) return null;
     return at;
   }
   function clearHover() { if (hover.current) clearTimeout(hover.current.timer); hover.current = null; }
   function onDragOver(event: DragEvent, row: Row | null) {
-    if (!dragging || !event.dataTransfer.types.includes(DRAG_TYPE)) return;
+    const files = !dragging && isFileDrag(event.dataTransfer);
+    if (!files && (!dragging || !event.dataTransfer.types.includes(DRAG_TYPE))) return;
     event.stopPropagation();
-    const at = dropAt(event, row);
-    if (!at) { setDrop(null); event.dataTransfer.dropEffect = "none"; return; }
+    // 글 파일이 아닌 것(그림 등)만 끌고 오면 놓을 수 없다고 보인다. 놓기를 막아야 브라우저가 그 파일을 열지 않는다.
+    const at = files && !mayHoldText(event.dataTransfer) ? null : dropAt(event, row, files);
+    if (!at) { if (files) event.preventDefault(); setDrop(null); event.dataTransfer.dropEffect = "none"; return; }
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = files ? "copy" : "move";
     setDrop((now) => (now && now.row === at.row && now.zone === at.zone && now.parentId === at.parentId && now.index === at.index ? now : at));
     // 닫힌 폴더 가운데에 잠시 머무르면 펼친다.
     const folder = at.zone === "inside" && row?.hasChildren && !expanded[row.item.id] ? row.item.id : null;
@@ -348,6 +376,13 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
   function onDrop(event: DragEvent, row: Row | null) {
     event.preventDefault();
     event.stopPropagation();
+    if (!dragging && isFileDrag(event.dataTransfer)) {
+      const at = dropAt(event, row, true);
+      const files = Array.from(event.dataTransfer.files);
+      endDrag();
+      if (at && files.length) onFiles(files, at.parentId, at.index);
+      return;
+    }
     const at = dropAt(event, row);
     if (dragging && at) { place(dragging, at.parentId, at.index); requestAnimationFrame(() => focusRow(dragging)); }
     endDrag();
@@ -419,7 +454,21 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
     if (rect) onMenu(id, rect.left + 24, rect.bottom + 4);
   }
 
-  if (!rows.length) return <div className="notes-tree-empty">폴더나 메모가 없습니다.<br />위의 단추로 만들어 보세요.</div>;
+  if (!rows.length) return <div className="notes-tree-empty" data-drop-root={drop ? "" : undefined}
+    onDragOver={(event) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      const ok = mayHoldText(event.dataTransfer);
+      event.dataTransfer.dropEffect = ok ? "copy" : "none";
+      setDrop((now) => (!ok ? null : now ?? { row: null, zone: "after", parentId: null, index: 0, depth: 0 }));
+    }}
+    onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDrop(null); }}
+    onDrop={(event) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      setDrop(null);
+      onFiles(Array.from(event.dataTransfer.files), null, 0);
+    }}>폴더나 메모가 없습니다.<br />위의 단추로 만들거나 txt·md 파일을 끌어다 놓으세요.</div>;
   return <ul ref={treeRef} role="tree" aria-label="메모 폴더" className="notes-tree" onKeyDown={onKeyDown}
     data-drop-root={drop?.row === null ? "" : undefined}
     onDragOver={(event) => onDragOver(event, null)} onDrop={(event) => onDrop(event, null)}

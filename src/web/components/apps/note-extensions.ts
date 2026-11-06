@@ -3,6 +3,7 @@ import { Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/s
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
 import { useNotes } from "../../lib/notes";
+import { joinTexts, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 
 declare module "@tiptap/core" {
   interface Storage {
@@ -74,11 +75,30 @@ function placeImages(state: EditorState, at: number, urls: string[], ids: object
   return tr;
 }
 
-/** 편집기가 닫힌 뒤 끝난 그림은 그 메모 본문 끝에 붙인다. */
-export function appendToNote(noteId: string | null, url: string) {
+/** 편집기가 닫힌 뒤 끝난 그림·글은 그 메모 본문 끝에 붙인다. */
+export function appendTextToNote(noteId: string | null, text: string) {
   const note = noteId ? useNotes.getState().items[noteId] : undefined;
   if (note?.kind !== "note") return;
-  useNotes.getState().update(note.id, { body: `${note.body.replace(/\s+$/, "")}${note.body.trim() ? "\n\n" : ""}${imageMarkdown(url)}\n` });
+  useNotes.getState().update(note.id, { body: `${note.body.replace(/\s+$/, "")}${note.body.trim() ? "\n\n" : ""}${text}\n` });
+}
+export const appendToNote = (noteId: string | null, url: string) => appendTextToNote(noteId, imageMarkdown(url));
+
+/** 끌어 놓은 글 파일(.txt·.md)의 내용만 at 자리에 넣는다. 본문과 같은 Markdown으로 읽어 넣고, 코드 블록 안에는 글자 그대로 넣는다.
+ *  여러 파일은 빈 줄로 잇고, 읽는 사이 편집기가 닫히면 그 메모 끝에 붙인다. */
+export async function insertTextFiles(editor: Editor, files: File[], at: number) {
+  const noteId = editor.storage.noteImageUpload?.noteId ?? null;
+  const { texts, failures } = await readTextFiles(files);
+  if (failures.length) useNoteAlert.getState().say(textFailure(failures));
+  const text = joinTexts(texts);
+  if (!text) return;
+  if (editor.isDestroyed) { appendTextToNote(noteId, text); return; }
+  const pos = Math.max(0, Math.min(at, editor.state.doc.content.size));
+  if (editor.state.doc.resolve(pos).parent.type.spec.code) {
+    editor.view.dispatch(editor.state.tr.insertText(text, pos).scrollIntoView());
+    editor.commands.focus();
+    return;
+  }
+  editor.chain().focus().insertContentAt(pos, text, { contentType: "markdown" }).scrollIntoView().run();
 }
 
 /** 그림 파일들을 at(없으면 지금 선택한 자리)에 넣는다. 고른 글이 있으면 그 글을 그림으로 바꾼다. 모두 올린 뒤 고른 순서대로 한 번에 넣는다. */
@@ -134,10 +154,13 @@ export const NoteImageUpload = Extension.create({
         handleDrop: (view, event, _slice, moved) => {
           if (moved || !editor.isEditable) return false;
           const files = imageFilesOf(event.dataTransfer, false);
-          if (!files.length) return false;
+          // 글 파일은 파일이 아니라 그 내용만 놓은 자리에 들어간다.
+          const texts = textFilesOf(event.dataTransfer?.files);
+          if (!files.length && !texts.length) return false;
           event.preventDefault();
-          const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
-          void insertImages(editor, files, at?.pos ?? view.state.selection.from);
+          const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.from;
+          if (texts.length) void insertTextFiles(editor, texts, at);
+          if (files.length) void insertImages(editor, files, at);
           return true;
         },
       },
