@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
@@ -308,7 +308,8 @@ export function NotesWindow() {
 type DropAt = { row: string | null; zone: "before" | "after" | "inside"; parentId: string | null; index: number; depth: number };
 
 /** 폴더와 메모의 트리. 끌어서 순서를 바꾸거나 폴더로 옮기고, 화살표·Alt+화살표(순서)·F2·Delete·메뉴 키로 다룬다.
- *  바깥에서 끌어 온 글 파일(.txt·.md)은 같은 자리 표시로 놓을 곳을 보이고, 놓으면 그 자리에 메모로 만든다(onFiles). */
+ *  바깥에서 끌어 온 글 파일(.txt·.md)은 같은 자리 표시로 놓을 곳을 보이고, 놓으면 그 자리에 메모로 만든다(onFiles).
+ *  탐색기에서 복사한 글 파일을 트리에서 붙여 넣으면 초점 둔 폴더의 맨 위(메모면 그 메모 다음)에 같은 방식으로 만든다. */
 function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onDelete, onToggle, onFiles }: {
   items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; expanded: Record<string, true>; selected: string | null;
   onOpen: (id: string) => void; onMenu: (id: string, left: number, top: number) => void; onDelete: (id: string) => void; onToggle: (id: string, open: boolean) => void;
@@ -389,6 +390,19 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
   }
   function endDrag() { clearHover(); setDragging(null); setDrop(null); }
 
+  /** 붙여 넣은 파일을 넣을 자리: 초점 둔 행(없으면 고른 항목)이 폴더면 그 폴더 맨 위, 메모면 그 메모 바로 다음, 아무것도 없으면 최상위 맨 위. */
+  function onPaste(event: ClipboardEvent<HTMLElement>) {
+    if ((event.target as HTMLElement).tagName === "INPUT") return;
+    const files = Array.from(event.clipboardData.files);
+    if (!files.length) return;
+    event.preventDefault();
+    const id = (event.target as HTMLElement).closest<HTMLElement>("[role=treeitem]")?.dataset.id ?? selected;
+    const item = id ? items[id] : undefined;
+    if (!item) onFiles(files, null, 0);
+    else if (item.kind === "folder") onFiles(files, item.id, 0);
+    else onFiles(files, item.parentId, (map.get(item.parentId) ?? []).findIndex((entry) => entry.id === item.id) + 1);
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLUListElement>) {
     if ((event.target as HTMLElement).tagName === "INPUT" || event.ctrlKey || event.metaKey) return;
     // 초점이 있는 행을 기준으로 움직인다(클릭 없이 초점만 옮겨 온 경우 포함).
@@ -454,7 +468,7 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
     if (rect) onMenu(id, rect.left + 24, rect.bottom + 4);
   }
 
-  if (!rows.length) return <div className="notes-tree-empty" data-drop-root={drop ? "" : undefined}
+  if (!rows.length) return <div className="notes-tree-empty" data-drop-root={drop ? "" : undefined} tabIndex={0} aria-label="메모 목록 (비어 있음)" onPaste={onPaste}
     onDragOver={(event) => {
       if (!isFileDrag(event.dataTransfer)) return;
       event.preventDefault();
@@ -468,8 +482,8 @@ function NotesTree({ items, map, counts, expanded, selected, onOpen, onMenu, onD
       event.preventDefault();
       setDrop(null);
       onFiles(Array.from(event.dataTransfer.files), null, 0);
-    }}>폴더나 메모가 없습니다.<br />위의 단추로 만들거나 txt·md 파일을 끌어다 놓으세요.</div>;
-  return <ul ref={treeRef} role="tree" aria-label="메모 폴더" className="notes-tree" onKeyDown={onKeyDown}
+    }}>폴더나 메모가 없습니다.<br />위의 단추로 만들거나 txt·md 파일을 끌어다 놓거나 붙여 넣으세요.</div>;
+  return <ul ref={treeRef} role="tree" aria-label="메모 폴더" className="notes-tree" onKeyDown={onKeyDown} onPaste={onPaste}
     data-drop-root={drop?.row === null ? "" : undefined}
     onDragOver={(event) => onDragOver(event, null)} onDrop={(event) => onDrop(event, null)}
     onDragLeave={(event) => { if (!treeRef.current?.contains(event.relatedTarget as Node | null)) { setDrop(null); clearHover(); } }}>

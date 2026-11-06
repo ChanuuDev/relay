@@ -83,22 +83,24 @@ export function appendTextToNote(noteId: string | null, text: string) {
 }
 export const appendToNote = (noteId: string | null, url: string) => appendTextToNote(noteId, imageMarkdown(url));
 
-/** 끌어 놓은 글 파일(.txt·.md)의 내용만 at 자리에 넣는다. 본문과 같은 Markdown으로 읽어 넣고, 코드 블록 안에는 글자 그대로 넣는다.
- *  여러 파일은 빈 줄로 잇고, 읽는 사이 편집기가 닫히면 그 메모 끝에 붙인다. */
-export async function insertTextFiles(editor: Editor, files: File[], at: number) {
+/** 끌어 놓거나 붙여 넣은 글 파일(.txt·.md)의 내용만 at 자리(없으면 지금 고른 범위를 바꿔)에 넣는다. 본문과 같은 Markdown으로 읽어 넣고,
+ *  코드 블록 안에는 글자 그대로 넣는다. 여러 파일은 빈 줄로 잇고, 읽는 사이 편집기가 닫히면 그 메모 끝에 붙인다. */
+export async function insertTextFiles(editor: Editor, files: File[], at?: number) {
   const noteId = editor.storage.noteImageUpload?.noteId ?? null;
   const { texts, failures } = await readTextFiles(files);
   if (failures.length) useNoteAlert.getState().say(textFailure(failures));
   const text = joinTexts(texts);
   if (!text) return;
   if (editor.isDestroyed) { appendTextToNote(noteId, text); return; }
-  const pos = Math.max(0, Math.min(at, editor.state.doc.content.size));
-  if (editor.state.doc.resolve(pos).parent.type.spec.code) {
-    editor.view.dispatch(editor.state.tr.insertText(text, pos).scrollIntoView());
+  const { selection, doc } = editor.state;
+  const pos = at === undefined ? null : Math.max(0, Math.min(at, doc.content.size));
+  const range = pos === null ? { from: selection.from, to: selection.to } : { from: pos, to: pos };
+  if (doc.resolve(range.from).parent.type.spec.code) {
+    editor.view.dispatch(editor.state.tr.insertText(text, range.from, range.to).scrollIntoView());
     editor.commands.focus();
     return;
   }
-  editor.chain().focus().insertContentAt(pos, text, { contentType: "markdown" }).scrollIntoView().run();
+  editor.chain().focus().insertContentAt(range, text, { contentType: "markdown" }).scrollIntoView().run();
 }
 
 /** 그림 파일들을 at(없으면 지금 선택한 자리)에 넣는다. 고른 글이 있으면 그 글을 그림으로 바꾼다. 모두 올린 뒤 고른 순서대로 한 번에 넣는다. */
@@ -144,6 +146,9 @@ export const NoteImageUpload = Extension.create({
       props: {
         decorations: (state) => uploadKey.getState(state),
         handlePaste: (view, event) => {
+          // 탐색기에서 복사한 글 파일은 끌어 놓을 때처럼 내용만 커서 자리에 넣는다.
+          const texts = textFilesOf(event.clipboardData?.files);
+          if (texts.length && editor.isEditable) { event.preventDefault(); void insertTextFiles(editor, texts); return true; }
           const files = imageFilesOf(event.clipboardData);
           // 코드 블록 안에는 그림을 넣지 않는다.
           if (!files.length || !editor.isEditable || view.state.selection.$from.parent.type.spec.code) return false;

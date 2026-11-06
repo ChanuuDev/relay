@@ -142,12 +142,15 @@ export function NoteDocument({ note }: { note: Note }) {
     addImages(files);
   }
   function pasteSource(event: ClipboardEvent<HTMLTextAreaElement>) {
+    // 탐색기에서 복사한 글 파일은 끌어 놓을 때처럼 내용만 넣는다.
+    const texts = textFilesOf(event.clipboardData.files);
+    if (texts.length) { event.preventDefault(); void insertSourceTexts(texts); return; }
     const files = imageFilesOf(event.clipboardData);
     if (!files.length) return;
     event.preventDefault();
     void insertSourceImages(files);
   }
-  /** Markdown 원문 칸에 끌어 놓은 글 파일(.txt·.md)의 내용만 커서 자리에 넣는다. 그사이 칸이 닫히면 메모 끝에 붙인다. */
+  /** Markdown 원문 칸에 끌어 놓거나 붙여 넣은 글 파일(.txt·.md)의 내용만 커서 자리에 넣는다. 그사이 칸이 닫히면 메모 끝에 붙인다. */
   async function insertSourceTexts(files: File[]) {
     const { texts, failures } = await readTextFiles(files);
     if (failures.length) useNoteAlert.getState().say(textFailure(failures));

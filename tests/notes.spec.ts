@@ -490,6 +490,65 @@ test("메모 창: 트리에 끌어 놓은 txt·md 파일은 그 자리에 메모
   expect(errors).toEqual([]);
 });
 
+/** 탐색기에서 파일을 복사해 target에 초점을 두고 Ctrl+V 한 것처럼 paste를 보낸다. */
+async function pasteFiles(target: Locator, files: DropFile[]) {
+  await target.evaluate((element, list) => {
+    const data = new DataTransfer();
+    for (const file of list) data.items.add(new File([file.bytes ? new Uint8Array(file.bytes) : file.text ?? ""], file.name, { type: file.type ?? "" }));
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+  }, files);
+}
+
+test("메모 창: 탐색기에서 복사한 txt·md 파일을 트리에서 붙여 넣으면 메모가 되고, 본문 칸에서 붙여 넣으면 내용만 들어간다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"] });
+  const notes = page.locator(win("notes"));
+  const order = () => notes.getByRole("treeitem").evaluateAll((rows) => rows.map((row) => `${row.getAttribute("aria-level")}:${row.getAttribute("aria-label")}`));
+  const stored = async (title: string) => ((await saved(page)).items as Array<{ title: string; body: string; parentId: string | null }>).find((entry) => entry.title === title);
+
+  // 폴더를 누르고 붙여 넣으면 그 폴더 맨 위에 파일 순서대로 메모가 생기고 첫 메모가 열린다.
+  await item(page, "회의").click();
+  await expect(item(page, "회의")).toBeFocused();
+  await pasteFiles(item(page, "회의"), [
+    { name: "점검.txt", text: "출시 전 점검\r\n- 아이콘\r\n", type: "text/plain" },
+    { name: "agenda.md", text: "# 3분기 회의\n\n- 안건\n" },
+  ]);
+  await expect.poll(order).toEqual(["1:아이디어", "2:메모 앱 아이콘 아이디어", "1:업무", "2:회의", "3:점검", "3:3분기 회의", "3:주간 회의", "3:회고", "2:분기 계획", "1:장보기"]);
+  await expect(page.getByLabel("제목", { exact: true })).toHaveValue("점검");
+  await expect.poll(async () => await stored("점검")).toMatchObject({ parentId: "f-meet", body: "출시 전 점검\n- 아이콘" });
+  await expect.poll(async () => await stored("3분기 회의")).toMatchObject({ parentId: "f-meet", body: "- 안건" });
+
+  // 메모를 누르고 붙여 넣으면 그 메모 바로 다음에 생긴다. 글 파일이 아니면 안내만 한다.
+  await item(page, "분기 계획").click();
+  await pasteFiles(item(page, "분기 계획"), [{ name: "예산.md", text: "예산 초안" }]);
+  await expect.poll(order).toEqual(["1:아이디어", "2:메모 앱 아이콘 아이디어", "1:업무", "2:회의", "3:점검", "3:3분기 회의", "3:주간 회의", "3:회고", "2:분기 계획", "2:예산", "1:장보기"]);
+  await expect.poll(async () => await stored("예산")).toMatchObject({ parentId: "f-work", body: "예산 초안" });
+  await item(page, "장보기").click();
+  await pasteFiles(item(page, "장보기"), [{ name: "사진.png", bytes: [0x89, 0x50], type: "image/png" }]);
+  await expect(notes.locator(".notes-undo")).toContainText("txt·md 파일만 메모로 넣을 수 있습니다.");
+  await expect(notes.getByRole("treeitem")).toHaveCount(11);
+
+  // 서식 보기의 본문 칸에서 붙여 넣으면 파일이 아니라 내용만 커서 자리에 들어가고, md는 서식으로 보인다.
+  const prose = notes.locator(".note-prose");
+  await expect(prose).toContainText("우유, 달걀, 커피 원두");
+  await prose.locator("p").last().click();
+  await page.keyboard.press("End");
+  await pasteFiles(prose, [{ name: "추가.md", text: "\n- **빵**\n- 과일\n" }]);
+  await expect(prose.locator("li strong")).toHaveText("빵");
+  await expect.poll(async () => (await stored("장보기"))?.body).toMatch(/^우유, 달걀, 커피 원두\n+- \*\*빵\*\*\n- 과일\s*$/);
+  await expect(notes.getByRole("treeitem")).toHaveCount(11);
+
+  // Markdown 보기에서도 커서 자리에 글자 그대로 들어간다.
+  await notes.getByRole("button", { name: "Markdown", exact: true }).click();
+  const source = notes.locator("textarea#note-body");
+  await source.evaluate((element: HTMLTextAreaElement) => { element.focus(); element.setSelectionRange(0, 0); });
+  await pasteFiles(source, [{ name: "머리말.txt", text: "**장보기 목록**\n\n" }]);
+  await expect(source).toHaveValue(/^\*\*장보기 목록\*\*우유, 달걀/);
+  await expect.poll(async () => (await stored("장보기"))?.body).toMatch(/^\*\*장보기 목록\*\*우유, 달걀, 커피 원두/);
+  await expect(notes.getByRole("treeitem")).toHaveCount(11);
+  expect(errors).toEqual([]);
+});
+
 test("메모 창: 예전 평문 메모는 줄바꿈을 지키고, 열어 보기만 해서는 원문이 바뀌지 않는다", async ({ page }) => {
   const plain = "잘된 점: 세션 인계가 빨라짐\n아쉬운 점: 검색 범위\n- 다음에 할 일";
   await seed(page, [{ id: "old", kind: "note", parentId: null, title: "회고", body: plain }], { selected: "old" });
