@@ -168,11 +168,16 @@ test("원격 모드로 켜 둔 PC의 파일을 브라우저에서 보고, 그림
   await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
   const port = (reservation.address() as net.AddressInfo).port;
   await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  // PC가 켜지기 전에 먼저 로그인해 첫 화면을 본다: 원격 서버만 보이고, PC가 붙으면 곧 PC 드라이브가 더해져야 한다.
+  await login(page);
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  const before = await page.evaluate(async () => (await (await fetch("/api/v1/files/places")).json()) as { drives: { path: string }[]; pc?: unknown });
+  expect(before.pc).toBeUndefined();
+  expect(before.drives.map((drive) => drive.path)).toEqual(["remote:/"]);
   const pc = spawn(binary, ["web", "--data-dir", pcDir, "--port", String(port)], { cwd: pcDir, windowsHide: true, stdio: "pipe", env: { ...spawnEnv, RELAY_ALLOW_HTTP: "1" } });
   try {
-    await login(page);
-    await expect(page.locator("#connection-state")).toContainText("연결됨");
     await expect.poll(() => page.evaluate(async () => ((await (await fetch("/api/v1/pcs")).json()) as { items: { online: boolean }[] }).items.some((item) => item.online)), { timeout: 30_000 }).toBe(true);
+    await expect.poll(() => page.evaluate(async () => ((await (await fetch("/api/v1/files/places")).json()) as { pc?: { name: string } }).pc?.name ?? null), { timeout: 10_000 }).toBe("test-pc");
     const note = path.join(share, "pc-note.txt");
     const pixel = path.join(share, "pc-pixel.png");
     const result = await page.evaluate(async ({ share, note, pixel }) => {

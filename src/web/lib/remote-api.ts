@@ -52,9 +52,10 @@ async function health(credentials: Credentials, options: ForwardOptions): Promis
 
 /** 연결된 PC. 원격 서버의 `/api/v1/pcs`가 그 사용자의 기기와 지금 연결돼 있는지 알려 준다(server/src/pcs). */
 export interface PcInfo { id: string; name: string; platform: string | null; lastSeenAt: string | null; online: boolean }
-/** 고른 PC가 없을 때 쓰는 PC를 잠깐 기억한다. 페이지와 서비스 워커가 각자 기억한다. */
+/** 파일을 볼 PC를 잠깐 기억한다. 페이지와 서비스 워커가 각자 기억한다. 못 찾았을 때는 PC가 곧 붙을 수 있으므로 짧게만 기억한다. */
 const pcCache = new Map<string, { at: number; pc: PcInfo | null }>();
 const PC_CACHE_MS = 15_000;
+const PC_MISS_MS = 2_000;
 
 function authorized(credentials: Credentials, headers?: Headers) {
   const outgoing = new Headers();
@@ -75,11 +76,12 @@ export async function listPcs(credentials: Credentials, send: ForwardOptions["se
 async function choosePc(credentials: Credentials, options: ForwardOptions): Promise<PcInfo | null> {
   const key = `${credentials.url}\n${credentials.token}\n${credentials.pc ?? ""}`;
   const cached = pcCache.get(key);
-  if (cached && Date.now() - cached.at < PC_CACHE_MS) return cached.pc;
+  if (cached && Date.now() - cached.at < (cached.pc ? PC_CACHE_MS : PC_MISS_MS)) return cached.pc;
   const items = await listPcs(credentials, options.send, options.signal);
-  const pc = (credentials.pc ? items.find((item) => item.id === credentials.pc) : items.find((item) => item.online)) ?? null;
-  pcCache.set(key, { at: Date.now(), pc });
-  return pc;
+  const found = (credentials.pc ? items.find((item) => item.id === credentials.pc) : items.find((item) => item.online)) ?? null;
+  // 꺼진 PC는 짧게만 기억해, 켜지면 곧 보이게 한다. 고른 PC가 꺼져 있으면 그 PC로 보내 서버가 꺼져 있다고 알리게 한다.
+  pcCache.set(key, { at: Date.now(), pc: found?.online ? found : null });
+  return found;
 }
 
 /** 파일 요청이 어느 쪽 것인지: `remote:/`는 원격 서버, 그 밖의 경로는 연결된 PC. 둘이 섞이면 mixed. */
