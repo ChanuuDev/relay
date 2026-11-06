@@ -942,10 +942,13 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
   font-size: var(--fs-14); line-height: 1.8; letter-spacing: -.005em; }
 .note-prose > * + * { margin-top: .55em; }
 .note-prose p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: color-mix(in srgb, var(--foreground) 30%, transparent); }
-.note-prose h1, .note-prose h2, .note-prose h3 { font-weight: 700; letter-spacing: -.02em; line-height: 1.4; }
+.note-prose h1, .note-prose h2, .note-prose h3, .note-prose h4, .note-prose h5, .note-prose h6 { font-weight: 700; letter-spacing: -.02em; line-height: 1.4; scroll-margin-top: 16px; }
 .note-prose h1 { font-size: calc(var(--fs-14) * 1.55); margin-top: 1.25em; }
 .note-prose h2 { font-size: calc(var(--fs-14) * 1.3); margin-top: 1.15em; }
 .note-prose h3 { font-size: calc(var(--fs-14) * 1.12); margin-top: 1em; font-weight: 650; }
+.note-prose h4 { font-size: var(--fs-14); margin-top: 1em; font-weight: 650; }
+.note-prose h5 { font-size: calc(var(--fs-14) * .93); margin-top: 1em; font-weight: 650; }
+.note-prose h6 { font-size: calc(var(--fs-14) * .87); margin-top: 1em; font-weight: 650; color: var(--muted-foreground); }
 .note-prose > :first-child { margin-top: 0; }
 .note-prose strong { font-weight: 700; }
 .note-prose em { font-style: italic; }
@@ -974,10 +977,13 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .note-prose ul[data-type="taskList"] > li[data-checked="true"] > div { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted-foreground) 60%, transparent); }
 .note-prose hr { margin: 1.3em 0; border: 0; border-top: 1px solid var(--border); }
 .note-prose hr.ProseMirror-selectednode { border-top-color: var(--notes-accent); }
-.note-prose img { max-width: 100%; border-radius: 8px; }
-/* 메모 그림: 본문 폭 안에서 원래 크기까지 보이고, 고르면 강조색 테두리가 둘린다 */
-.note-prose img.note-image { display: block; height: auto; margin: .9em 0; border-radius: 10px; background: var(--muted);
+.note-prose img { max-width: 100%; }
+/* 메모 그림: 글줄 안에 놓여 배지 여러 장이 한 줄에 선다. 화면 캡처처럼 큰 그림만 테두리를 두르고, 고르면 강조색 테두리가 둘린다 */
+.note-prose img.note-image { display: inline-block; height: auto; vertical-align: middle; border-radius: 3px; }
+.note-prose img.note-image.is-large { vertical-align: bottom; margin: .3em 0; border-radius: 10px; background: var(--muted);
   box-shadow: 0 0 0 1px var(--border), 0 1px 3px rgba(0, 0, 0, .08); }
+.note-prose img.note-image[align="right"] { margin: 0 0 8px 14px; }
+.note-prose img.note-image[align="left"] { margin: 0 14px 8px 0; }
 .ProseMirror-focused img.note-image.ProseMirror-selectednode { outline: 2px solid var(--notes-accent); outline-offset: 3px; }
 /* 올리는 동안: 고른 그림을 흐리게 미리 보이고 가운데에 유리 질감의 진행 표시를 얹는다 */
 .note-image-uploading { position: relative; display: flex; align-items: center; justify-content: center; width: fit-content; max-width: 100%;
@@ -1010,13 +1016,125 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
   font-family: var(--font-mono); font-size: var(--fs-11); color: var(--destructive); background: color-mix(in srgb, var(--destructive) 8%, transparent); }
 .note-prose .note-diagram-source { display: none; margin: 0; border-radius: 0; box-shadow: none; }
 .note-diagram.is-editing .note-diagram-source, .note-diagram[data-state="empty"] .note-diagram-source, .note-diagram[data-state="error"] .note-diagram-source { display: block; }
-.note-diagram-source::before { content: "Mermaid"; float: right; margin-left: 12px; font-family: var(--font-sans); font-size: 10px; font-weight: 600; letter-spacing: .07em;
+.note-diagram-source::before { content: attr(data-label); float: right; margin-left: 12px; font-family: var(--font-sans); font-size: 10px; font-weight: 600; letter-spacing: .07em;
   text-transform: uppercase; color: color-mix(in srgb, var(--terminal-fg) 42%, transparent); user-select: none; pointer-events: none; }
+/* 수식·HTML은 카드 없이 본문처럼 그리고, 편집할 수 있으면 올렸을 때 테두리로 블록임을 알린다 */
+.note-diagram[data-chrome="plain"] { background: transparent; box-shadow: none; border-radius: 8px; overflow: visible; }
+.ProseMirror[contenteditable="true"] .note-diagram[data-chrome="plain"]:hover:not(.is-editing) { box-shadow: 0 0 0 1px var(--border); }
+.note-diagram[data-chrome="plain"].is-editing { overflow: hidden; }
+.note-diagram[data-chrome="plain"] .note-diagram-preview { min-height: 0; padding: 6px 10px; }
+.note-diagram[data-kind="html"] .note-diagram-preview { align-items: stretch; padding: 2px 0; }
+.note-diagram[data-hidden] { display: none; }
+.note-diagram-caption { margin: 0; font-size: var(--fs-11); color: var(--muted-foreground); text-align: center; }
+.note-diagram-preview svg { display: block; max-width: 100%; height: auto; }
+canvas.md-stl { display: block; width: 100%; max-width: 720px; height: auto; aspect-ratio: 720 / 380; cursor: grab; touch-action: none; }
+canvas.md-stl:active { cursor: grabbing; }
+.note-diagram-edit { position: absolute; top: 8px; right: 8px; z-index: 1; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px;
+  color: var(--muted-foreground); background: color-mix(in srgb, var(--background) 80%, transparent); box-shadow: 0 0 0 .5px var(--border), 0 1px 3px rgba(0, 0, 0, .1);
+  opacity: 0; transition: opacity .15s ease-out; cursor: pointer; }
+.note-diagram-edit svg { width: 13px; height: 13px; }
+.note-diagram:hover .note-diagram-edit, .note-diagram-edit:focus-visible { opacity: 1; }
+.note-diagram.is-editing .note-diagram-edit { display: none; }
+.md-math-display { width: 100%; overflow-x: auto; overflow-y: hidden; text-align: center; scrollbar-width: thin; }
+.md-math-display math, .md-math math { font-family: "Cambria Math", "STIX Two Math", "Latin Modern Math", math; }
+.md-math-display math { font-size: 1.18em; }
+/* MathML Core는 표(행렬·정렬)의 칸 간격 속성을 따르지 않아 칸 여백을 CSS로 준다 */
+.md-math-display mtd, .md-math mtd { padding: .12em .5em; }
+/* 원문 HTML: 본문 서식을 그대로 따르고, 주석만 있으면 편집할 때만 작은 표시를 둔다 */
+.md-html > :first-child { margin-top: 0; }
+.md-html > * + * { margin-top: .55em; }
+.md-html img { max-width: 100%; vertical-align: middle; }
+.md-html details > summary { cursor: pointer; font-weight: 600; }
+.md-html details[open] > summary { margin-bottom: .4em; }
+.md-html-chip { align-self: flex-start; padding: 1px 9px; border-radius: 999px; border: 1px dashed var(--border); font-size: var(--fs-11); color: var(--muted-foreground); }
+.md-html-inline[data-empty] { font-family: var(--font-mono); font-size: .78em; color: var(--muted-foreground); opacity: .75; }
+.md-html-inline.ProseMirror-selectednode, .md-math.ProseMirror-selectednode, .md-emoji.ProseMirror-selectednode { border-radius: 4px; background: color-mix(in srgb, var(--notes-accent) 18%, transparent); }
+
+/* HTML로 감싼 Markdown(<div align="center"> …): 안쪽은 바깥 태그의 정렬을 따르고, 편집할 때만 태그를 작게 보인다 */
+.md-container { position: relative; margin: .9em 0; }
+.md-container-body > :first-child { margin-top: 0; }
+.md-container-body > * + * { margin-top: .55em; }
+.md-container-label { position: absolute; top: -9px; left: 8px; padding: 0 6px; border-radius: 4px; background: var(--background); font-family: var(--font-mono); font-size: 10px;
+  line-height: 16px; color: var(--muted-foreground); opacity: 0; transition: opacity .15s ease-out; pointer-events: none; }
+.ProseMirror[contenteditable="true"] .md-container { border-radius: 8px; box-shadow: 0 0 0 1px transparent; transition: box-shadow .15s ease-out; }
+.ProseMirror[contenteditable="true"] .md-container:hover { box-shadow: 0 0 0 1px var(--border); }
+.ProseMirror[contenteditable="true"] .md-container:hover .md-container-label { opacity: 1; }
+
+/* 인라인 수식: 누르면 그 자리에서 TeX을 고친다 */
+.md-math { padding: 0 1px; border-radius: 4px; }
+.ProseMirror[contenteditable="true"] .md-math { cursor: pointer; }
+.ProseMirror[contenteditable="true"] .md-math:hover { background: color-mix(in srgb, var(--notes-accent) 10%, transparent); }
+.md-math math { font-size: 1.08em; }
+.md-math[data-loading] { font-family: var(--font-mono); font-size: .88em; color: var(--muted-foreground); }
+.md-math[data-error] { font-family: var(--font-mono); font-size: .88em; color: var(--destructive); text-decoration: underline wavy color-mix(in srgb, var(--destructive) 60%, transparent); }
+.md-math-input { padding: 0 5px; border: 1px solid var(--notes-accent); border-radius: 5px; outline: none; background: var(--background); color: var(--foreground);
+  font-family: var(--font-mono); font-size: .88em; line-height: 1.5; box-shadow: 0 0 0 3px color-mix(in srgb, var(--notes-accent) 16%, transparent); }
+
+/* 알림 상자(> [!NOTE] 등): GitHub과 같은 색 */
+.md-alert { --alert: #0969da; margin: .9em 0; padding: 7px 16px 9px; border-left: 3px solid var(--alert); border-radius: 0 10px 10px 0; background: color-mix(in srgb, var(--alert) 6%, transparent); }
+.md-alert[data-alert="tip"] { --alert: #1a7f37; }
+.md-alert[data-alert="important"] { --alert: #8250df; }
+.md-alert[data-alert="warning"] { --alert: #9a6700; }
+.md-alert[data-alert="caution"] { --alert: #cf222e; }
+.dark .md-alert { --alert: #4493f8; }
+.dark .md-alert[data-alert="tip"] { --alert: #3fb950; }
+.dark .md-alert[data-alert="important"] { --alert: #ab7df8; }
+.dark .md-alert[data-alert="warning"] { --alert: #d29922; }
+.dark .md-alert[data-alert="caution"] { --alert: #f85149; }
+.md-alert-title { display: flex; align-items: center; gap: 7px; width: fit-content; font-size: var(--fs-13); font-weight: 650; line-height: 1.8; color: var(--alert); user-select: none; }
+.md-alert-title[title] { cursor: pointer; }
+.md-alert-title svg { width: 15px; height: 15px; flex-shrink: 0; }
+.md-alert-body > :first-child { margin-top: 0; }
+.md-alert-body > * + * { margin-top: .5em; }
+
+/* 접기(<details>) */
+.note-prose [data-type="details"] { display: flex; align-items: flex-start; gap: 4px; margin: .9em 0; padding: 6px 12px 7px 6px; border-radius: 10px;
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 45%, transparent); }
+.note-prose [data-type="details"] > button { display: grid; place-items: center; flex-shrink: 0; width: 22px; height: 22px; margin-top: 2px; border-radius: 6px; color: var(--muted-foreground); cursor: pointer; }
+.note-prose [data-type="details"] > button:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.note-prose [data-type="details"] > button::before { content: ""; border-left: 6px solid currentColor; border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent; transition: transform .15s ease-out; }
+.note-prose [data-type="details"].is-open > button::before { transform: rotate(90deg); }
+.note-prose [data-type="details"] > div { flex: 1; min-width: 0; }
+.note-prose [data-type="details"] summary { display: block; font-weight: 600; list-style: none; }
+.note-prose [data-type="details"] summary::-webkit-details-marker { display: none; }
+.note-prose [data-type="detailsContent"] { margin-top: .35em; }
+.note-prose [data-type="detailsContent"] > :first-child { margin-top: 0; }
+.note-prose [data-type="detailsContent"] > * + * { margin-top: .55em; }
+
+/* 각주: 본문의 번호와 아래 설명. 번호는 처음 가리킨 차례다 */
+.md-fnref { font-size: .72em; line-height: 0; vertical-align: super; }
+.md-fnref::after { content: "[" attr(data-index) "]"; padding: 0 1px; font-weight: 600; color: var(--link); cursor: pointer; }
+.md-fnref:not([data-index])::after { content: "[" attr(data-footnote) "]"; }
+.md-footnote { position: relative; padding-left: 30px; font-size: var(--fs-13); color: var(--muted-foreground); }
+.md-footnote::before { content: attr(data-index) "."; position: absolute; left: 6px; top: 0; font-weight: 600; color: var(--link); cursor: pointer; font-variant-numeric: tabular-nums; }
+.md-footnote:not([data-index])::before { content: attr(data-footnote) "."; }
+:not(.md-footnote) + .md-footnote { margin-top: 1.6em; padding-top: 10px; border-top: 1px solid var(--border); }
+:not(.md-footnote) + .md-footnote::before { top: 10px; }
+.md-footnote > :first-child { margin-top: 0; }
+
+/* HTML 태그로 쓰는 글자 서식·이모지·색상 견본 */
+.note-prose kbd { display: inline-block; padding: 0 .42em; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; background: var(--muted);
+  font-family: var(--font-mono); font-size: .8em; line-height: 1.55; vertical-align: .08em; }
+.note-prose mark { padding: 0 .12em; border-radius: 3px; background: #fff1a8; color: inherit; }
+.dark .note-prose mark { background: rgba(255, 214, 10, .32); }
+.note-prose ins { text-decoration: underline; text-underline-offset: 3px; }
+.note-prose sub, .note-prose sup { font-size: .75em; line-height: 0; }
+.md-emoji { font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
+.md-swatch { display: inline-block; width: .78em; height: .78em; margin: 0 1px 0 4px; border-radius: 50%; vertical-align: -.05em; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .45); }
+
+/* 메모 코드 블록의 구문 색. 바탕이 늘 어두워(터미널) 어두운 팔레트를 쓴다 */
+.note-prose pre { --code-keyword: #fc5fa3; --code-string: #fc6a5d; --code-number: #d0bf69; --code-comment: #7f8c98; --code-function: #67b7a4; --code-type: #5dd8ff; --code-builtin: #a167e6;
+  --code-attr: #d9c97c; --code-tag: #6bdfff; --code-meta: #fd8f3f; --code-section: #6bdfff; --code-variable: #f5f5f7; --code-regexp: #fc6a5d; --code-punct: #9a9aa0;
+  --code-add-bg: rgba(48, 209, 88, .18); --code-del-bg: rgba(255, 69, 58, .16); }
+
 /* 다이어그램을 그리는 숨은 틀(화면 밖). 크기를 재야 하므로 숨기지 않고 밖으로만 뺀다 */
 .mermaid-frame { position: fixed; top: 0; left: -10000px; width: 760px; height: 600px; border: 0; opacity: 0; pointer-events: none; }
 .note-prose .tableWrapper { margin: .9em 0; overflow-x: auto; }
 .note-prose table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-13); line-height: 1.6; }
 .note-prose th, .note-prose td { position: relative; min-width: 60px; padding: 6px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+/* 칸 정렬(:---:)은 align 속성으로 온다. 위의 text-align이 속성을 덮으므로 다시 맞춘다 */
+.note-prose th[align="center"], .note-prose td[align="center"] { text-align: center; }
+.note-prose th[align="right"], .note-prose td[align="right"] { text-align: right; }
 .note-prose th { background: var(--muted); font-weight: 600; }
 .note-prose th > p, .note-prose td > p { margin: 0; }
 .note-prose .selectedCell::after { content: ""; position: absolute; inset: 0; background: var(--selected); pointer-events: none; }

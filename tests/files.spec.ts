@@ -972,3 +972,32 @@ test("파일 탐색기: 복사·Ctrl+C가 Windows 파일 클립보드를 채워 
   await expect(row(page, "zeta - 복사본.log")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("뷰어: Markdown의 상대 경로 그림은 그 파일 옆에서 읽고, 상대 링크는 뷰어로 열며, GitHub 양식을 그린다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const missing: string[] = []; page.on("response", (response) => { if (response.status() === 404) missing.push(response.url()); });
+  const disk = await openFolder(page);
+  mkdirSync(path.join(disk, "img"), { recursive: true });
+  mkdirSync(path.join(disk, "docs"), { recursive: true });
+  writeFileSync(path.join(disk, "img", "dot.png"), PNG);
+  writeFileSync(path.join(disk, "README.md"), "# 저장소\n\n![점](img/dot.png)\n\n> [!TIP]\n> 상대 경로 그림\n\n[안내](docs/guide.md)\n\n| 명령 | 설명 |\n| --- | :---: |\n| `build` | 빌드 |\n\n<p align=\"center\"><a href=\"docs/guide.md\">HTML 링크</a></p>\n");
+  writeFileSync(path.join(disk, "docs", "guide.md"), "# 안내\n\n[처음으로](../README.md)\n");
+  await page.getByRole("button", { name: "새로 고침" }).click();
+  await row(page, "README.md").dblclick();
+  const viewer = page.locator(win("viewer"));
+  await expect(viewer.locator(".viewer-prose h1")).toHaveText("저장소");
+  await expect.poll(() => viewer.locator(".viewer-prose img.note-image").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  await expect(viewer.locator('.viewer-prose .md-alert[data-alert="tip"]')).toContainText("상대 경로 그림");
+  await expect(viewer.locator('.viewer-prose td[align="center"]')).toHaveText("빌드");
+  // 상대 링크는 새 창이 아니라 이 뷰어에서 그 파일을 연다.
+  await viewer.locator(".viewer-prose a", { hasText: "안내" }).click();
+  await expect(viewer.locator(".window-title")).toHaveText("guide.md");
+  await viewer.locator(".viewer-prose a", { hasText: "처음으로" }).click();
+  await expect(viewer.locator(".window-title")).toHaveText("README.md");
+  // 원문 HTML 안의 상대 링크도 같다.
+  await viewer.locator('.viewer-prose .md-html p[align="center"] a', { hasText: "HTML 링크" }).click();
+  await expect(viewer.locator(".window-title")).toHaveText("guide.md");
+  expect(page.context().pages()).toHaveLength(1);
+  expect(missing).toEqual([]);
+  expect(errors).toEqual([]);
+});

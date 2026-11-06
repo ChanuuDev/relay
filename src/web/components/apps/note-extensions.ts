@@ -1,9 +1,6 @@
 import { Extension, type Editor } from "@tiptap/core";
-import { CodeBlock } from "@tiptap/extension-code-block";
-import type { Node as ProseNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
-import { Decoration, DecorationSet, type NodeView } from "@tiptap/pm/view";
-import { DIAGRAM_SAMPLE, onThemeChange, renderDiagram, type Diagram } from "../../lib/mermaid";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
 import { useNotes } from "../../lib/notes";
 
@@ -47,19 +44,20 @@ const releasePreview = (node: globalThis.Node) => { const image = (node as HTMLE
 
 const placeholderAt = (state: EditorState, ids: object[]) => uploadKey.getState(state)?.find(undefined, undefined, (spec) => ids.includes(spec.id))[0]?.from ?? null;
 
-/** 그림은 블록이라 글 줄 사이에 놓는다. 줄 맨 앞(빈 줄 포함)이면 그 줄 위, 줄 끝이면 그 줄 아래, 가운데면 줄을 나눠 그 사이다.
+/** 붙여 넣은 그림은 저마다 제 줄(문단)에 놓는다. 줄 맨 앞(빈 줄 포함)이면 그 줄 위, 줄 끝이면 그 줄 아래, 가운데면 줄을 나눠 그 사이다.
  *  커서가 그 자리에 있었으면 그림 다음 줄로 옮겨 이어 쓰게 한다(그림이 선택된 채 남아 다음 글자에 덮이지 않게). */
 function placeImages(state: EditorState, at: number, urls: string[], ids: object[]) {
   const tr = state.tr.setMeta(uploadKey, { remove: ids } satisfies UploadAction);
   if (!urls.length) return tr;
   const { schema } = state;
-  const images = urls.map((src) => schema.nodes.image!.create({ src, alt: "" }));
+  const images = urls.map((src) => schema.nodes.paragraph!.create(null, schema.nodes.image!.create({ src, alt: "" })));
   const caret = state.selection.empty && state.selection.from === at;
   const $at = state.doc.resolve(at);
   let pos = at;
   if ($at.parent.isTextblock && $at.depth > 0) {
-    // 목록 항목의 첫 줄처럼 그 앞에 그림을 둘 수 없는 줄은 줄 맨 앞이라도 그 줄 아래에 둔다.
-    const above = $at.node(-1).canReplaceWith($at.index(-1), $at.index(-1), schema.nodes.image!);
+    // 목록 항목의 첫 줄처럼 그 앞에 문단을 둘 수 없는 곳은 줄 맨 앞이라도 그 줄 아래에 둔다.
+    const container = $at.node(-1);
+    const above = !(["listItem", "taskItem"].includes(container.type.name) && $at.index(-1) === 0) && container.canReplaceWith($at.index(-1), $at.index(-1), schema.nodes.paragraph!);
     if ($at.parentOffset === 0 && above) pos = $at.before();
     else if ($at.parentOffset === 0 || $at.parentOffset === $at.parent.content.size) pos = $at.after();
     else { tr.split(at); pos = at + 1; }
@@ -146,177 +144,3 @@ export const NoteImageUpload = Extension.create({
     })];
   },
 });
-
-// ── Mermaid 다이어그램 ───────────────────────────────────────
-// 언어가 mermaid인 코드 블록(```mermaid)을 다이어그램으로 보인다. 원문은 그대로 코드 블록이라 Markdown 보기·내려받기에서도 같다.
-// 다이어그램을 누르거나 커서가 들어가면 아래에 코드가 열리고, 고치는 대로 다시 그린다. Esc로 닫는다.
-
-/** 다이어그램은 16px 글자로 재고 그린 뒤 본문 글자 크기(14px)에 맞춰 줄여 보인다. */
-const SCALE = 0.875;
-const isDiagram = (node: ProseNode) => node.attrs.language === "mermaid";
-
-/** 다이어그램이 아닌 코드 블록. 기본 모양(pre > code)과 같다. */
-class CodeView implements NodeView {
-  dom = document.createElement("pre");
-  contentDOM = document.createElement("code");
-  constructor(private node: ProseNode) { this.dom.append(this.contentDOM); this.paint(); }
-  private paint() {
-    const language = this.node.attrs.language as string | null;
-    if (language) this.contentDOM.className = `language-${language}`; else this.contentDOM.removeAttribute("class");
-  }
-  update(node: ProseNode) {
-    if (node.type !== this.node.type || isDiagram(node)) return false;
-    this.node = node;
-    this.paint();
-    return true;
-  }
-}
-
-class DiagramView implements NodeView {
-  dom = document.createElement("div");
-  contentDOM = document.createElement("code");
-  private preview = document.createElement("div");
-  private message = document.createElement("p");
-  private image: HTMLImageElement | null = null;
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private version = 0;
-  private stopTheme: () => void;
-
-  constructor(private node: ProseNode, private editor: Editor, private getPos: () => number | undefined) {
-    this.dom.className = "note-diagram";
-    this.preview.className = "note-diagram-preview";
-    this.preview.contentEditable = "false";
-    this.message.className = "note-diagram-message";
-    this.preview.append(this.message);
-    const source = document.createElement("pre");
-    source.className = "note-diagram-source";
-    source.spellcheck = false;
-    this.contentDOM.className = "language-mermaid";
-    source.append(this.contentDOM);
-    this.dom.append(this.preview, source);
-    if (editor.isEditable) { this.preview.title = "눌러서 다이어그램 코드 고치기"; this.preview.addEventListener("mousedown", this.edit); }
-    editor.on("selectionUpdate", this.sync);
-    editor.on("focus", this.sync);
-    editor.on("blur", this.sync);
-    this.stopTheme = onThemeChange(() => this.draw(true));
-    this.draw(true);
-  }
-
-  /** 커서가 이 블록 안에 있을 때만 코드를 연다. */
-  private sync = () => {
-    const pos = this.getPos();
-    const { from, to } = this.editor.state.selection;
-    const inside = typeof pos === "number" && this.editor.isEditable && this.editor.isFocused && from > pos && to < pos + this.node.nodeSize;
-    this.dom.classList.toggle("is-editing", inside);
-  };
-
-  /** 다이어그램을 누르면 코드 끝에 커서를 둔다. */
-  private edit = (event: MouseEvent) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const pos = this.getPos();
-    if (typeof pos === "number") this.editor.chain().focus().setTextSelection(pos + this.node.nodeSize - 1).run();
-  };
-
-  private say(state: "empty" | "loading" | "ready" | "error", text = "") {
-    this.dom.dataset.state = state;
-    this.message.textContent = text;
-    this.message.hidden = !text;
-    this.message.setAttribute("role", state === "error" ? "alert" : "status");
-  }
-
-  private show(diagram: Diagram) {
-    if (!this.image) {
-      this.image = document.createElement("img");
-      this.image.draggable = false;
-      this.image.decoding = "async";
-      this.preview.prepend(this.image);
-    }
-    const firstLine = this.node.textContent.trim().split("\n")[0]!.trim();
-    this.image.alt = `Mermaid 다이어그램 (${firstLine.slice(0, 60)})`;
-    this.image.width = Math.round(diagram.width * SCALE);
-    this.image.height = Math.round(diagram.height * SCALE);
-    this.image.src = diagram.url;
-    this.say("ready");
-  }
-
-  /** 고치는 중에는 잠시 멈췄을 때 다시 그린다. 틀린 코드는 마지막으로 그린 그림을 흐리게 두고 오류를 보인다. */
-  private draw(now = false) {
-    clearTimeout(this.timer);
-    const code = this.node.textContent;
-    const version = ++this.version;
-    if (!code.trim()) {
-      this.image?.remove();
-      this.image = null;
-      this.say("empty", this.editor.isEditable ? "Mermaid 코드를 입력하면 여기에 다이어그램이 그려집니다." : "빈 다이어그램");
-      return;
-    }
-    if (!this.image) this.say("loading", "다이어그램을 그리는 중…");
-    this.timer = setTimeout(() => {
-      renderDiagram(code).then(
-        (diagram) => { if (version === this.version) this.show(diagram); },
-        (error: unknown) => { if (version === this.version) this.say("error", error instanceof Error ? error.message : "다이어그램을 그리지 못했습니다."); },
-      );
-    }, now ? 0 : 280);
-  }
-
-  update(node: ProseNode) {
-    if (node.type !== this.node.type || !isDiagram(node)) return false;
-    const changed = node.textContent !== this.node.textContent;
-    this.node = node;
-    if (changed) this.draw();
-    this.sync();
-    return true;
-  }
-
-  /** 코드 밖(다이어그램)의 변화는 편집기가 다시 읽지 않는다. */
-  ignoreMutation(mutation: MutationRecord | { type: "selection"; target: globalThis.Node }) {
-    if (mutation.type === "selection") return false;
-    return !this.contentDOM.contains(mutation.target);
-  }
-
-  /** 다이어그램을 누르는 일은 이 보기가 처리한다. 끌어 놓기는 편집기에 맡긴다. */
-  stopEvent(event: Event) {
-    return this.preview.contains(event.target as globalThis.Node) && !event.type.startsWith("drag") && event.type !== "drop";
-  }
-
-  destroy() {
-    clearTimeout(this.timer);
-    this.version++;
-    this.stopTheme();
-    this.editor.off("selectionUpdate", this.sync);
-    this.editor.off("focus", this.sync);
-    this.editor.off("blur", this.sync);
-  }
-}
-
-/** 코드 블록. 언어가 mermaid면 다이어그램으로 보인다. */
-export const NoteCodeBlock = CodeBlock.extend({
-  addNodeView() {
-    return ({ node, editor, getPos }) => (isDiagram(node) ? new DiagramView(node, editor, getPos) : new CodeView(node));
-  },
-  addKeyboardShortcuts() {
-    return {
-      ...this.parent?.(),
-      // 다이어그램 코드를 고치다 Esc를 누르면 코드를 닫고 다이어그램 전체를 고른다.
-      Escape: () => {
-        const { $from } = this.editor.state.selection;
-        if ($from.parent.type.name !== this.name || !isDiagram($from.parent)) return false;
-        return this.editor.commands.setNodeSelection($from.before());
-      },
-    };
-  },
-});
-
-/** 다이어그램 예시를 넣는다. 빈 문단이면 그 자리를, 아니면 지금 블록 다음을 쓰고, 커서를 코드 끝에 둔다. */
-export function insertDiagram(editor: Editor) {
-  const { $from } = editor.state.selection;
-  const block = $from.parent;
-  if (block.type.name === "paragraph" && !block.content.size) {
-    editor.chain().focus().setNode("codeBlock", { language: "mermaid" }).insertContent(DIAGRAM_SAMPLE).run();
-    return;
-  }
-  const at = $from.depth ? $from.after(1) : editor.state.doc.content.size;
-  editor.chain().focus().insertContentAt(at, { type: "codeBlock", attrs: { language: "mermaid" }, content: [{ type: "text", text: DIAGRAM_SAMPLE }] })
-    .setTextSelection(at + 1 + DIAGRAM_SAMPLE.length).run();
-}

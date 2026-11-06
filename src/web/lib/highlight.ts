@@ -42,6 +42,9 @@ const LANGUAGES = {
 };
 for (const [name, language] of Object.entries(LANGUAGES)) hljs.registerLanguage(name, language);
 
+/** 메모 편집기의 코드 블록도 같은 언어 목록으로 색을 입힌다. */
+export { hljs };
+
 /** 이보다 긴 글은 색을 입히지 않고 줄 번호만 붙인다(정규식 강조가 느려지는 지점). */
 export const HIGHLIGHT_MAX_CHARS = 600_000;
 

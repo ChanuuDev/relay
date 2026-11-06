@@ -67,9 +67,10 @@ describe("Local read-only HTTP API", () => {
       expect(request(endpoint).headers.has("Access-Control-Allow-Origin")).toBe(false);
       expect(request(endpoint).headers.get("X-Content-Type-Options")).toBe("nosniff");
       expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
-      // 유튜브 창은 localhost 출처의 플레이어 래퍼(iframe)·섬네일·oEmbed만 바깥에서 받는다.
+      // 유튜브 창은 localhost 출처의 플레이어 래퍼(iframe)·oEmbed만 바깥에서 받는다. 그림은 GitHub Markdown처럼 https 주소도 받지만 스크립트·인라인 스타일은 막는다.
       expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("frame-src 'self' http://localhost:7474");
-      expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("img-src 'self' blob: https://i.ytimg.com");
+      expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("img-src 'self' blob: https:;");
+      expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("script-src 'self'; style-src 'self';");
       expect(request(endpoint).headers.get("Content-Security-Policy")).toContain("connect-src 'self' https://www.youtube.com");
     }
   });

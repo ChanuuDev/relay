@@ -9,10 +9,11 @@ import { Button } from "../ui/button";
 import { ConfirmDialog } from "../desktop/confirm-dialog";
 import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
-import { extensions } from "./note-editor";
+import { markdownExtensions } from "./markdown";
+import { joinPath } from "./markdown/sanitize";
 import { guardClose, useDesktop } from "../../lib/desktop-store";
 import {
-  codeLanguage, contentUrl, encodeText, ENCODING_LABELS, extensionOf, formatDate, formatSize, openOnSystem, readTextFile, SaveError, saveTextFile, type TextEncoding,
+  codeLanguage, contentUrl, encodeText, ENCODING_LABELS, extensionOf, formatDate, formatSize, openOnSystem, readTextFile, SaveError, saveTextFile, type FileEntry, type TextEncoding,
 } from "../../lib/files";
 import { renderCode } from "../../lib/highlight";
 import { guardLeave, useViewer, type ViewerDoc } from "../../lib/viewer";
@@ -305,7 +306,7 @@ function TextView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say: 
         : state.status === "binary" ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>글자로 읽을 수 없는 파일입니다</strong><span>이진 파일이거나 알 수 없는 인코딩입니다.</span></div>
           : state.status === "error" ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>파일을 열 수 없습니다</strong><span>{state.message}</span></div>
             : editing ? <EditView value={draft} onChange={setDraft} language={language?.language ?? "plaintext"} wrap={wrap} />
-              : effective === "rich" ? <MarkdownView text={text} />
+              : effective === "rich" ? <MarkdownView text={text} path={doc.path} />
                 : language ? <CodeView text={text} language={language.language} wrap={wrap} />
                   : <pre className="viewer-source" data-wrap={wrap ? "" : undefined}>{text}</pre>}
       {state.status === "ready" && state.truncated && <p className="viewer-truncated" role="status">파일이 커서 앞 8MB까지만 보입니다.</p>}
@@ -358,11 +359,26 @@ function CodeView({ text, language, wrap }: { text: string; language: string; wr
     style={{ ["--gutter" as string]: `${Math.max(2, String(rendered.lines).length)}ch` }} dangerouslySetInnerHTML={{ __html: rendered.html }} />;
 }
 
-/** Markdown을 메모 창과 같은 서식으로 그린다(읽기 전용 tiptap). */
-function MarkdownView({ text }: { text: string }) {
+/** 파일 이름으로 뷰어가 열 수 있는 항목을 만든다(상대 링크로 옆 파일을 열 때). */
+const entryOf = (path: string): FileEntry => ({ name: path.split(/[\\/]/).pop() ?? path, path, kind: "file", size: null, modified: null, hidden: false, link: false });
+
+/** Markdown을 메모 창과 같은 서식으로 그린다(읽기 전용 tiptap). GitHub처럼 상대 주소의 그림은 이 파일 옆에서 읽고, 상대 링크는 뷰어로 연다. */
+function MarkdownView({ text, path }: { text: string; path: string }) {
+  const extensions = useMemo(() => markdownExtensions({
+    // 그림은 이 파일 옆의 파일 내용 주소로 바꾸고, 링크는 원래 주소를 두었다가 누를 때 openLink가 푼다.
+    resolve: (url, kind) => {
+      if (kind === "link") return url;
+      const target = joinPath(path, url);
+      return target ? contentUrl(target) : null;
+    },
+    openLink: (url) => {
+      const target = joinPath(path, url);
+      if (target) useViewer.getState().open(entryOf(target));
+    },
+  }, ""), [path]);
   const editor = useEditor({
     extensions, content: text, contentType: "markdown", editable: false, injectCSS: false, immediatelyRender: true, shouldRerenderOnTransaction: false,
     editorProps: { attributes: { class: "note-prose viewer-prose", "aria-label": "본문" } },
-  }, [text]);
+  }, [text, extensions]);
   return <EditorContent editor={editor} className="viewer-rich" />;
 }

@@ -169,7 +169,8 @@ test("상세 필터 행은 0에서 윗줄부터 펼쳐지고, 접히는 중에 �
   // 가짜 시계로 트윈을 멈춰 가며 본다. 예전에는 행 자체의 높이를 줄여 아래 정렬된 입력칸의 아랫부분만 잘려 보였다.
   await page.clock.install();
   await ready(page);
-  await page.clock.pauseAt(Date.now() + 1000);
+  // 화면이 뜨는 데 1초를 넘기면(검증 전체를 돌릴 때 PC가 바쁘면) 테스트 쪽 시각으로는 이미 지난 때라 멈출 수 없다. 화면의 시계에서 잰다.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
   const toggle = page.getByRole("button", { name: "상세 필터", exact: true });
   const box = () => page.evaluate(() => {
     const reveal = document.querySelector(".advanced-reveal")!.getBoundingClientRect();

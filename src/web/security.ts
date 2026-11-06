@@ -5,12 +5,13 @@ export const loopbackHosts = (port: number) =>
   (port === 80 ? ["127.0.0.1", "localhost", "127.0.0.1:80", "localhost:80"] : [`127.0.0.1:${port}`, `localhost:${port}`]);
 export const localhostOrigin = (port: number) => (port === 80 ? "http://localhost" : `http://localhost:${port}`);
 
-/** 메인 화면과 API의 보안 헤더. 유튜브 창을 위해 localhost 출처의 플레이어 래퍼(iframe)·섬네일·oEmbed만 바깥에서 받는다. */
+/** 메인 화면과 API의 보안 헤더. 유튜브 창을 위해 localhost 출처의 플레이어 래퍼(iframe)·oEmbed만 바깥에서 받는다.
+ *  그림은 GitHub Markdown처럼 https 주소(README의 배지·외부 그림)도 보인다. 그림은 스크립트를 실행하지 못한다. */
 export function securityHeaders(port: number) {
   return {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": `default-src 'self'; img-src 'self' blob: https://i.ytimg.com; script-src 'self'; style-src 'self'; connect-src 'self' https://www.youtube.com; frame-src 'self' ${localhostOrigin(port)}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
+    "Content-Security-Policy": `default-src 'self'; img-src 'self' blob: https:; script-src 'self'; style-src 'self'; connect-src 'self' https://www.youtube.com; frame-src 'self' ${localhostOrigin(port)}; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
     "Referrer-Policy": "no-referrer",
   };
 }

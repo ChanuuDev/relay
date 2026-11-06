@@ -713,3 +713,194 @@ test("메모 창: 글과 그림이 함께 든 클립보드는 글을 붙이고, 
   await expect(notes.locator(".notes-undo[role=alert]")).toContainText("그림을 넣지 못했습니다");
   await expect(notes.locator(".note-prose img.note-image")).toHaveCount(1);
 });
+
+/** GitHub Markdown 양식을 고루 담은 본문. 바깥 그림(배지)은 테스트에서 가짜 응답으로 채운다. */
+const GFM = [
+  "# 양식 견본",
+  "",
+  "[![CI](https://badge.example/ci.svg)](https://github.com) ![License](https://badge.example/license.svg)",
+  "",
+  "## 글자",
+  "",
+  "<kbd>Ctrl</kbd>+<kbd>C</kbd>, H<sub>2</sub>O, x<sup>2</sup>, <mark>형광</mark>, <ins>밑줄</ins> :rocket: 색 `#0969DA`",
+  "",
+  "> [!WARNING]",
+  "> 경고 알림입니다.",
+  "",
+  "### 정렬한 표",
+  "",
+  "| 왼쪽 | 가운데 | 오른쪽 |",
+  "| :--- | :---: | ---: |",
+  "| a | b | c |",
+  "",
+  "수식 $E = mc^2$ 와 $`\\sqrt{2}`$ 그리고 돈 $5 와 $10",
+  "",
+  "$$",
+  "\\frac{1}{3}",
+  "$$",
+  "",
+  "각주가 있는 문장[^note].",
+  "",
+  "<details>",
+  "<summary>펼쳐 보기</summary>",
+  "",
+  "접힌 **내용**",
+  "",
+  "</details>",
+  "",
+  "<p align=\"center\"><b>가운데</b></p>",
+  "",
+  "<div align=\"center\">",
+  "",
+  "#### 감싼 제목",
+  "",
+  "</div>",
+  "",
+  "<!-- 숨은 주석 -->",
+  "",
+  "```geojson",
+  "{\"type\":\"Point\",\"coordinates\":[126.97,37.56]}",
+  "```",
+  "",
+  "```ts",
+  "const answer = 42;",
+  "```",
+  "",
+  "[^note]: 각주 설명 [표로 가기](#정렬한-표)",
+].join("\n");
+
+test("메모 창: GitHub Markdown 양식(알림·정렬 표·수식·각주·접기·HTML·이모지·지도·배지)을 그리고 원문 그대로 저장한다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="20"><rect width="60" height="20" fill="#4c1"/></svg>';
+  await page.route("https://badge.example/**", (route) => route.fulfill({ status: 200, contentType: "image/svg+xml", body: svg }));
+  await seed(page, [{ id: "g", kind: "note", parentId: null, title: "GFM", body: GFM }], { selected: "g" });
+  const prose = page.locator(".note-prose");
+  // 링크 건 배지와 바깥(https) 그림
+  await expect(prose.locator('a[href="https://github.com"] img.note-image')).toHaveAttribute("src", "https://badge.example/ci.svg");
+  await expect.poll(() => prose.locator("img.note-image").nth(1).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(60);
+  // 글자 서식·이모지·색상 견본
+  await expect(prose.locator("kbd").first()).toHaveText("Ctrl");
+  await expect(prose.locator("sub")).toHaveText("2");
+  await expect(prose.locator("sup").filter({ hasText: "2" })).toHaveCount(1);
+  await expect(prose.locator("mark")).toHaveText("형광");
+  await expect(prose.locator("ins")).toHaveText("밑줄");
+  await expect(prose.locator(".md-emoji")).toHaveText("🚀");
+  await expect(prose.locator(".md-swatch")).toHaveCount(1);
+  // 알림 상자·정렬한 표·제목 앵커
+  await expect(prose.locator('.md-alert[data-alert="warning"] .md-alert-title')).toHaveText("경고");
+  await expect(prose.locator('td[align="center"]')).toHaveText("b");
+  await expect(prose.locator('th[align="right"]')).toHaveText("오른쪽");
+  await expect(prose.locator("h3")).toHaveAttribute("id", "md-정렬한-표");
+  // 수식(돈 표시는 수식이 아니다)·각주·접기·HTML
+  await expect(prose.locator(".md-math math")).toHaveCount(2);
+  await expect(prose.locator(".md-math-display math")).toHaveCount(1);
+  await expect(prose).toContainText("돈 $5 와 $10");
+  await expect(prose.locator('.md-fnref[data-index="1"]')).toHaveCount(1);
+  await expect(prose.locator('.md-footnote[data-index="1"]')).toContainText("각주 설명");
+  await expect(prose.locator('[data-type="details"] summary')).toHaveText("펼쳐 보기");
+  await expect(prose.locator('[data-type="detailsContent"]')).toBeHidden();
+  await prose.locator('[data-type="details"] > button').click();
+  await expect(prose.locator('[data-type="detailsContent"] strong')).toHaveText("내용");
+  await expect(prose.locator('.md-html p[align="center"] b')).toHaveText("가운데");
+  await expect(prose.locator(".md-html-chip")).toHaveText("HTML 주석");
+  // <div align="center"> 안의 Markdown은 그 정렬을 따른다.
+  await expect(prose.locator('.md-container-body[align="center"] h4')).toHaveText("감싼 제목");
+  await expect.poll(() => prose.locator(".md-container-body h4").evaluate((node) => getComputedStyle(node).textAlign)).toMatch(/center$/);
+  await expect(prose.locator('.note-diagram[data-kind="geojson"] svg circle')).toHaveCount(1);
+  await expect(prose.locator('pre[data-language="ts"] .hljs-keyword')).toHaveText("const");
+
+  // 각주 번호를 누르면 설명으로, 설명 안의 #링크를 Ctrl과 함께 누르면 그 제목으로 옮긴다.
+  await prose.locator(".md-fnref").click();
+  await expect(prose.locator(".md-footnote")).toBeInViewport();
+  await expect(prose.locator("h3")).not.toBeInViewport();
+  await prose.locator(".md-footnote").getByRole("link", { name: "표로 가기" }).click({ modifiers: ["Control"] });
+  await expect(prose.locator("h3")).toBeInViewport();
+  // 부드럽게 옮기는 동안 누르지 않도록 멈출 때까지 기다린다.
+  await expect.poll(async () => { const top = await prose.locator("h3").evaluate((node) => node.getBoundingClientRect().top); await page.waitForTimeout(120); return top === await prose.locator("h3").evaluate((node) => node.getBoundingClientRect().top); }).toBe(true);
+
+  // 저장한 원문은 같은 양식 그대로 남고, 다시 읽어 다시 써도 같다.
+  await prose.locator("h1").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("!");
+  const body = async () => ((await saved(page)).items as Array<{ id: string; body: string }>).find((entry) => entry.id === "g")?.body ?? "";
+  await expect.poll(body).toContain("# 양식 견본!");
+  const first = await body();
+  for (const piece of ["[![CI](https://badge.example/ci.svg)](https://github.com)", "<kbd>Ctrl</kbd>", "H<sub>2</sub>O", "<mark>형광</mark>", ":rocket:", "> [!WARNING]", "| :", ":---:",
+    "$E = mc^2$", "$`\\sqrt{2}`$", "$$\n\\frac{1}{3}\n$$", "[^note]", "[^note]: 각주 설명 [표로 가기](#정렬한-표)", "<details open>\n<summary>펼쳐 보기</summary>", "<p align=\"center\"><b>가운데</b></p>", "<div align=\"center\">\n\n#### 감싼 제목\n\n</div>", "<!-- 숨은 주석 -->", "```geojson", "```ts"]) {
+    expect(first, piece).toContain(piece);
+  }
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("메모")).click();
+  await item(page, "GFM").click();
+  await expect(page.locator(".md-alert")).toHaveCount(1);
+  await page.locator(".note-prose h1").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("?");
+  await expect.poll(body).toBe(first.replace("# 양식 견본!", "# 양식 견본!?"));
+  expect(errors).toEqual([]);
+});
+
+test("메모 창: 더 넣기 메뉴로 알림 상자·수식·접기·각주를 넣고, 표 열을 정렬한다", async ({ page }) => {
+  await seed(page, [{ id: "m", kind: "note", parentId: null, title: "넣기", body: "첫 줄" }], { selected: "m" });
+  const notes = page.locator(win("notes"));
+  const prose = notes.locator(".note-prose");
+  // 문서 끝(맨 끝의 빈 줄)으로 커서를 옮긴다.
+  const toEnd = () => page.evaluate(() => (document.querySelector("#note-body") as HTMLElement & { editor: { commands: { focus: (at: string) => void } } }).editor.commands.focus("end"));
+  await prose.locator("p").first().click();
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(prose.locator("p")).toHaveCount(2);
+  const insert = async (label: string) => {
+    await notes.getByRole("button", { name: "더 넣기" }).click();
+    await page.getByRole("menuitem", { name: label }).click();
+  };
+  await insert("알림 상자 · 참고");
+  await page.keyboard.type("참고할 내용");
+  await expect(prose.locator('.md-alert[data-alert="note"]')).toContainText("참고할 내용");
+  // 제목을 누르면 종류가 차례로 바뀐다.
+  await prose.locator(".md-alert-title").click();
+  await expect(prose.locator(".md-alert")).toHaveAttribute("data-alert", "tip");
+  await prose.locator(".md-alert-body p").click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await insert("각주");
+  await page.keyboard.type("설명");
+  await expect(prose.locator('.md-footnote[data-footnote="1"]')).toContainText("설명");
+  await toEnd();
+  await insert("인라인 수식");
+  const input = prose.locator(".md-math-input");
+  await expect(input).toBeFocused();
+  await input.fill("\\alpha^2");
+  await input.press("Enter");
+  await expect(prose.locator(".md-math math")).toHaveCount(1);
+  await insert("접기 블록");
+  await page.keyboard.type("요약");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("안쪽");
+  await expect(prose.locator('[data-type="detailsContent"]')).toContainText("안쪽");
+  // 글을 치다 $…$로 닫으면 수식, :이름:은 이모지가 된다.
+  await toEnd();
+  await page.keyboard.type("값 $x_1$ 과 :tada: 끝");
+  await expect(prose.locator(".md-math")).toHaveCount(2);
+  await expect(prose.locator(".md-emoji")).toHaveText("🎉");
+  await page.keyboard.press("Enter");
+  await notes.getByRole("button", { name: "표 넣기" }).click();
+  await page.keyboard.type("머리");
+  await notes.getByRole("button", { name: "표 편집" }).click();
+  await page.getByRole("menuitem", { name: "열 오른쪽 정렬" }).click();
+  await expect(prose.locator('th[align="right"]')).toHaveText("머리");
+  const body = async () => ((await saved(page)).items as Array<{ id: string; body: string }>).find((entry) => entry.id === "m")?.body ?? "";
+  await expect.poll(body).toContain("---:");
+  const text = await body();
+  for (const piece of ["> [!TIP]\n> 참고할 내용", "[^1]", "[^1]: 설명", "$\\alpha^2$", "<details open>\n<summary>요약</summary>", "안쪽", "값 $x_1$ 과 :tada: 끝"]) expect(text, piece).toContain(piece);
+  // Markdown 보기에서도 같은 메뉴가 원문을 넣는다.
+  await notes.getByRole("button", { name: "Markdown", exact: true }).click();
+  const source = notes.locator("textarea#note-body");
+  await source.focus();
+  await source.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(element.value.length, element.value.length));
+  await insert("알림 상자 · 주의");
+  await expect(source).toHaveValue(/> \[!CAUTION\]\n> 내용을 입력하세요\n$/);
+});

@@ -1,15 +1,10 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import { Markdown } from "@tiptap/markdown";
-import { TaskItem, TaskList } from "@tiptap/extension-list";
-import { TableKit } from "@tiptap/extension-table";
-import { Image } from "@tiptap/extension-image";
-import { Placeholder } from "@tiptap/extensions";
 import { Popover } from "radix-ui";
 import {
-  Bold, Code, Download, Heading1, Heading2, Heading3, ImagePlus, Italic, Link, List, ListOrdered, ListTodo, Minus, Pilcrow, Redo2, SquareCode, Strikethrough, Table, TextQuote, Undo2, Unlink,
-  Workflow, type LucideIcon,
+  Asterisk, Bold, Box, Code, CodeXml, Download, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Info, Italic, Keyboard, Lightbulb, Link, List, ListCollapse, ListOrdered,
+  ListTodo, Map as MapIcon, MessageSquareWarning, Minus, OctagonAlert, Pilcrow, Plus, Redo2, Sigma, SquareCode, SquareFunction, Strikethrough, Subscript, Superscript, Table,
+  TextQuote, TriangleAlert, Underline, Undo2, Unlink, Workflow, type LucideIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -17,8 +12,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { focusMenuOnOpen, followPointer } from "../desktop/menu";
 import { fileNameOf, labelOf, markdownFile, useNoteMode, useNotes, type Note } from "../../lib/notes";
 import { IMAGE_ACCEPT, imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
-import { DIAGRAM_SAMPLE } from "../../lib/mermaid";
-import { NoteCodeBlock, NoteImageUpload, appendToNote, insertDiagram, insertImages } from "./note-extensions";
+import { NoteImageUpload, appendToNote, insertImages } from "./note-extensions";
+import { markdownExtensions } from "./markdown";
+import { alignColumn, insertRich, sourceSnippet, type InsertKind } from "./markdown/insert";
 
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 const SHIFT = MOD === "⌘" ? "⇧" : "Shift+";
@@ -30,28 +26,23 @@ const BLOCKS: Array<{ value: Block; label: string; icon: LucideIcon }> = [
   { value: "h2", label: "제목 2", icon: Heading2 }, { value: "h3", label: "제목 3", icon: Heading3 },
 ];
 
-/** 본문은 Markdown으로 읽고 쓴다. 한 줄 바꿈도 줄바꿈으로 읽어(breaks) 예전 평문 메모의 줄이 합쳐지지 않는다.
- *  ```mermaid 코드 블록은 다이어그램으로 보인다(파일 뷰어의 Markdown 보기도 같은 확장을 쓴다). */
-export const extensions = [
-  StarterKit.configure({
-    heading: { levels: [1, 2, 3] },
-    // 코드 블록은 Mermaid 다이어그램을 그리는 NoteCodeBlock으로 바꾼다.
-    codeBlock: false,
-    // 밑줄은 Markdown 표준 문법이 없어 뺀다.
-    underline: false,
-    link: { openOnClick: false, autolink: true, linkOnPaste: true, defaultProtocol: "https", HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" } },
-  }),
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  TableKit.configure({ table: { resizable: false } }),
-  NoteCodeBlock,
-  // 메모 그림은 Relay 서버(/api/v1/notes/images)에 있다. 외부 그림은 CSP가 막지만, 원문에 있는 그림 문법은 서식 보기를 오가도 잃지 않게 둔다.
-  Image.configure({ HTMLAttributes: { class: "note-image", loading: "lazy", decoding: "async" } }),
-  Placeholder.configure({ placeholder: "내용을 입력하세요" }),
-  Markdown.configure({ markedOptions: { gfm: true, breaks: true }, indentation: { style: "space", size: 2 } }),
+/** "더 넣기" 목록. 서식 보기에서는 노드로, Markdown 보기에서는 같은 원문을 넣는다. */
+const INSERTS: Array<{ kind: InsertKind; label: string; icon: LucideIcon } | "separator"> = [
+  { kind: "math", label: "수식 블록", icon: Sigma }, { kind: "mathInline", label: "인라인 수식", icon: SquareFunction },
+  "separator",
+  { kind: "alert:note", label: "알림 상자 · 참고", icon: Info }, { kind: "alert:tip", label: "알림 상자 · 팁", icon: Lightbulb },
+  { kind: "alert:important", label: "알림 상자 · 중요", icon: MessageSquareWarning }, { kind: "alert:warning", label: "알림 상자 · 경고", icon: TriangleAlert },
+  { kind: "alert:caution", label: "알림 상자 · 주의", icon: OctagonAlert },
+  "separator",
+  { kind: "details", label: "접기 블록", icon: ListCollapse }, { kind: "footnote", label: "각주", icon: Asterisk },
+  "separator",
+  { kind: "geojson", label: "지도 (GeoJSON)", icon: MapIcon }, { kind: "stl", label: "3D 모델 (STL)", icon: Box }, { kind: "html", label: "HTML 블록", icon: CodeXml },
 ];
-/** 메모 편집기는 그림 붙여넣기·끌어 놓기도 받는다. */
-const noteExtensions = [...extensions, NoteImageUpload];
+/** HTML 태그로 저장하는 글자 서식(서식 보기에서만). */
+const MARKS: Array<{ mark: string; label: string; icon: LucideIcon; keys?: string }> = [
+  { mark: "superscript", label: "위 첨자", icon: Superscript, keys: `${MOD}.` }, { mark: "subscript", label: "아래 첨자", icon: Subscript, keys: `${MOD},` },
+  { mark: "kbd", label: "키보드 키", icon: Keyboard }, { mark: "highlight", label: "형광펜", icon: Highlighter }, { mark: "ins", label: "밑줄", icon: Underline },
+];
 
 /** Markdown 원문 칸의 커서 자리에 글을 넣는다. 브라우저의 되돌리기 기록에 남도록 insertText를 먼저 쓴다. */
 function insertAtCaret(source: HTMLTextAreaElement, text: string, onChange: (value: string) => void) {
@@ -76,8 +67,11 @@ export function NoteDocument({ note }: { note: Note }) {
   const emitted = useRef(note.body);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 편집기마다 새 확장 묶음을 쓴다(Markdown 문법 규칙이 편집기를 만들 때마다 쌓이지 않게). 그림 붙여넣기·끌어 놓기도 받는다.
+  const rich = mode === "rich";
+  const extensions = useMemo(() => [...markdownExtensions(), NoteImageUpload], [rich]);
   const editor = useEditor({
-    extensions: noteExtensions,
+    extensions,
     content: note.body,
     contentType: "markdown",
     // CSP(style-src 'self')가 인라인 <style>을 막으므로 기본 CSS는 styles.css에 옮겨 두었다.
@@ -99,7 +93,7 @@ export function NoteDocument({ note }: { note: Note }) {
       emitted.current = body;
       update(note.id, { body });
     },
-  }, [mode === "rich"]);
+  }, [rich]);
 
   // 그림을 올리는 사이 편집기가 닫히면 이 메모 끝에 붙인다.
   useEffect(() => { if (editor) editor.storage.noteImageUpload.noteId = note.id; }, [editor, note.id]);
@@ -132,10 +126,14 @@ export function NoteDocument({ note }: { note: Note }) {
     if (mode === "rich" && editor) { editor.commands.focus(); void insertImages(editor, files); }
     else void insertSourceImages(files);
   }
-  function addDiagram() {
-    if (mode === "rich" && editor) { insertDiagram(editor); return; }
+  function addKind(kind: InsertKind) {
+    if (mode === "rich" && editor) { insertRich(editor, kind); return; }
     const source = sourceRef.current;
-    if (source) insertAtCaret(source, asBlock(source, `\`\`\`mermaid\n${DIAGRAM_SAMPLE}\n\`\`\``), setSource);
+    if (!source) return;
+    const snippet = sourceSnippet(kind, source.value);
+    insertAtCaret(source, snippet.block ? asBlock(source, snippet.text) : snippet.text, setSource);
+    // 각주 설명은 문서 끝에 붙인다.
+    if (snippet.append) { const caret = source.selectionStart; setSource(`${source.value.replace(/\s+$/, "")}\n\n${snippet.append}\n`); requestAnimationFrame(() => source.setSelectionRange(caret, caret)); }
   }
   function pickImages(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -165,7 +163,7 @@ export function NoteDocument({ note }: { note: Note }) {
 
   return <>
     <FormatToolbar editor={mode === "rich" ? editor : null} mode={mode} onMode={(next) => { emitted.current = note.body; setMode(next); }} onDownload={download}
-      onImage={() => fileRef.current?.click()} onDiagram={addDiagram} />
+      onImage={() => fileRef.current?.click()} onInsert={addKind} />
     <input ref={fileRef} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={pickImages} data-testid="note-image-file" />
     <div className="note-scroll" onMouseDown={(event) => {
       // 본문 아래 빈 곳을 누르면 본문 끝에 커서를 둔다.
@@ -186,8 +184,8 @@ export function NoteDocument({ note }: { note: Note }) {
   </>;
 }
 
-function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onDiagram }: {
-  editor: Editor | null; mode: "rich" | "source"; onMode: (mode: "rich" | "source") => void; onDownload: () => void; onImage: () => void; onDiagram: () => void;
+function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onInsert }: {
+  editor: Editor | null; mode: "rich" | "source"; onMode: (mode: "rich" | "source") => void; onDownload: () => void; onImage: () => void; onInsert: (kind: InsertKind) => void;
 }) {
   const state = useEditorState({
     editor,
@@ -241,7 +239,8 @@ function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onDiagram }:
     <div className="format-group">
       {/* 그림과 다이어그램은 Markdown 보기에서도 커서 자리에 넣는다. */}
       <Tool icon={ImagePlus} label="그림 넣기" disabled={mode === "rich" && (off || state.codeBlock)} onClick={onImage} />
-      <Tool icon={Workflow} label="Mermaid 다이어그램 넣기" disabled={mode === "rich" && (off || state.codeBlock)} onClick={onDiagram} />
+      <Tool icon={Workflow} label="Mermaid 다이어그램 넣기" disabled={mode === "rich" && (off || state.codeBlock)} onClick={() => onInsert("mermaid")} />
+      <InsertMenu editor={editor} disabled={mode === "rich" && (off || state.codeBlock)} onInsert={onInsert} />
     </div>
     <div className="format-end">
       <div className="format-mode" role="group" aria-label="보기">
@@ -300,6 +299,34 @@ function LinkTool({ editor, active, disabled }: { editor: Editor | null; active:
   </Popover.Root>;
 }
 
+/** 수식·알림 상자·접기·각주·지도·3D·HTML 블록을 넣고, HTML 태그로 저장하는 글자 서식을 입힌다. */
+function InsertMenu({ editor, disabled, onInsert }: { editor: Editor | null; disabled: boolean; onInsert: (kind: InsertKind) => void }) {
+  const [open, setOpen] = useState(false);
+  const item = (key: string, label: string, Icon: LucideIcon, onSelect: () => void, keys?: string, itemDisabled = false) =>
+    <button key={key} type="button" className="menu-item insert-item" role="menuitem" disabled={itemDisabled}
+      onClick={() => { setOpen(false); onSelect(); }}><Icon aria-hidden="true" /><span>{label}</span>{keys && <kbd className="format-keys">{keys}</kbd>}</button>;
+  return <Popover.Root open={open} onOpenChange={setOpen}>
+    <Tool icon={Plus} label="더 넣기" active={open} disabled={disabled} trigger={(button) => <Popover.Trigger asChild>{button}</Popover.Trigger>} />
+    <Popover.Portal>
+      <Popover.Content className="format-popover format-menu insert-menu material-menu" role="menu" aria-label="더 넣기" side="bottom" align="end" sideOffset={6}
+        onOpenAutoFocus={(event) => { event.preventDefault(); focusMenuOnOpen(event.currentTarget as HTMLElement); }}
+        onPointerMove={(event) => followPointer(event.currentTarget, event.target)} onPointerLeave={(event) => followPointer(event.currentTarget, null)}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          // 넣은 양식이 초점을 가져갔으면(인라인 수식의 원문 칸 등) 그대로 둔다.
+          const body = editor ? editor.view.dom : document.getElementById("note-body");
+          if (body && !body.contains(document.activeElement)) (editor ? editor.view.focus() : body.focus());
+        }}>
+        {INSERTS.map((entry, index) => entry === "separator" ? <div key={`sep-${index}`} role="separator" className="menu-separator" />
+          : item(entry.kind, entry.label, entry.icon, () => onInsert(entry.kind)))}
+        <div role="separator" className="menu-separator" />
+        <p className="insert-heading">글자 서식{editor ? "" : " · 서식 보기에서"}</p>
+        {MARKS.map((mark) => item(mark.mark, mark.label, mark.icon, () => editor?.chain().focus().toggleMark(mark.mark).run(), mark.keys, !editor))}
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>;
+}
+
 /** 표 밖에서는 3×3 표를 넣고, 표 안에서는 행·열을 다루는 목록을 연다. */
 function TableTool({ editor, active, disabled }: { editor: Editor | null; active: boolean; disabled: boolean }) {
   const [open, setOpen] = useState(false);
@@ -319,6 +346,9 @@ function TableTool({ editor, active, disabled }: { editor: Editor | null; active
         {action("아래에 행 추가", (chain) => chain.addRowAfter())}
         {action("왼쪽에 열 추가", (chain) => chain.addColumnBefore())}
         {action("오른쪽에 열 추가", (chain) => chain.addColumnAfter())}
+        <div role="separator" className="menu-separator" />
+        {(["left", "center", "right", null] as const).map((align) => <button key={align ?? "none"} type="button" className="menu-item" role="menuitem"
+          onClick={() => { if (editor) alignColumn(editor, align); setOpen(false); }}>{align === "left" ? "열 왼쪽 정렬" : align === "center" ? "열 가운데 정렬" : align === "right" ? "열 오른쪽 정렬" : "열 정렬 없애기"}</button>)}
         <div role="separator" className="menu-separator" />
         {action("행 삭제", (chain) => chain.deleteRow())}
         {action("열 삭제", (chain) => chain.deleteColumn())}
