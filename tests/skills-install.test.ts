@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { installSkills, skillFiles } from "../src/skills/install";
+import { installSkills, SKILL_NAMES, skillFiles } from "../src/skills/install";
 import { cleanup, root, temporary } from "./helpers";
 
 let dir: string;
@@ -135,6 +135,17 @@ test("install-skills keeps an edited copy unless --force is given", () => {
   expect(install().targets.find(t => t.host === "grok")!.status).toBe("unchanged");
   expect(install(true).targets.find(t => t.host === "claude")!.status).toBe("updated");
   expect(readFileSync(file, "utf8")).toBe(skillFiles("claude")["SKILL.md"]);
+});
+
+test("this repository's own project copies match the skills the executable installs", () => {
+  // Project copies win over the user's, so an agent working here would read a stale skill if these fell behind.
+  const read = (file: string) => readFileSync(path.join(root, file), "utf8").replace(/\r\n/g, "\n");
+  const lf = (text: string) => text.replace(/\r\n/g, "\n");
+  for (const skill of SKILL_NAMES) {
+    expect(read(`.agents/skills/${skill}/SKILL.md`)).toBe(lf(skillFiles("codex", skill)["SKILL.md"]!));
+    expect(read(`.agents/skills/${skill}/agents/openai.yaml`)).toBe(lf(skillFiles("codex", skill)["agents/openai.yaml"]!));
+    expect(read(`.claude/skills/${skill}/SKILL.md`)).toBe(lf(skillFiles("claude", skill)["SKILL.md"]!));
+  }
 });
 
 test("install-skills covers CODEX_HOME as well as ~/.codex", () => {
