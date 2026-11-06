@@ -366,7 +366,7 @@ test("record discovery and warm responsive workspace stay usable at narrow width
   cli(["update", "--session-id", "resume", "--summary", "재개할 작업"]);
   record("active", "다른 작업");
   await ready(page);
-  await page.getByRole("button", { name: "이전 기록 찾기" }).click();
+  await page.keyboard.press("/");
   await expect(page.getByLabel("검색", { exact: true })).toBeFocused();
   await page.getByLabel("검색", { exact: true }).fill("이전 디자인");
   await page.keyboard.press("Enter");

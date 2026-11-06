@@ -14,7 +14,6 @@ import wallpaperDunes from "./public/wallpapers/dunes.jpg" with { type: "file" }
 import wallpaperWaves from "./public/wallpapers/waves.jpg" with { type: "file" };
 import wallpaperForest from "./public/wallpapers/forest.jpg" with { type: "file" };
 import iconSessions from "./public/icons/sessions.png" with { type: "file" };
-import iconGuide from "./public/icons/guide.png" with { type: "file" };
 import iconCommand from "./public/icons/command.png" with { type: "file" };
 import iconSettings from "./public/icons/settings.png" with { type: "file" };
 import iconYouTube from "./public/icons/youtube.png" with { type: "file" };
@@ -78,7 +77,6 @@ export const assets = new Map<string, Asset>([
   ["/wallpapers/waves.jpg", image(wallpaperWaves, "image/jpeg")],
   ["/wallpapers/forest.jpg", image(wallpaperForest, "image/jpeg")],
   ["/icons/sessions.png", image(iconSessions, "image/png")],
-  ["/icons/guide.png", image(iconGuide, "image/png")],
   ["/icons/command.png", image(iconCommand, "image/png")],
   ["/icons/settings.png", image(iconSettings, "image/png")],
   ["/icons/youtube.png", image(iconYouTube, "image/png")],

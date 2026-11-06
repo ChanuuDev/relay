@@ -10,7 +10,6 @@ import { MenuBar } from "./components/desktop/menu-bar";
 import { Dock } from "./components/desktop/dock";
 import { Wallpaper } from "./components/desktop/wallpaper";
 import { SessionsWindow } from "./components/apps/sessions-window";
-import { GuideWindow } from "./components/apps/guide-window";
 import { CommandWindow } from "./components/apps/command-window";
 import { SettingsWindow } from "./components/apps/settings-window";
 import { YouTubeWindow } from "./components/apps/youtube-window";
@@ -219,7 +218,6 @@ function App() {
       <SessionsWindow list={list} detail={detail} updates={updates} relations={children} chain={chain} health={health.data} params={params}
         selectedId={id} activeFilters={activeFilters} copy={copy} onPage={listPage} successAt={successAt} />
       <OfficeWindow />
-      <GuideWindow />
       <CommandWindow detail={detail} health={health.data} copy={copy} />
       <SettingsWindow health={health.data} healthError={health.error} connection={connection} />
       <YouTubeWindow />

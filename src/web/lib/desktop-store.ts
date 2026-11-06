@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { APPS, APP_IDS, DOCK_RESERVED, GUIDE_MIN_VIEWPORT, MAX_Z, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WIDTH, type AppId, type Box } from "./app-config";
+import { APPS, APP_IDS, DOCK_RESERVED, MAX_Z, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WIDTH, type AppId, type Box } from "./app-config";
 import { readDockOrder, sameOrder, writeDockOrder } from "./dock-order";
 import { captureFrame } from "./motion";
 import { menuBarHeight } from "./pwa";
@@ -21,12 +21,10 @@ export function clampBox(box: Box, W: number, H: number, min: { w: number; h: nu
   return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
 }
 
-function defaults(W: number, H: number, mobile: boolean): Windows {
-  const guideOpen = !mobile && W >= GUIDE_MIN_VIEWPORT;
+function defaults(W: number, H: number): Windows {
   const make = (id: AppId, open: boolean, z: number): Win =>
     ({ ...clampBox(APPS[id].box(W, H), W, H, APPS[id].min), open, minimized: false, maximized: false, z });
-  // 가이드가 먼저 z를 받아 세션 창 뒤에 놓인다.
-  return { guide: make("guide", guideOpen, 1), sessions: make("sessions", true, 2), office: make("office", false, 0), command: make("command", false, 0), notes: make("notes", false, 0), files: make("files", false, 0), viewer: make("viewer", false, 0), calculator: make("calculator", false, 0), settings: make("settings", false, 0), youtube: make("youtube", false, 0) };
+  return { sessions: make("sessions", true, 1), office: make("office", false, 0), command: make("command", false, 0), notes: make("notes", false, 0), files: make("files", false, 0), viewer: make("viewer", false, 0), calculator: make("calculator", false, 0), settings: make("settings", false, 0), youtube: make("youtube", false, 0) };
 }
 
 type Saved = Record<string, Partial<Win>>;
@@ -44,13 +42,10 @@ const num = (value: unknown, fallback: number) => (typeof value === "number" && 
 const bool = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);
 
 function restore(W: number, H: number, mobile: boolean): Windows {
-  const base = defaults(W, H, mobile);
+  const base = defaults(W, H);
+  // 모바일은 저장 배치를 무시하고 세션 창 하나로 시작한다.
   const saved = mobile ? null : loadSaved();
-  if (!saved) {
-    if (!mobile) return base;
-    // 모바일은 저장 배치를 무시하고 세션 창 하나로 시작한다.
-    return { ...base, guide: { ...base.guide, open: false } };
-  }
+  if (!saved) return base;
   let z = 0;
   const windows = { ...base };
   for (const id of APP_IDS) {
@@ -173,7 +168,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
   resetLayout: () => set(() => {
     try { localStorage.removeItem(STORE_KEY); } catch { /* 저장소가 없어도 기본 배치는 적용된다. */ }
     const mobile = get().mobile;
-    const windows = defaults(window.innerWidth, window.innerHeight, mobile);
+    const windows = defaults(window.innerWidth, window.innerHeight);
     return { windows, focused: "sessions", nextZ: 3, mobile, closing: {}, minimizing: {} };
   }),
   setMobile: (mobile) => set((state) => (state.mobile === mobile ? state : { mobile })),

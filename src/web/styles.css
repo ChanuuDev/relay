@@ -161,7 +161,7 @@
   code, kbd { font-family: var(--font-mono); letter-spacing: 0; }
   time, .pager, .page-number, .statusbar, .version, .compact-meta, .time-column, .timeline-meta { font-variant-numeric: tabular-nums; }
   html[data-theme-switching] * { transition: none !important; }
-  .detail-panel, .guide-body, .settings-body, .terminal-body, .session-rows, .detail-placeholder, .window-body {
+  .detail-panel, .settings-body, .terminal-body, .session-rows, .detail-placeholder, .window-body {
     scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent;
   }
 }
@@ -308,7 +308,7 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 .window[data-maximized] .window-frame { border-radius: 10px; }
 .window[data-window="sessions"] .window-frame { container: sessions / inline-size; }
 .window-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.settings-body > *, .guide-body > *, .terminal-body > * { flex-shrink: 0; }
+.settings-body > *, .terminal-body > * { flex-shrink: 0; }
 .window:focus { outline: none; }
 /* 종료·최소화 트윈이 도는 동안에는 포인터를 받지 않는다(§3-A2). */
 .window[data-closing], .window[data-minimizing] { pointer-events: none; }
@@ -544,30 +544,15 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 .loading-row { display: flex; align-items: center; gap: 12px; }
 .empty-command { display: inline-flex; align-items: center; height: calc(1em + 20px); padding: 0 12px; background: var(--glass-control-fill); border-radius: 6px; font-size: var(--fs-12); }
 
-/* 가이드 창과 세션 창 빈 상태 */
-.guide-body { overflow-y: auto; background: var(--background); }
-.welcome-panel { max-width: 380px; padding: 20px 24px; }
 .detail-placeholder { position: relative; z-index: 5; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; background: var(--background); overflow-y: auto; }
 .detail-placeholder > svg { width: 40px; height: 40px; margin-bottom: 4px; color: var(--muted-foreground); opacity: .55; }
 .detail-placeholder > p { max-width: 320px; font-size: var(--fs-13); color: var(--muted-foreground); }
 .placeholder-hint { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: var(--fs-11); }
 .placeholder-hint kbd { display: inline-flex; align-items: center; height: calc(1em + 7px); padding: 0 5px; border: 1px solid var(--glass-control-border); border-radius: 4px; font-size: var(--fs-11); }
-.welcome-illustration { display: flex; align-items: center; justify-content: center; padding: 0 0 24px; }
 .illustration-node { display: grid; place-items: center; width: 40px; height: 40px; background: var(--muted); border: 1px solid var(--border); border-radius: 10px; }
 .illustration-node svg { width: 18px; height: 18px; color: var(--primary); }
 .illustration-node.central { width: 48px; height: 48px; background: var(--primary); color: #fff; border-color: transparent; box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 45%, transparent); }
 .illustration-node.central svg { width: 24px; height: 24px; color: currentColor; }
-.welcome-illustration > span { width: 16px; border-top: 1px dashed var(--border); }
-.welcome-panel h3 { margin-top: 12px; font-size: var(--fs-24); font-weight: 600; letter-spacing: -.02em; line-height: 1.4; text-wrap: balance; }
-.welcome-panel > p:not(.eyebrow) { margin-top: 12px; font-size: var(--fs-12); line-height: 1.8; color: var(--muted-foreground); text-wrap: pretty; }
-.welcome-panel [data-slot="separator"] { margin: 20px 0; }
-.welcome-step { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px; }
-.welcome-step > span { width: 20px; flex-shrink: 0; font-size: var(--fs-10); line-height: var(--lh-16); color: var(--muted-foreground); font-family: var(--font-mono); }
-.welcome-step strong { display: block; font-size: var(--fs-12); font-weight: 600; line-height: var(--lh-16); }
-.welcome-step p { margin-top: 4px; font-size: var(--fs-11); line-height: var(--lh-16); color: var(--muted-foreground); }
-.welcome-action { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; color: var(--link); font-size: var(--fs-13); font-weight: 500; }
-.welcome-action:hover { text-decoration: underline; text-underline-offset: 4px; }
-.welcome-action svg { width: 14px; height: 14px; }
 
 /* 명령 창(유리 없음) */
 .window[data-window="command"] .window-frame { background: var(--terminal-bg); border-color: rgba(255, 255, 255, .16); container: command / inline-size; }

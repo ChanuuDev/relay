@@ -8,7 +8,7 @@ import { SessionDetail } from "../session-detail";
 import { useSessionActions } from "../session-actions";
 import { Crossfade } from "../transitions";
 import { SplitView } from "../desktop/split-view";
-import { DetailPlaceholder } from "../context-guide";
+import { DetailPlaceholder } from "../detail-placeholder";
 import { staggerIn } from "../../lib/motion";
 import type { BriefSession, ChainData, DetailData, HealthData, HistoryData, ListData, QueryResult } from "../../lib/queries";
 

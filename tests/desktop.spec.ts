@@ -68,7 +68,7 @@ test("배경화면·Dock 아이콘·서체가 실행 파일에서 제공된다",
   await page.getByRole("button", { name: "라이트 모드로 전환" }).click();
   await expect(active).toHaveAttribute("src", "/wallpaper-light.jpg");
   const widths = await page.locator(".dock-item img").evaluateAll((images) => images.map((image) => (image as HTMLImageElement).naturalWidth));
-  expect(widths).toHaveLength(10);
+  expect(widths).toHaveLength(9);
   for (const width of widths) expect(width).toBeGreaterThan(0);
 });
 
@@ -76,22 +76,22 @@ test("Dock은 포인터 주변 아이콘을 확대하고 원래 크기로 복귀
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   record("dock", "Dock 확대 확인");
   await ready(page);
-  const initial = await box(page, dock("가이드"));
+  const initial = await box(page, dock("명령"));
   expect(initial.width).toBe(48);
   await page.mouse.move(initial.x + initial.width / 2, initial.y + initial.height / 2);
-  await expect.poll(async () => (await box(page, dock("가이드"))).width).toBeGreaterThan(76);
+  await expect.poll(async () => (await box(page, dock("명령"))).width).toBeGreaterThan(76);
   await expect.poll(async () => (await box(page, dock("세션"))).width).toBeGreaterThan(52);
   expect((await box(page, dock("설정"))).width).toBeLessThan((await box(page, dock("세션"))).width);
-  const label = page.locator(".dock-tip").filter({ hasText: /^가이드$/ });
+  const label = page.locator(".dock-tip").filter({ hasText: /^명령$/ });
   await expect(label).toBeVisible();
   await expect.poll(async () => {
-    const icon = await box(page, dock("가이드"));
+    const icon = await box(page, dock("명령"));
     const tip = await label.boundingBox();
     return tip ? Math.abs(tip.x + tip.width / 2 - icon.x - icon.width / 2) : Infinity;
   }).toBeLessThan(2);
   await page.screenshot({ path: test.info().outputPath("dock-magnified-dark.png") });
   await page.mouse.move(0, 0);
-  await expect.poll(async () => Math.abs((await box(page, dock("가이드"))).width - 48)).toBeLessThan(.1);
+  await expect.poll(async () => Math.abs((await box(page, dock("명령"))).width - 48)).toBeLessThan(.1);
   await expect(label).toHaveCount(0);
   await page.locator(dock("계산기")).focus();
   await page.keyboard.press("Tab");
@@ -126,7 +126,7 @@ test("Dock 위에서 움직이는 동안 라벨은 하나로 끊기지 않고, �
     seen.add(state.tips[0]!.text);
     highest = Math.min(highest, state.top);
   }
-  expect([...seen].sort()).toEqual(["YouTube", "가이드", "계산기", "메모", "명령", "뷰어", "사무실", "설정", "세션", "파일 탐색기"].sort());
+  expect([...seen].sort()).toEqual(["YouTube", "계산기", "메모", "명령", "뷰어", "사무실", "설정", "세션", "파일 탐색기"].sort());
   expect(highest).toBeGreaterThanOrEqual(windowBottom);
   // 라벨은 아래 창 글자가 비치는 유리가 아니다.
   expect(await page.locator(".dock-tip").evaluate((tip) => getComputedStyle(tip).backdropFilter)).toBe("none");
@@ -139,9 +139,9 @@ test("Dock 위에서 움직이는 동안 라벨은 하나로 끊기지 않고, �
 test("동작 줄이기 설정을 켜면 확대 중인 Dock도 즉시 고정 크기로 돌아간다", async ({ page }) => {
   record("dock-reduced", "Dock 접근성 확인");
   await ready(page);
-  const initial = await box(page, dock("가이드"));
+  const initial = await box(page, dock("명령"));
   await page.mouse.move(initial.x + initial.width / 2, initial.y + initial.height / 2);
-  await expect.poll(async () => (await box(page, dock("가이드"))).width).toBeGreaterThan(76);
+  await expect.poll(async () => (await box(page, dock("명령"))).width).toBeGreaterThan(76);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect.poll(() => page.locator(".dock-item").evaluateAll(items => items.every(item => item.getBoundingClientRect().width === 48))).toBe(true);
   expect((await box(page, ".dock-row")).height).toBe(64);
@@ -150,17 +150,17 @@ test("동작 줄이기 설정을 켜면 확대 중인 Dock도 즉시 고정 크�
   await page.locator(dock("설정")).click();
   await expect(page.locator(win("settings"))).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32, 32]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32]);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48, 48, 48]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48, 48]);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(page.locator(".dock-row")).not.toHaveAttribute("data-static", "");
-  const restored = await box(page, dock("가이드"));
+  const restored = await box(page, dock("명령"));
   await page.mouse.move(restored.x + restored.width / 2, restored.y + restored.height / 2);
-  await expect.poll(async () => (await box(page, dock("가이드"))).width).toBeGreaterThan(76);
+  await expect.poll(async () => (await box(page, dock("명령"))).width).toBeGreaterThan(76);
 });
 
-const DOCK_NAMES = ["세션", "사무실", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정", "YouTube"];
+const DOCK_NAMES = ["세션", "사무실", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정", "YouTube"];
 const dockNames = (page: Page) => page.locator(".dock-item").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")));
 const storedDock = async (page: Page) => JSON.parse(await page.evaluate(() => localStorage.getItem("relay-dock-order") ?? "null")) as string[] | null;
 const centerOf = async (page: Page, selector: string) => {
@@ -241,14 +241,14 @@ test("Dock 아이콘을 끌면 이웃이 비켜 서고, 놓은 순서가 새로 
   await expect.poll(() => dockAtRest(page)).toBe(true);
   await expect(page.locator(win("settings"))).toHaveCount(0);
   expect(await dockNames(page)).toEqual(moved);
-  expect(await storedDock(page)).toEqual(["settings", "sessions", "office", "guide", "command", "notes", "files", "viewer", "calculator", "youtube"]);
+  expect(await storedDock(page)).toEqual(["settings", "sessions", "office", "command", "notes", "files", "viewer", "calculator", "youtube"]);
   await page.screenshot({ path: test.info().outputPath("dock-reorder-dropped-zoom.png"), clip });
   // 다음 포인터 움직임에 라벨이 다시 붙는다.
   const first = await centerOf(page, dock("설정"));
   await page.mouse.move(first.x, first.y);
   await expect(page.locator(".dock-tip")).toHaveText("설정");
   await page.reload();
-  await expect(page.locator(".dock-item")).toHaveCount(10);
+  await expect(page.locator(".dock-item")).toHaveCount(9);
   expect(await dockNames(page)).toEqual(moved);
   expect(errors).toEqual([]);
 });
@@ -326,21 +326,21 @@ test("Dock 밖에서 놓거나 Esc를 누르면 제자리로 돌아가고, Alt+�
   const url = page.url();
   await page.locator(dock("계산기")).focus();
   await page.keyboard.press("Alt+ArrowLeft");
-  await expect.poll(() => dockNames(page)).toEqual(["세션", "사무실", "가이드", "명령", "메모", "파일 탐색기", "계산기", "뷰어", "설정", "YouTube"]);
+  await expect.poll(() => dockNames(page)).toEqual(["세션", "사무실", "명령", "메모", "파일 탐색기", "계산기", "뷰어", "설정", "YouTube"]);
   await expect(page.locator(dock("계산기"))).toBeFocused();
   await page.keyboard.press("Alt+ArrowRight");
   await page.keyboard.press("Alt+ArrowRight");
-  await expect.poll(() => dockNames(page)).toEqual(["세션", "사무실", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "설정", "계산기", "YouTube"]);
+  await expect.poll(() => dockNames(page)).toEqual(["세션", "사무실", "명령", "메모", "파일 탐색기", "뷰어", "설정", "계산기", "YouTube"]);
   await expect(page.locator(dock("계산기"))).toBeFocused();
   expect(page.url()).toBe(url);
   await expect.poll(() => dockAtRest(page)).toBe(true);
-  expect(await storedDock(page)).toEqual(["sessions", "office", "guide", "command", "notes", "files", "viewer", "settings", "calculator", "youtube"]);
+  expect(await storedDock(page)).toEqual(["sessions", "office", "command", "notes", "files", "viewer", "settings", "calculator", "youtube"]);
 
   // 없어진 앱·중복·이상한 값은 버리고, 저장에 없던 앱은 기본 순서의 바로 앞 앱 뒤에 끼운다.
   await page.evaluate(() => localStorage.setItem("relay-dock-order", JSON.stringify(["youtube", "bogus", "calculator", "youtube", 7])));
   await page.reload();
-  await expect(page.locator(".dock-item")).toHaveCount(10);
-  expect(await dockNames(page)).toEqual(["세션", "사무실", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "YouTube", "계산기", "설정"]);
+  await expect(page.locator(".dock-item")).toHaveCount(9);
+  expect(await dockNames(page)).toEqual(["세션", "사무실", "명령", "메모", "파일 탐색기", "뷰어", "YouTube", "계산기", "설정"]);
 
   // 동작 줄이기에서도 끌기는 그대로 되고, 놓으면 남는 이동 없이 곧바로 자리 잡는다.
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -351,7 +351,7 @@ test("Dock 밖에서 놓거나 Esc를 누르면 제자리로 돌아가고, Alt+�
   await expect(page.locator(".dock-item[data-dragging]")).toHaveAttribute("aria-label", "YouTube");
   await page.mouse.up();
   await expect.poll(() => dockAtRest(page)).toBe(true);
-  expect(await dockNames(page)).toEqual(["YouTube", "세션", "사무실", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정"]);
+  expect(await dockNames(page)).toEqual(["YouTube", "세션", "사무실", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정"]);
   await expect(page.locator(win("youtube"))).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -388,17 +388,16 @@ test("서버가 새 빌드로 다시 뜨면 열린 화면이 스스로 새로 �
   await expect(page.locator("#update-status")).toHaveCount(0);
 });
 
-test("데스크톱 기본 배치: Dock 열 앱, 세션·가이드 창이 열린다", async ({ page }) => {
+test("데스크톱 기본 배치: Dock 아홉 앱, 세션 창만 열린다", async ({ page }) => {
   record("layout", "기본 배치");
   await ready(page);
-  await expect(page.locator(".dock-item")).toHaveCount(10);
-  for (const name of ["세션", "사무실", "가이드", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정", "YouTube"]) await expect(page.locator(dock(name))).toBeVisible();
+  await expect(page.locator(".dock-item")).toHaveCount(9);
+  for (const name of ["세션", "사무실", "명령", "메모", "파일 탐색기", "뷰어", "계산기", "설정", "YouTube"]) await expect(page.locator(dock(name))).toBeVisible();
   await expect(page.locator(win("sessions"))).toBeVisible();
-  await expect(page.locator(win("guide"))).toBeVisible();
   await expect(page.locator(win("sessions"))).toHaveAttribute("data-focused", "");
   await expect(page.locator(".menubar-app")).toHaveText("세션");
   await expect(page.locator(dock("세션"))).toHaveAttribute("data-open", "");
-  await expect(page.locator(dock("가이드"))).toHaveAttribute("data-open", "");
+  await expect(page.locator(".window")).toHaveCount(1);
   await expect(page.locator(dock("명령"))).not.toHaveAttribute("data-open", "");
   const sessions = await box(page, win("sessions"));
   expect(Math.round(sessions.x)).toBe(40);
@@ -492,14 +491,9 @@ test("상세 패널이 있어도 우측 테두리 안팎에서 창 너비를 조
   expect(Math.round((await box(page, win("sessions"))).width)).toBe(Math.round(resized.width));
 });
 
-test("가이드 창의 버튼과 / 단축키가 세션 창을 앞으로 가져온다", async ({ page }) => {
-  record("guide", "가이드 확인");
+test("/ 단축키가 최소화한 세션 창을 앞으로 가져와 검색 칸에 초점을 둔다", async ({ page }) => {
+  record("slash", "단축키 확인");
   await ready(page);
-  await page.locator(dock("가이드")).click();
-  await expect(page.locator(win("guide"))).toHaveAttribute("data-focused", "");
-  await page.getByRole("button", { name: "이전 기록 찾기" }).click();
-  await expect(page.locator(win("sessions"))).toHaveAttribute("data-focused", "");
-  await expect(page.locator("#search")).toBeFocused();
   await page.getByRole("button", { name: "세션 창 최소화" }).click();
   await expect(page.locator(win("sessions"))).toBeHidden();
   await page.keyboard.press("/");
@@ -570,10 +564,9 @@ test("모바일에서는 창이 하나씩 최대화되고 Dock이 탭바가 된�
   expect(Math.round(sessions.width)).toBe(390);
   expect(Math.round(sessions.y)).toBe(28);
   expect(Math.round(sessions.y + sessions.height)).toBe(844 - 64);
-  await expect(page.locator(win("guide"))).toHaveCount(0);
   await expect(page.locator("#connection-state")).toContainText("연결됨");
-  await expect(page.locator(".dock-label")).toHaveCount(10);
-  expect(await page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32, 32]);
+  await expect(page.locator(".dock-label")).toHaveCount(9);
+  expect(await page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32]);
   await page.locator(dock("설정")).click();
   await expect(page.locator(win("settings"))).toBeVisible();
   await expect(page.locator(win("sessions"))).toBeHidden();
@@ -583,9 +576,9 @@ test("모바일에서는 창이 하나씩 최대화되고 Dock이 탭바가 된�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   // Resizing an already mounted dock must update its icon size in both directions.
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48, 48, 48]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([48, 48, 48, 48, 48, 48, 48, 48, 48]);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32, 32]);
+  await expect.poll(() => page.locator(".dock-item img").evaluateAll(images => images.map(image => image.getBoundingClientRect().width))).toEqual([32, 32, 32, 32, 32, 32, 32, 32, 32]);
 });
 
 test("감사용 스크린샷: 다크·라이트·상세·모바일", async ({ page }) => {
