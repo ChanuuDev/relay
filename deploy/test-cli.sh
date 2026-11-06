@@ -87,5 +87,25 @@ grep -Fq 'server_name other.example.invalid;' rendered.conf
 code=0
 RELAY_DOMAIN='invalid; domain' sh "$script_dir/render-nginx.sh" "$script_dir/nginx/relay.conf" rendered.conf > result 2>&1 || code=$?
 test "$code" -eq 2
-sh -n "$script_dir/relay.sh" "$script_dir/install-cli.sh" "$script_dir/deploy-remote.sh"
+# 브라우저 모드 화면: 도메인이 없으면 3으로 건너뛰고, 있으면 .env에 도메인과 CORS 출처를 한 줄씩 남기고 템플릿을 채운다.
+code=0
+sh "$script_dir/render-web-nginx.sh" "$script_dir/nginx/relay-web.conf" web.conf > result 2>&1 || code=$?
+test "$code" -eq 3
+test ! -e web.conf
+RELAY_WEB_DOMAIN=web.example.invalid sh "$script_dir/render-web-nginx.sh" "$script_dir/nginx/relay-web.conf" web.conf > result
+test ! -s result
+grep -Fq 'server_name web.example.invalid;' web.conf
+grep -Fq '/etc/letsencrypt/live/web.example.invalid/fullchain.pem' web.conf
+if grep -Fq '__RELAY_WEB_DOMAIN__' web.conf; then exit 1; fi
+grep -Fxq 'RELAY_WEB_DOMAIN=web.example.invalid' "$RELAY_SERVER_DIR/.env"
+grep -Fxq 'RELAY_CORS_ORIGINS=https://web.example.invalid' "$RELAY_SERVER_DIR/.env"
+grep -Fxq 'KEEP_FIELD=1' "$RELAY_SERVER_DIR/.env"
+sh "$script_dir/render-web-nginx.sh" "$script_dir/nginx/relay-web.http.conf" web.conf > result
+grep -Fq 'server_name web.example.invalid;' web.conf
+test "$(grep -c '^RELAY_WEB_DOMAIN=' "$RELAY_SERVER_DIR/.env")" -eq 1
+test "$(grep -c '^RELAY_CORS_ORIGINS=' "$RELAY_SERVER_DIR/.env")" -eq 1
+code=0
+RELAY_WEB_DOMAIN='bad domain' sh "$script_dir/render-web-nginx.sh" "$script_dir/nginx/relay-web.conf" web.conf > result 2>&1 || code=$?
+test "$code" -eq 2
+sh -n "$script_dir/relay.sh" "$script_dir/install-cli.sh" "$script_dir/deploy-remote.sh" "$script_dir/render-web-nginx.sh"
 printf '%s\n' 'Ubuntu CLI: 설치·재설치·인자 보존·입력 검사·실패 전파·기존 명령 보존 통과'

@@ -12,6 +12,8 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./certbot/www:/var/www/certbot:ro
       - ./certbot/conf:/etc/letsencrypt:ro
+      # 브라우저 모드 화면(scripts/export-web.ts). current가 releases/<빌드>를 가리키고, 배포는 링크만 바꿔 한 번에 교체한다.
+      - ./web:/srv/relay-web:ro
     depends_on:
       - relay-api
     restart: unless-stopped

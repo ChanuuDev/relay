@@ -27,6 +27,9 @@ import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
 import { applyFontSize } from "./lib/font-size";
 import { listCustomImages } from "./lib/wallpaper";
 import { setupPwa, useInstall } from "./lib/pwa";
+import { activateCredentials, browserMode, signOut, takeNotice, UNAUTHORIZED_EVENT } from "./lib/browser-mode";
+import { loadCredentials, saveCredentials } from "./lib/credentials";
+import { BrowserLogin } from "./components/browser-login";
 
 const queryClient = new QueryClient();
 /** 이 화면이 받은 빌드. 서버가 HTML에 심는다(자리표시자 그대로면 비교하지 않는다). */
@@ -156,7 +159,8 @@ function App() {
   }, [serverBuild]);
   // 설치한 앱을 서버 없이 열었으면(보관본 화면) Windows에 등록한 relay:// 링크로 백그라운드 서버를 켠다. 서버가 뜨면 3초 폴링이 스스로 다시 잇는다.
   // 브라우저는 처음엔 사용자 조작 없이 외부 링크를 열지 않으므로, 그때는 `서버 켜기`를 눌러 `항상 허용`을 고른 뒤부터 자동으로 켜진다. 끊긴 동안은 1분마다 다시 시도한다.
-  const unreachable = connection === "offline" && health.error instanceof ConnectionError;
+  // 브라우저 모드는 이 PC의 서버가 아니라 원격 Relay에 붙으므로 켜지 않는다.
+  const unreachable = !browserMode && connection === "offline" && health.error instanceof ConnectionError;
   useEffect(() => {
     if (!unreachable) return;
     autoLaunchServer();
@@ -239,4 +243,28 @@ function App() {
   </div>;
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><QueryClientProvider client={queryClient}><TooltipProvider delayDuration={250}><App /></TooltipProvider></QueryClientProvider></StrictMode>);
+/** 브라우저 모드의 관문. 저장한 로그인 정보를 풀어 쓰고, 없거나 토큰이 거절되면 로그인 화면을 보인다. */
+function BrowserGate() {
+  const [phase, setPhase] = useState<"loading" | "login" | "ready">("loading");
+  const [notice] = useState(takeNotice);
+  useEffect(() => {
+    let cancelled = false;
+    void loadCredentials().then((saved) => {
+      if (cancelled) return;
+      if (saved) activateCredentials(saved);
+      setPhase(saved ? "ready" : "login");
+    });
+    const expired = () => { void signOut("토큰이 만료되었거나 폐기되어 로그아웃했습니다. 다시 로그인하세요."); };
+    window.addEventListener(UNAUTHORIZED_EVENT, expired);
+    return () => { cancelled = true; window.removeEventListener(UNAUTHORIZED_EVENT, expired); };
+  }, []);
+  if (phase === "loading") return <div className="desktop" data-shell="loading"><Wallpaper dark={isDark(useUI.getState().theme)} /></div>;
+  if (phase === "login") return <BrowserLogin notice={notice} onLogin={async (credentials) => {
+    await saveCredentials(credentials);
+    activateCredentials(credentials);
+    setPhase("ready");
+  }} />;
+  return <App />;
+}
+
+createRoot(document.getElementById("root")!).render(<StrictMode><QueryClientProvider client={queryClient}><TooltipProvider delayDuration={250}>{browserMode ? <BrowserGate /> : <App />}</TooltipProvider></QueryClientProvider></StrictMode>);

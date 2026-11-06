@@ -1,6 +1,6 @@
-# 원격 서버 배포: server·packages/core·deploy가 바뀐 main 푸시마다
-#   1) 서버 테스트 → 2) 이미지를 GHCR(비공개)에 push → 3) SSH로 compose·nginx 설정을 올리고 pull·up → 4) health 확인.
-# 비밀은 Secrets에만 둔다: DEPLOY_HOST(SSH 호스트명), DEPLOY_USER, DEPLOY_KEY(pem 내용).
+# 원격 서버 배포: server·packages/core·deploy·웹 화면이 바뀐 main 푸시마다
+#   1) 서버 테스트·브라우저 모드 화면 내보내기 → 2) 이미지를 GHCR(비공개)에 push → 3) SSH로 compose·nginx 설정·화면을 올리고 pull·up → 4) health 확인.
+# 비밀은 Secrets에만 둔다: DEPLOY_HOST(SSH 호스트명), DEPLOY_USER, DEPLOY_KEY(pem 내용), RELAY_WEB_DOMAIN(브라우저 모드 화면 도메인, 없으면 화면을 켜지 않음).
 # 서버의 GHCR 로그인은 이 실행의 GITHUB_TOKEN으로 그때만 한다(서버에 장기 토큰을 두지 않는다).
 name: deploy-server
 
@@ -11,6 +11,10 @@ on:
       - "server/**"
       - "packages/core/**"
       - "deploy/**"
+      - "src/web/**"
+      - "src/remote/paths.ts"
+      - "scripts/build-web.ts"
+      - "scripts/export-web.ts"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/deploy-server.yml"
@@ -41,6 +45,13 @@ jobs:
       - run: npm run build:web
       - run: npm run check -w @relay/server
       - run: sh deploy/test-cli.sh
+      # 브라우저 모드 화면(정적 파일). 배포 단계가 서버의 web/releases에 푼다.
+      - run: npm run export:web -- dist/web --no-build && tar -czf web.tgz -C dist/web .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-web
+          path: web.tgz
+          retention-days: 1
 
   build:
     needs: test
@@ -83,6 +94,9 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: relay-web
       - name: SSH 키 준비
         run: |
           mkdir -p ~/.ssh
@@ -91,13 +105,15 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
       - name: compose·nginx 설정·배포 스크립트 올리기
         run: |
-          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh deploy/deploy-remote.sh deploy/relay.sh deploy/install-cli.sh deploy/render-nginx.sh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
+          scp -i ~/.ssh/deploy_key deploy/compose.yml deploy/backup.sh deploy/deploy-remote.sh deploy/relay.sh deploy/install-cli.sh deploy/render-nginx.sh deploy/render-web-nginx.sh web.tgz "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/"
           scp -i ~/.ssh/deploy_key deploy/nginx/conf.d/00-limits.conf deploy/nginx/conf.d/default.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/conf.d/"
           scp -i ~/.ssh/deploy_key deploy/nginx/relay.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay.conf.new"
+          scp -i ~/.ssh/deploy_key deploy/nginx/relay-web.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay-web.conf.new"
+          scp -i ~/.ssh/deploy_key deploy/nginx/relay-web.http.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay-web.http.conf.new"
       - name: 이미지 받아 다시 띄우기
-        # 스크립트는 파일로 두고 stdin으로는 토큰 한 줄만 보낸다(docker 명령이 stdin을 삼키지 않게).
+        # 스크립트는 파일로 두고 stdin으로는 토큰과 화면 도메인 두 줄만 보낸다(docker 명령이 stdin을 삼키지 않게).
         run: |
           owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           tag="${{ needs.build.outputs.tag }}"
-          printf '%s\n' "${{ secrets.GITHUB_TOKEN }}" | ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+          printf '%s\n%s\n' "${{ secrets.GITHUB_TOKEN }}" "${{ secrets.RELAY_WEB_DOMAIN }}" | ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             bash /srv/relay/deploy-remote.sh "ghcr.io/${owner}/relay-api:${tag}" "${{ github.actor }}"

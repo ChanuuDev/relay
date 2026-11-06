@@ -8,18 +8,9 @@ import { places } from "../files/files.service";
 import { version } from "../../package.json";
 import { buildId } from "../web/assets";
 import { transfer } from "./transfer";
+import { paths, REMOTE_PREFIX, remotePath } from "./paths";
 
-export const REMOTE_PREFIX = "remote:";
-const remotePath = (value: unknown): value is string => typeof value === "string" && value.startsWith(REMOTE_PREFIX + "/");
-/** 원격 경로를 로컬 경로와 구분해 뷰어·즐겨찾기·클립보드에도 출처가 남는다. */
-function paths(value: unknown, encode: boolean, key = ""): unknown {
-  if (typeof value === "string" && ["path", "parent", "from", "to", "home", "target", "destination", "sources", "paths", "done"].includes(key)) {
-    return encode ? value.startsWith("/") ? REMOTE_PREFIX + value : value : remotePath(value) ? value.slice(REMOTE_PREFIX.length) : value;
-  }
-  if (Array.isArray(value)) return value.map(item => paths(item, encode, key));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, paths(v, encode, k)]));
-  return value;
-}
+export { REMOTE_PREFIX };
 
 /** 로컬 보안 검사를 유지하고 허용한 API만 서버 간 중계한다. 인증·토큰은 브라우저로 보내지 않는다. */
 export function remoteHandler(config: Config, fallback: (request: Request) => Response | Promise<Response>) {

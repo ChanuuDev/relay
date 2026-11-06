@@ -19,6 +19,12 @@ export async function buildWeb() {
     target: "browser", format: "esm", minify: true, define: { "process.env.NODE_ENV": '"production"' },
   });
   if (!math.success) throw new AggregateError(math.logs, "WEB math build failed");
+  // 브라우저 모드(원격 서버가 내려준 화면)의 서비스 워커. 클래식 스크립트로 등록하므로 즉시 실행 함수로 묶는다.
+  const worker = await Bun.build({
+    entrypoints: ["src/web/sw-web.ts"], outdir: "src/web/generated", naming: "sw-web.js",
+    target: "browser", format: "iife", minify: true, define: { "process.env.NODE_ENV": '"production"' },
+  });
+  if (!worker.success) throw new AggregateError(worker.logs, "WEB browser-mode worker build failed");
   const css = Bun.spawn([process.execPath, "node_modules/@tailwindcss/cli/dist/index.mjs",
     "-i", "src/web/styles.css", "-o", "src/web/generated/style.css", "--minify"],
     { stdout: "inherit", stderr: "inherit" });

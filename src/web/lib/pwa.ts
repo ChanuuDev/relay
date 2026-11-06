@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { MENU_BAR_HEIGHT } from "./app-config";
+import { BROWSER_SW, browserMode } from "./browser-mode";
 
 /** Chromium의 설치 제안 이벤트. 표준 DOM 타입에는 아직 없다. */
 interface InstallPromptEvent extends Event {
@@ -144,7 +145,8 @@ export function setupPwa(onTitlebar: () => void) {
 
   if (!("serviceWorker" in navigator)) return;
   const register = () => {
-    navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" })
+    // 브라우저 모드는 그림·영상 요청에도 토큰을 붙이는 워커를 쓴다(lib/browser-mode.ts).
+    navigator.serviceWorker.register(browserMode ? BROWSER_SW : "/sw.js", { scope: "/", updateViaCache: "none" })
       .catch(() => { /* 등록하지 못해도 화면은 그대로 동작한다. 서버가 꺼졌을 때 화면을 열지 못할 뿐이다. */ });
   };
   if (document.readyState === "complete") register();

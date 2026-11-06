@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from "react";
-import { Download, Plus, X } from "lucide-react";
+import { Download, LogOut, Plus, X } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
@@ -9,6 +9,7 @@ import { ErrorNotice } from "../session-common";
 import { useDesktop } from "../../lib/desktop-store";
 import { DEFAULT_FONT_SIZE, FONT_SIZES, type FontSize } from "../../lib/font-size";
 import { useInstall } from "../../lib/pwa";
+import { browserMode, currentCredentials, signOut } from "../../lib/browser-mode";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
 import { COLORS, DEFAULT_WALLPAPER, MAX_CUSTOM_IMAGES, PRESETS, deleteCustomImage, imageLabel, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
@@ -66,7 +67,7 @@ export function SettingsWindow({ health, healthError, connection }: {
       <p className="settings-note">저장된 창 위치와 크기를 지우고 기본 배치로 되돌립니다.</p>
     </section>
     <AppSettings />
-    <section className="settings-group" id="storage-info">
+    {browserMode ? <BrowserAccount health={health} healthError={healthError} connection={connection} /> : <section className="settings-group" id="storage-info">
       <h3>저장소</h3>
       <ErrorNotice id="global-error" error={healthError} />
       <div className="settings-row"><span>{health?.mode === "remote" ? "원격 서버" : "데이터베이스"}</span><code>{health?.mode === "remote" ? health.remote?.url : health?.databasePath ?? "확인 중…"}</code></div>
@@ -75,8 +76,26 @@ export function SettingsWindow({ health, healthError, connection }: {
       <div className="settings-row"><span>모드</span><Badge variant="outline">{health?.mode === "remote" ? "원격" : "로컬"}</Badge></div>
       {health?.remote && <div className="settings-row"><span>원격 연결</span><span>{health.remote.reachable ? `연결됨 (${health.remote.latencyMs ?? 0}ms)` : "연결 끊김"} · 대기 {health.remote.outbox.pending}건 · 실패 {health.remote.outbox.failed}건</span></div>}
       <p className="settings-note">모드 전환은 Electron 앱의 트레이 메뉴 ‘설정’에서 합니다. 화면은 127.0.0.1에서만 열리는 로컬 서버입니다. 세션 기록은 Agent가 CLI로 남기고, 이 화면은 목록 정리(작업 상태·고정·종료·삭제)와 메모 저장·가져오기만 합니다. 쓰기는 같은 화면에서 보낸 JSON만 받습니다.</p>
-    </section>
+    </section>}
   </Window>;
+}
+
+/** 브라우저 모드의 연결 정보와 로그아웃. 로그인 정보는 이 브라우저에 암호화해 두었다(lib/credentials.ts). */
+function BrowserAccount({ health, healthError, connection }: { health?: HealthData; healthError: Error | null; connection: Connection }) {
+  const login = currentCredentials();
+  const [leaving, setLeaving] = useState(false);
+  return <section className="settings-group" id="storage-info">
+    <h3>원격 연결</h3>
+    <ErrorNotice id="global-error" error={healthError} />
+    <div className="settings-row"><span>Relay 주소</span><code>{login?.url ?? health?.remote?.url ?? "—"}</code></div>
+    {login?.user && <div className="settings-row"><span>사용자</span><span>{login.user}{login.tokenName ? ` · 토큰 ${login.tokenName}` : ""}</span></div>}
+    <div className="settings-row"><span>연결</span><span className="settings-connection"><span className="connection-dot" data-state={connection} />{CONNECTION_LABEL[connection]}{health?.remote?.reachable && health.remote.latencyMs !== undefined ? ` (${health.remote.latencyMs}ms)` : ""}</span></div>
+    <div className="settings-row"><span>버전</span><span>RELAY {health?.appVersion ? `v${health.appVersion}` : "—"}</span></div>
+    <div className="settings-row"><span>모드</span><Badge variant="outline">브라우저</Badge></div>
+    <div className="settings-row"><span>로그인</span><Button id="browser-logout" size="sm" variant="outline" disabled={leaving}
+      onClick={() => { setLeaving(true); void signOut("로그아웃했습니다. 이 브라우저에 저장한 토큰을 지웠습니다."); }}><LogOut />로그아웃</Button></div>
+    <p className="settings-note">이 화면은 원격 Relay에 바로 연결합니다. 토큰과 주소는 이 브라우저에만 암호화해 두고(AES-GCM, 키는 꺼낼 수 없는 형태로 IndexedDB에 보관), 로그아웃하면 둘 다 지웁니다. 기본 앱으로 열기·시스템 클립보드 같은 Windows 연동은 설치형 앱에서만 됩니다.</p>
+  </section>;
 }
 
 /** 설치형 앱(PWA). 브라우저가 설치를 제안할 수 있을 때만 설치 버튼을 보이고, 그 밖에는 지금 상태와 설치 방법을 알려 준다. */
@@ -94,9 +113,9 @@ function AppSettings() {
         : prompt ? <Button size="sm" variant="outline" onClick={() => void install()}><Download />앱으로 설치</Button>
         : state("브라우저 탭에서 보는 중")}
     </div>
-    <p className="settings-note">{standalone ? "작업 표시줄과 시작 메뉴에서 바로 엽니다. 서버가 꺼져 있어도 창은 열리고, relay web --headless로 서버를 켜면 저절로 다시 연결됩니다."
+    <p className="settings-note">{standalone ? `작업 표시줄과 시작 메뉴에서 바로 엽니다. ${browserMode ? "원격 Relay에 잠시 닿지 않아도 창은 열리고, 다시 닿으면 저절로 이어집니다." : "서버가 꺼져 있어도 창은 열리고, relay web --headless로 서버를 켜면 저절로 다시 연결됩니다."}`
       : installed ? "시작 메뉴나 작업 표시줄에서 Relay를 여세요. 이 탭은 닫아도 됩니다."
-      : prompt ? "브라우저 탭 없이 별도 창으로 열고, 작업 표시줄과 시작 메뉴에서 바로 실행합니다. 서버가 꺼져 있어도 창은 열리고 서버를 켜면 다시 연결됩니다."
+      : prompt ? `브라우저 탭 없이 별도 창으로 열고, 작업 표시줄과 시작 메뉴에서 바로 실행합니다. ${browserMode ? "원격 Relay에 잠시 닿지 않아도 창은 열립니다." : "서버가 꺼져 있어도 창은 열리고 서버를 켜면 다시 연결됩니다."}`
       : "Chrome·Edge 주소 표시줄의 앱 설치 아이콘이나 브라우저 메뉴의 ‘앱 설치’로 설치합니다. 이미 설치했다면 같은 자리의 ‘앱에서 열기’를 누릅니다."}</p>
   </section>;
 }

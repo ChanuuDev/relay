@@ -12,6 +12,23 @@ export interface ServerConfig {
   /** 부트스트랩 때 만들 기본 사용자 이름. */
   bootstrapUser: string;
   logLevel: "debug" | "info" | "warn" | "error";
+  /** 브라우저 모드 화면이 다른 출처에서 이 서버를 부를 때 허용할 출처(`https://host`). 비우면 CORS를 열지 않는다. */
+  corsOrigins?: string[];
+}
+
+/** RELAY_CORS_ORIGINS(쉼표로 구분). 출처 형식만 받고, http는 이 컴퓨터만 허용한다. */
+export function parseCorsOrigins(value: string | undefined): string[] {
+  const origins: string[] = [];
+  for (const item of (value ?? "").split(",").map((part) => part.trim()).filter(Boolean)) {
+    let url: URL;
+    try { url = new URL(item); } catch { throw new RelayError("INVALID_CONFIG", "RELAY_CORS_ORIGINS에는 https://host 형식의 출처만 쉼표로 적습니다."); }
+    const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (url.origin !== item.replace(/\/$/, "") || !(url.protocol === "https:" || (url.protocol === "http:" && local))) {
+      throw new RelayError("INVALID_CONFIG", "RELAY_CORS_ORIGINS에는 https://host 형식의 출처만 쉼표로 적습니다.");
+    }
+    if (!origins.includes(url.origin)) origins.push(url.origin);
+  }
+  return origins;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -29,5 +46,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     build: (env.RELAY_BUILD?.trim() || "dev").replace(/[^0-9A-Za-z._-]/g, "").slice(0, 40) || "dev",
     bootstrapUser: env.RELAY_BOOTSTRAP_USER?.trim() || "relay",
     logLevel: level as ServerConfig["logLevel"],
+    corsOrigins: parseCorsOrigins(env.RELAY_CORS_ORIGINS),
   };
 }

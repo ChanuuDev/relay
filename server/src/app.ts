@@ -13,6 +13,8 @@ export const MAX_WRITE_BYTES = 8 * 1024 * 1024;
 export const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
 
 export interface AppOptions { schedule?: boolean; log?: boolean }
+/** 브라우저가 다른 출처 응답에서 읽을 수 있게 할 헤더. 메모 ETag, 파일 범위·이름·수정 시각이다. */
+const CORS_EXPOSE = "ETag, Content-Range, Content-Length, Accept-Ranges, Content-Disposition, X-File-Modified, Retry-After";
 
 /** main.ts(운영)와 테스트가 같은 조립을 쓴다. */
 export async function createApp(db: Db, config: ServerConfig, options: AppOptions = {}): Promise<INestApplication> {
@@ -23,7 +25,21 @@ export async function createApp(db: Db, config: ServerConfig, options: AppOption
   app.disable("x-powered-by");
   app.set("etag", false);
   app.set("trust proxy", "loopback");
-  const json = (limit: number) => express.json({ limit, strict: true, type: "application/json" });
+  // 브라우저 모드 화면(다른 출처)이 토큰을 붙여 부를 수 있게, 허용한 출처에만 CORS를 연다. 쿠키는 쓰지 않으므로 자격 증명 허용은 하지 않는다.
+  const allowed = new Set(config.corsOrigins ?? []);
+  if (allowed.size) app.use((request: express.Request, response: express.Response, next: express.NextFunction) => {
+    const origin = request.headers.origin;
+    if (typeof origin !== "string" || !allowed.has(origin)) return next();
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+    response.setHeader("Access-Control-Expose-Headers", CORS_EXPOSE);
+    if (request.method !== "OPTIONS") return next();
+    response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT");
+    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, If-None-Match, Idempotency-Key");
+    response.setHeader("Access-Control-Max-Age", "600");
+    response.status(204).end();
+  });
+  const json =(limit: number) => express.json({ limit, strict: true, type: "application/json" });
   app.use("/api/v1/import", json(MAX_IMPORT_BYTES));
   app.use("/api/v1/notes/import", json(MAX_IMPORT_BYTES));
   app.use("/api/v1/notes/images", json(MAX_IMAGE_UPLOAD_BYTES));

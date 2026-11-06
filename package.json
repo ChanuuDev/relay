@@ -17,6 +17,7 @@
     "test:web": "playwright test",
     "check": "npm run scan:secrets && npm run typecheck && npm test && npm run build && npm run test:web && npm run check:server && npm run check:desktop",
     "build:web": "bun run scripts/build-web.ts",
+    "export:web": "bun run scripts/export-web.ts",
     "prepare": "node scripts/install-git-hooks.mjs && npm run build:core && npm run build:web",
     "scan:secrets": "node scripts/secret-scan.mjs --all",
     "prerelay": "npm run build:core && npm run build:web",

@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { LIST_ID, PLAYER_PATH, playerQuery, VIDEO_ID, type Target } from "../youtube-shared";
+import { embedUrl, LIST_ID, PLAYER_PATH, playerQuery, VIDEO_ID, type Target } from "../youtube-shared";
+import { browserMode } from "./browser-mode";
 
 export type { Target };
 export type Page = { kind: "home" } | Target;
@@ -49,7 +50,9 @@ export const keyOf = (target: Target) => (target.kind === "video" ? `video:${tar
 
 /** 창 안에 넣는 플레이어 래퍼 주소. 유튜브는 Referer가 IP 주소(127.0.0.1)면 광고 영상을 거부하므로 localhost 출처의 래퍼 페이지가 플레이어를 띄운다. */
 export function playerUrl(target: Target): string {
-  return `http://localhost${location.port ? `:${location.port}` : ""}${PLAYER_PATH}?${playerQuery(target)}`;
+  // 브라우저 모드는 실제 도메인(https)에서 열리므로 Referer 문제가 없어 플레이어를 바로 넣는다. 래퍼 페이지는 로컬 서버에만 있다.
+  if (browserMode) return embedUrl(target);
+  return`http://localhost${location.port ? `:${location.port}` : ""}${PLAYER_PATH}?${playerQuery(target)}`;
 }
 
 /** 브라우저 탭으로 열거나 복사할 원래 주소. */

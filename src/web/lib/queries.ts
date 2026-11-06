@@ -1,5 +1,6 @@
 import { focusManager, queryOptions } from "@tanstack/react-query";
 import type { ChainNode, Page, Session, SessionUpdate } from "../../session/session.types";
+import { browserMode } from "./browser-mode";
 
 export type QueryResult<T> = { data: T | undefined; error: Error | null; isPending: boolean };
 
@@ -7,7 +8,8 @@ export type BriefSession = Pick<Session, "id" | "provider" | "agent" | "provider
 export type ListData<T = Session> = { schemaVersion: number; items: T[]; page: Page };
 export type DetailData = { schemaVersion: number; session: Session; parentSession: BriefSession | null; childrenPage: Page };
 export type ChainData = { schemaVersion: number; sessionId: string; items: ChainNode[]; truncated: boolean };
-export type HealthData = { schemaVersion: number; dataDirectory: string; databasePath: string; appVersion: string; build?: string; mode?: "local" | "remote"; remote?: { url: string; reachable: boolean; latencyMs?: number; outbox: { pending: number; failed: number } } };
+/** mode가 browser면 원격 서버가 내려준 화면을 브라우저로 직접 연 것이다(lib/browser-mode.ts). */
+export type HealthData = { schemaVersion: number; dataDirectory: string; databasePath: string; appVersion: string; build?: string; mode?: "local" | "remote" | "browser"; remote?: { url: string; reachable: boolean; latencyMs?: number; outbox: { pending: number; failed: number } } };
 export type HistoryData = ListData<SessionUpdate>;
 
 focusManager.setEventListener((handleFocus) => {
@@ -25,7 +27,8 @@ export const startCommand = () => `relay web --headless${location.port && locati
 export class ConnectionError extends Error {
   constructor(cause: unknown) {
     const auto = /Win/i.test(navigator.platform);
-    super(auto ? `Relay 서버에 연결할 수 없습니다. 설치한 Relay를 자동으로 켜는 중입니다. 처음이면 아래 서버 켜기를 누르고 브라우저 확인 창에서 항상 허용에 표시한 뒤 열기를 누르세요. 그래도 켜지지 않으면 터미널에서 ${startCommand()}로 서버를 켜세요`
+    super(browserMode ? "원격 Relay에 연결할 수 없습니다. 네트워크를 확인하세요. 연결되면 저절로 다시 불러옵니다."
+      : auto ?`Relay 서버에 연결할 수 없습니다. 설치한 Relay를 자동으로 켜는 중입니다. 처음이면 아래 서버 켜기를 누르고 브라우저 확인 창에서 항상 허용에 표시한 뒤 열기를 누르세요. 그래도 켜지지 않으면 터미널에서 ${startCommand()}로 서버를 켜세요`
       : `Relay 서버에 연결할 수 없습니다. 터미널에서 ${startCommand()}로 서버를 켜세요`, { cause });
     this.name = "ConnectionError";
   }
