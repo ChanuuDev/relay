@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, LogOut, Plus, X } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -9,7 +10,9 @@ import { ErrorNotice } from "../session-common";
 import { useDesktop } from "../../lib/desktop-store";
 import { DEFAULT_FONT_SIZE, FONT_SIZES, type FontSize } from "../../lib/font-size";
 import { useInstall } from "../../lib/pwa";
-import { browserMode, currentCredentials, signOut } from "../../lib/browser-mode";
+import { activateCredentials, browserMode, currentCredentials, signOut } from "../../lib/browser-mode";
+import { saveCredentials } from "../../lib/credentials";
+import type { PcInfo } from "../../lib/remote-api";
 import { useUI } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
 import { COLORS, DEFAULT_WALLPAPER, MAX_CUSTOM_IMAGES, PRESETS, deleteCustomImage, imageLabel, prepareImage, presetUrl, sameChoice, storeCustomImage, type WallpaperChoice } from "../../lib/wallpaper";
@@ -84,6 +87,23 @@ export function SettingsWindow({ health, healthError, connection }: {
 function BrowserAccount({ health, healthError, connection }: { health?: HealthData; healthError: Error | null; connection: Connection }) {
   const login = currentCredentials();
   const [leaving, setLeaving] = useState(false);
+  const [pc, setPc] = useState(login?.pc ?? "");
+  const client = useQueryClient();
+  // 파일 탐색기의 `이 PC` 자리에 보일 PC. 그 PC에서 Relay가 원격 모드로 켜져 있어야 목록이 보인다.
+  const pcs = useQuery({ queryKey: ["relay", "/api/v1/pcs"], refetchInterval: 10_000, retry: false, queryFn: async ({ signal }) => {
+    const response = await fetch("/api/v1/pcs", { cache: "no-store", signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return (await response.json() as { items: PcInfo[] }).items;
+  } });
+  async function choosePc(value: string) {
+    if (!login) return;
+    setPc(value);
+    const { pc: _previous, ...rest } = login;
+    const next = value ? { ...rest, pc: value } : rest;
+    await saveCredentials(next);
+    activateCredentials(next);
+    await client.invalidateQueries();
+  }
   return <section className="settings-group" id="storage-info">
     <h3>원격 연결</h3>
     <ErrorNotice id="global-error" error={healthError} />
@@ -92,9 +112,16 @@ function BrowserAccount({ health, healthError, connection }: { health?: HealthDa
     <div className="settings-row"><span>연결</span><span className="settings-connection"><span className="connection-dot" data-state={connection} />{CONNECTION_LABEL[connection]}{health?.remote?.reachable && health.remote.latencyMs !== undefined ? ` (${health.remote.latencyMs}ms)` : ""}</span></div>
     <div className="settings-row"><span>버전</span><span>RELAY {health?.appVersion ? `v${health.appVersion}` : "—"}</span></div>
     <div className="settings-row"><span>모드</span><Badge variant="outline">브라우저</Badge></div>
+    <div className="settings-row">
+      <label htmlFor="settings-pc">PC 파일</label>
+      <NativeSelect id="settings-pc" size="sm" value={pc} onChange={(event) => void choosePc(event.target.value)}>
+        <NativeSelectOption value="">자동 (연결된 최근 PC)</NativeSelectOption>
+        {(pcs.data ?? []).map((item) => <NativeSelectOption key={item.id} value={item.id}>{item.name}{item.online ? " · 연결됨" : " · 꺼짐"}</NativeSelectOption>)}
+      </NativeSelect>
+    </div>
     <div className="settings-row"><span>로그인</span><Button id="browser-logout" size="sm" variant="outline" disabled={leaving}
       onClick={() => { setLeaving(true); void signOut("로그아웃했습니다. 이 브라우저에 저장한 토큰을 지웠습니다."); }}><LogOut />로그아웃</Button></div>
-    <p className="settings-note">이 화면은 원격 Relay에 바로 연결합니다. 토큰과 주소는 이 브라우저에만 암호화해 두고(AES-GCM, 키는 꺼낼 수 없는 형태로 IndexedDB에 보관), 로그아웃하면 둘 다 지웁니다. 기본 앱으로 열기·시스템 클립보드 같은 Windows 연동은 설치형 앱에서만 됩니다.</p>
+    <p className="settings-note">이 화면은 원격 Relay에 바로 연결합니다. 토큰과 주소는 이 브라우저에만 암호화해 두고(AES-GCM, 키는 꺼낼 수 없는 형태로 IndexedDB에 보관), 로그아웃하면 둘 다 지웁니다. PC 파일은 고른 PC에서 Relay가 원격 모드로 켜져 있을 때 파일 탐색기의 이 PC 자리에 보이고, 원격 서버 파일은 원격 서버 드라이브에 보입니다. 기본 앱으로 열기·시스템 클립보드 같은 Windows 연동은 그 PC 앞에서만 됩니다.</p>
   </section>;
 }
 

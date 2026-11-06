@@ -13,7 +13,7 @@ import { markdownExtensions } from "./markdown";
 import { joinPath } from "./markdown/sanitize";
 import { guardClose, useDesktop } from "../../lib/desktop-store";
 import {
-  codeLanguage, contentUrl, encodeText, ENCODING_LABELS, extensionOf, formatDate, formatSize, openOnSystem, readTextFile, SaveError, saveTextFile, type FileEntry, type TextEncoding,
+  codeLanguage, contentUrl, systemLinked, encodeText, ENCODING_LABELS, extensionOf, formatDate, formatSize, openOnSystem, readTextFile, SaveError, saveTextFile, type FileEntry, type TextEncoding,
 } from "../../lib/files";
 import { renderCode } from "../../lib/highlight";
 import { guardLeave, useViewer, type ViewerDoc } from "../../lib/viewer";
@@ -59,7 +59,7 @@ export function ViewerWindow() {
     <span className="viewer-count" aria-live="polite">{at + 1} / {siblings.length}</span>
     <Button type="button" variant="ghost" size="icon-sm" aria-label="다음 파일" title="다음 파일 (→)" disabled={at < 0 || at >= siblings.length - 1} onClick={() => useViewer.getState().step(1)}><ChevronRight aria-hidden="true" /></Button>
   </div> : null;
-  const systemTools = doc ? <>
+  const systemTools = doc && systemLinked(doc.path) ? <>
     <Button type="button" variant="ghost" size="icon-sm" aria-label="기본 앱으로 열기" title="기본 앱으로 열기" onClick={() => void system(doc.path, "open")}><SquareArrowOutUpRight aria-hidden="true" /></Button>
     <Button type="button" variant="ghost" size="icon-sm" aria-label="탐색기에서 보기" title="탐색기에서 보기" onClick={() => void system(doc.path, "reveal")}><FolderOpen aria-hidden="true" /></Button>
   </> : null;
@@ -189,7 +189,7 @@ function ImageView({ doc, tools, say }: { doc: ViewerDoc; tools: ReactNode; say:
       onDoubleClick={(event) => { if (!natural) return; const rect = event.currentTarget.getBoundingClientRect(); if (view.fit || scale !== 1) zoomTo(1, event.clientX - rect.left, event.clientY - rect.top); else setView((now) => ({ ...now, fit: true })); }}>
       {broken
         ? <div className="viewer-empty" role="alert"><FileWarning aria-hidden="true" /><strong>그림을 읽을 수 없습니다</strong><span>파일이 손상됐거나 브라우저가 지원하지 않는 형식입니다.</span>
-          <Button type="button" size="sm" variant="secondary" onClick={() => void openOnSystem(doc.path, "open").then(() => say("기본 앱으로 엽니다.")).catch(() => say("열지 못했습니다.", "error"))}><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</Button></div>
+          {systemLinked(doc.path) && <Button type="button" size="sm" variant="secondary" onClick={() => void openOnSystem(doc.path, "open").then(() => say("기본 앱으로 엽니다.")).catch(() => say("열지 못했습니다.", "error"))}><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</Button>}</div>
         : <div className="viewer-image-box" style={shown ? { width, height } : undefined} data-ready={natural ? "" : undefined}>
           <img src={contentUrl(doc.path)} alt={doc.name} draggable={false} decoding="async"
             style={natural ? { width: natural.w * scale, height: natural.h * scale, transform: `translate(-50%, -50%) rotate(${view.turn * 90}deg)` } : undefined}

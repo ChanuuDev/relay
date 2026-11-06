@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { root } from "./web-helpers";
+import { binary, root, spawnEnv } from "./web-helpers";
 
 /* 브라우저 모드(원격 서버가 내려준 정적 화면)를 끝까지 확인한다. nginx(deploy/nginx/relay-web.conf)처럼 내보낸 화면을 내려주고
    /api/는 테스트용 원격 서버(NestJS + PGlite)로 넘기는 작은 서버를 띄운다. localhost는 보안 출처라 WebCrypto·서비스 워커가 그대로 돈다. */
@@ -149,4 +150,63 @@ test("설정에서 로그아웃하면 암호문과 키를 지우고 로그인 �
   await expect(page.getByRole("status").filter({ hasText: "로그아웃했습니다" })).toBeVisible();
   await expect(page.getByLabel("토큰", { exact: true })).toHaveValue("");
   expect(await page.evaluate(() => localStorage.getItem("relay-web-credentials"))).toBeNull();
+});
+
+test("원격 모드로 켜 둔 PC의 파일을 브라우저에서 보고, 그림·글도 그 PC에서 받아 온다", async ({ page }) => {
+  test.setTimeout(120_000);
+  // PC 역할: 이 컴퓨터의 임시 폴더를 저장소로 쓰는 relay.exe를 원격 모드로 띄운다. 기기는 원격 서버에 먼저 등록한다.
+  const pcDir = path.join(dir, "pc");
+  const share = path.join(pcDir, "share");
+  mkdirSync(share, { recursive: true });
+  writeFileSync(path.join(share, "pc-note.txt"), "PC에 있는 메모");
+  writeFileSync(path.join(share, "pc-pixel.png"), PIXEL);
+  const registered = await (await fetch(`${fixture.url}/api/v1/devices/register`, { method: "POST",
+    headers: { Authorization: `Bearer ${fixture.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ name: "test-pc", platform: process.platform }) })).json() as { device: { id: string } };
+  writeFileSync(path.join(pcDir, "config.json"), JSON.stringify({ schemaVersion: 1, mode: "remote",
+    remote: { url: fixture.url, token: fixture.token, deviceId: registered.device.id, deviceName: "test-pc" } }));
+  const reservation = net.createServer();
+  await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+  const port = (reservation.address() as net.AddressInfo).port;
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const pc = spawn(binary, ["web", "--data-dir", pcDir, "--port", String(port)], { cwd: pcDir, windowsHide: true, stdio: "pipe", env: { ...spawnEnv, RELAY_ALLOW_HTTP: "1" } });
+  try {
+    await login(page);
+    await expect(page.locator("#connection-state")).toContainText("연결됨");
+    await expect.poll(() => page.evaluate(async () => ((await (await fetch("/api/v1/pcs")).json()) as { items: { online: boolean }[] }).items.some((item) => item.online)), { timeout: 30_000 }).toBe(true);
+    const note = path.join(share, "pc-note.txt");
+    const pixel = path.join(share, "pc-pixel.png");
+    const result = await page.evaluate(async ({ share, note, pixel }) => {
+      const places = await (await fetch("/api/v1/files/places")).json() as { platform: string; drives: { path: string }[]; pc?: { name: string } };
+      const listing = await (await fetch(`/api/v1/files?path=${encodeURIComponent(share)}`)).json() as { path: string; entries: { name: string; path: string }[] };
+      const text = await (await fetch(`/api/v1/files/content?path=${encodeURIComponent(note)}`)).text();
+      const image = new Image();
+      image.src = `/api/v1/files/content?path=${encodeURIComponent(pixel)}`;
+      await image.decode();
+      const server = await (await fetch("/api/v1/files?path=remote%3A%2F")).json() as { entries: { path: string }[] };
+      const post = (url: string, body: unknown) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((response) => response.status);
+      return { places, listing, text, width: image.naturalWidth, server: server.entries.map((entry) => entry.path),
+        open: await post("/api/v1/files/open", { path: note, action: "open" }),
+        mixed: await post("/api/v1/files/paste", { sources: [note], destination: "remote:/", mode: "copy" }) };
+    }, { share, note, pixel });
+    expect(result.places.pc?.name).toBe("test-pc");
+    expect(result.places.platform).toBe(process.platform);
+    expect(result.places.drives.map((drive) => drive.path)).toContain("remote:/");
+    expect(result.listing.path).toBe(share);
+    expect(result.listing.entries.map((entry) => entry.name)).toEqual(expect.arrayContaining(["pc-note.txt", "pc-pixel.png"]));
+    expect(result.listing.entries.find((entry) => entry.name === "pc-note.txt")?.path).toBe(note);
+    expect(result.text).toBe("PC에 있는 메모");
+    expect(result.width).toBe(1);
+    expect(result.server).toContain("remote:/remote-note.txt");
+    expect(result.open).toBe(403);
+    expect(result.mixed).toBe(403);
+
+    // 파일 탐색기 창: PC 드라이브와 원격 서버 드라이브가 함께 보이고, PC 폴더를 열면 그 PC의 파일이 보인다.
+    await page.locator('.dock-item[aria-label="파일 탐색기"]').click();
+    const files = page.locator('.window[data-window="files"]');
+    await expect(files.getByText("원격 서버").first()).toBeVisible();
+  } finally {
+    const done = new Promise((resolve) => pc.once("exit", resolve));
+    pc.kill("SIGTERM");
+    await done;
+  }
 });

@@ -4,7 +4,8 @@ import path from "node:path";
 import { RelayError, storageError } from "./errors";
 import { directory, integer } from "./validation";
 
-export interface RemoteConfig { url: string; token: string; deviceId?: string | null; deviceName?: string }
+/** shareFiles: 브라우저 모드 화면에서 이 PC의 파일을 보게 할지(기본 켜짐, false면 끔). src/remote/agent.ts */
+export interface RemoteConfig { url: string; token: string; deviceId?: string | null; deviceName?: string; shareFiles?: boolean }
 export interface Config { dataDirectory: string; databasePath: string; webHost: "127.0.0.1"; webPort: number; retentionDays: number; mode?: "local" | "remote"; remote?: RemoteConfig }
 
 export function remoteUrl(input: unknown): string {
@@ -50,8 +51,8 @@ export function loadConfig(dataDir?: string, port?: string): Config {
   if (raw.mode === "remote") {
     const value = raw.remote as Partial<RemoteConfig> | undefined;
     if (!value || typeof value.token !== "string" || !value.token.trim() || /[\r\n]/.test(value.token) ||
-      (value.deviceId != null && typeof value.deviceId !== "string")) throw new RelayError("INVALID_CONFIG", "원격 서버 토큰·기기 설정을 확인하세요.");
-    remote = { url: remoteUrl(value.url), token: value.token.trim(), deviceId: value.deviceId, deviceName: value.deviceName };
+      (value.deviceId != null && typeof value.deviceId !== "string") || (value.shareFiles !== undefined && typeof value.shareFiles !== "boolean")) throw new RelayError("INVALID_CONFIG", "원격 서버 토큰·기기 설정을 확인하세요.");
+    remote = { url: remoteUrl(value.url), token: value.token.trim(), deviceId: value.deviceId, deviceName: value.deviceName, ...(value.shareFiles === false ? { shareFiles: false } : {}) };
   }
   return { dataDirectory, databasePath: path.join(dataDirectory, "relay.db"),
     webHost: "127.0.0.1", webPort: integer(port, "port", configPort, 1, 65535), retentionDays,

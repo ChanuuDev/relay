@@ -19,11 +19,14 @@ let installed = false;
 export const currentCredentials = () => current;
 const unauthorized = () => window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
 
+/** 서비스 워커가 쓰는 만큼만: 주소·토큰·고른 PC */
+const forWorker = (credentials: Credentials) => ({ url: credentials.url, token: credentials.token, ...(credentials.pc ? { pc: credentials.pc } : {}) });
+
 /** 서비스 워커에 지금 로그인 정보를 알린다(로그아웃이면 지운다). 워커는 정보를 기억에만 둔다. */
 function tellWorker() {
   const worker = navigator.serviceWorker?.controller;
   if (!worker) return;
-  worker.postMessage(current ? { type: "relay-web-credentials", credentials: { url: current.url, token: current.token }, build: pageBuild() } : { type: "relay-web-logout" });
+  worker.postMessage(current ? { type: "relay-web-credentials", credentials: forWorker(current), build: pageBuild() } : { type: "relay-web-logout" });
 }
 
 /** 감싼 fetch. 같은 출처 `/api/`만 원격으로 보내고 나머지는 그대로 둔다. */
@@ -53,7 +56,7 @@ function install() {
     const container = navigator.serviceWorker;
     container?.addEventListener("message", (event: MessageEvent) => {
       const data = event.data as { type?: string } | null;
-      if (data?.type === "relay-web-credentials-request") event.ports[0]?.postMessage(current ? { url: current.url, token: current.token } : null);
+      if (data?.type === "relay-web-credentials-request") event.ports[0]?.postMessage(current ? forWorker(current) : null);
       if (data?.type === "relay-web-unauthorized") unauthorized();
     });
     container?.addEventListener("controllerchange", tellWorker);

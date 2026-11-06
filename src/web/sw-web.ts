@@ -46,7 +46,7 @@ async function askClients(clientId: string): Promise<Credentials | null> {
       channel.port1.onmessage = (event) => { clearTimeout(timer); resolve(event.data); };
       client.postMessage({ type: "relay-web-credentials-request" }, [channel.port2]);
     });
-    if (validCredentials(answer)) return (credentials = { url: answer.url, token: answer.token });
+    if (validCredentials(answer)) return (credentials = { url: answer.url, token: answer.token, ...(answer.pc ? { pc: answer.pc } : {}) });
   }
   return null;
 }
@@ -87,7 +87,7 @@ scope.addEventListener("activate", (event) => {
 scope.addEventListener("message", (event) => {
   const data = event.data as { type?: string; credentials?: unknown; build?: unknown } | null;
   if (data?.type === "relay-web-credentials" && validCredentials(data.credentials)) {
-    credentials = { url: data.credentials.url, token: data.credentials.token };
+    credentials = { url: data.credentials.url, token: data.credentials.token, ...(data.credentials.pc ? { pc: data.credentials.pc } : {}) };
     if (typeof data.build === "string") build = data.build;
   }
   if (data?.type === "relay-web-logout") credentials = null;

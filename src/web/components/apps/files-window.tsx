@@ -21,9 +21,10 @@ import { RenameField, type RenameEntry } from "./files-rename-field";
 import { FilesTree, favoritesOf, PLACE_ICONS, type Favorite, type TreeTarget } from "./files-tree";
 import { useDesktop } from "../../lib/desktop-store";
 import {
-  BATCH_MAX, COLUMN_MIN, contentUrl, copyToSystemClipboard, createFolder, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, renameItem, sortEntries,
+  BATCH_MAX, COLUMN_MIN, contentUrl, systemLinked, copyToSystemClipboard, createFolder, deleteItems, driveName, fileType, formatDate, formatSize, getJson, listUrl, openOnSystem, parentOf, pasteItems, readTextPreview, renameItem, sortEntries,
   TEXT_PREVIEW_BYTES, useFiles, viewerKind, type Clipboard, type Drive, type FileEntry, type Listing, type Location, type PasteMode, type Places, type SortKey, type ColumnKey, type ColumnWidths,
 } from "../../lib/files";
+import { browserMode } from "../../lib/browser-mode";
 
 /** 격자 보기에서 섬네일을 그리는 그림 크기 상한. 큰 사진 수천 장이 한꺼번에 내려오지 않게 한다. */
 const THUMB_MAX_BYTES = 24 * 1024 * 1024;
@@ -135,7 +136,7 @@ export function FilesWindow() {
   function openEntry(entry: FileEntry) {
     if (entry.kind === "directory") go(entry.path);
     else if (viewerKind(entry)) useViewer.getState().open(entry, entries);
-    else if (entry.path.startsWith("remote:/")) download(entry.path);
+    else if (!systemLinked(entry.path)) download(entry.path);
     else void system(entry.path, "open");
   }
   const inClipboard = (target: string, mode?: PasteMode) => Boolean(clipboard && (!mode || clipboard.mode === mode) && clipboard.paths.some((path) => path.toLowerCase() === target.toLowerCase()));
@@ -146,7 +147,7 @@ export function FilesWindow() {
     if (items.length > BATCH_MAX) { say(`한 번에 ${BATCH_MAX}개까지만 ${mode === "cut" ? "잘라낼" : "복사할"} 수 있습니다.`, "error"); return; }
     const next: Clipboard = { paths: items.map((item) => item.path), mode };
     setClipboard(next);
-    if (mode === "copy" && !next.paths.some(path => path.startsWith("remote:/")) && (places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform))) {
+    if (mode === "copy" && next.paths.every(systemLinked) && (places.data ? places.data.platform === "win32" : /Win/.test(navigator.platform))) {
       const id = Date.now();
       setNotice({ id, tone: "info", text: "Windows 클립보드에 복사하는 중…", pending: true });
       try {
@@ -303,7 +304,7 @@ export function FilesWindow() {
     if (entry) {
       const viewer = viewerKind(entry);
       return [
-        { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : viewer ? "뷰어로 열기" : entry.path.startsWith("remote:/") ? "내려받기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
+        { kind: "item", id: "open", label: entry.kind === "directory" ? "열기" : viewer ? "뷰어로 열기" : !systemLinked(entry.path) ? "내려받기" : "기본 앱으로 열기", onSelect: () => openEntry(entry) },
         ...(viewer ? [{ kind: "item" as const, id: "system", label: "기본 앱으로 열기", onSelect: () => void system(entry.path, "open") }] : []),
         ...(entry.kind === "directory" ? [favoriteEntry(entry.path)] : []),
         { kind: "item", id: "reveal", label: "탐색기에서 보기", onSelect: () => void system(entry.path, "reveal") },
@@ -333,8 +334,9 @@ export function FilesWindow() {
   };
 
   const menuEntries = (target: Menu): MenuEntry[] => {
-    const remote = (target.entry?.path ?? target.tree?.path ?? location)?.startsWith("remote:/");
-    return allMenuEntries(target).filter(entry => !remote || !["system", "reveal", "explorer"].includes(entry.id));
+    const where = target.entry?.path ?? target.tree?.path ?? location;
+    const linked = where === null ? !browserMode : systemLinked(where);
+    return allMenuEntries(target).filter(entry => linked || !["system", "reveal", "explorer"].includes(entry.id));
   };
   async function upload(files: FileList | null) {
     if (!files || !location?.startsWith("remote:/")) return;
@@ -795,7 +797,7 @@ function PreviewPane({ entry, many, folder, onOpen, onClear, onSystem, onDownloa
       <h3 className="files-preview-name">{folder.name}</h3>
       <p className="files-preview-kind">폴더 · 하위 폴더 {folders.toLocaleString("ko-KR")}개 · 파일 {(folder.total - folders).toLocaleString("ko-KR")}개</p>
       <div className="files-preview-actions">
-        <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(folder.path, "open")}><SquareArrowOutUpRight aria-hidden="true" />탐색기에서 열기</Button>
+        {systemLinked(folder.path) && <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(folder.path, "open")}><SquareArrowOutUpRight aria-hidden="true" />탐색기에서 열기</Button>}
         <Button type="button" size="sm" variant="ghost" onClick={() => onCopy(folder.path)}><Copy aria-hidden="true" />경로 복사</Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => onProperties(folder.path)}><Info aria-hidden="true" />속성</Button>
       </div>
@@ -828,9 +830,9 @@ function PreviewPane({ entry, many, folder, onOpen, onClear, onSystem, onDownloa
       <dt>위치</dt><dd title={entry.path}>{entry.path}</dd>
     </dl>
     <div className="files-preview-actions">
-      <Button type="button" size="sm" onClick={() => onOpen(entry)}>{entry.kind === "directory" ? <><FolderOpen aria-hidden="true" />열기</> : viewer ? <><Eye aria-hidden="true" />뷰어로 열기</> : <><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</>}</Button>
-      {viewer && <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(entry.path, "open")}><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</Button>}
-      <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(entry.path, "reveal")}><FolderOpen aria-hidden="true" />탐색기에서 보기</Button>
+      <Button type="button" size="sm" onClick={() => onOpen(entry)}>{entry.kind === "directory" ? <><FolderOpen aria-hidden="true" />열기</> : viewer ? <><Eye aria-hidden="true" />뷰어로 열기</> : systemLinked(entry.path) ? <><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</> : <><Download aria-hidden="true" />내려받기</>}</Button>
+      {viewer && systemLinked(entry.path) && <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(entry.path, "open")}><SquareArrowOutUpRight aria-hidden="true" />기본 앱으로 열기</Button>}
+      {systemLinked(entry.path) && <Button type="button" size="sm" variant="secondary" onClick={() => onSystem(entry.path, "reveal")}><FolderOpen aria-hidden="true" />탐색기에서 보기</Button>}
       {entry.kind === "file" && <Button type="button" size="sm" variant="ghost" onClick={() => onDownload(entry.path)}><Download aria-hidden="true" />내려받기</Button>}
       <Button type="button" size="sm" variant="ghost" onClick={() => onCopy(entry.path)}><Copy aria-hidden="true" />경로 복사</Button>
       <Button type="button" size="sm" variant="ghost" onClick={() => onProperties(entry.path)}><Info aria-hidden="true" />속성</Button>

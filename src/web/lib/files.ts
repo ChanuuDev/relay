@@ -1,3 +1,4 @@
+import { browserMode } from "./browser-mode";
 import { create } from "zustand";
 import {
   File, FileArchive, FileAudio, FileCode, FileImage, FileSpreadsheet, FileTerminal, FileText, FileVideo, Folder, Presentation, type LucideIcon,
@@ -174,6 +175,8 @@ export const useFiles = create<State>((set, get) => {
   };
 });
 
+/** 이 화면 앞의 PC에서 기본 앱으로 열기·탐색기에서 보기·시스템 클립보드를 쓸 수 있는 경로. 원격 서버 파일과 브라우저 모드(다른 곳의 PC를 중계로 봄)는 내려받기만 한다. */
+export const systemLinked = (target: string) => !browserMode && !target.startsWith("remote:/");
 export const listUrl = (target: string) => `/api/v1/files?path=${encodeURIComponent(target)}`;
 export const contentUrl = (target: string, download = false) => `/api/v1/files/content?path=${encodeURIComponent(target)}${download ? "&download=1" : ""}`;
 

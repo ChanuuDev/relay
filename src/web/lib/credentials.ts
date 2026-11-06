@@ -65,7 +65,7 @@ export async function loadCredentials(): Promise<Credentials | null> {
     if (!key) return null;
     const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes(sealed.iv) }, key, bytes(sealed.data));
     const value = JSON.parse(new TextDecoder().decode(plain)) as Credentials & { v?: number };
-    return valid(value) ? { url: value.url, token: value.token, ...(value.user ? { user: value.user } : {}), ...(value.tokenName ? { tokenName: value.tokenName } : {}) } : null;
+    return valid(value) ? { url: value.url, token: value.token, ...(value.user ? { user: value.user } : {}), ...(value.tokenName ? { tokenName: value.tokenName } : {}), ...(typeof value.pc === "string" && value.pc ? { pc: value.pc } : {}) } : null;
   } catch { return null; }
 }
 

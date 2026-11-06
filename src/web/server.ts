@@ -1,4 +1,5 @@
 import { RemoteClient } from "../remote/client";
+import { startAgent } from "../remote/agent";
 import { remoteHandler } from "../remote/web";
 import type { Config } from "../config";
 import { openDatabase } from "../db/database";
@@ -260,6 +261,8 @@ export function startServer(config: Config) {
   flush();
   const timer = setInterval(flush, 5 * 60_000);
   timer.unref();
+  // 원격 모드면 브라우저 모드 화면이 이 PC의 파일을 볼 수 있게 서버에 연결해 둔다(remote.shareFiles: false면 켜지 않는다).
+  const agent = startAgent(config);
   let stopped = false;
-  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); await server.stop(false); db.close(); writeDb.close(); } } };
+  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); agent.stop(); await server.stop(false); db.close(); writeDb.close(); } } };
 }

@@ -39,13 +39,15 @@ export async function createApp(db: Db, config: ServerConfig, options: AppOption
     response.setHeader("Access-Control-Max-Age", "600");
     response.status(204).end();
   });
-  const json =(limit: number) => express.json({ limit, strict: true, type: "application/json" });
+  const json = (limit: number) => express.json({ limit, strict: true, type: "application/json" });
   app.use("/api/v1/import", json(MAX_IMPORT_BYTES));
   app.use("/api/v1/notes/import", json(MAX_IMPORT_BYTES));
   app.use("/api/v1/notes/images", json(MAX_IMAGE_UPLOAD_BYTES));
+  // PC 파일 저장(뷰어에서 고친 글)은 로컬 서버처럼 64MB까지 받는다. PC가 보내는 응답 본문(agent/reply)은 파서 없이 흘려보낸다.
+  app.use("/api/v1/pcs", json(MAX_IMPORT_BYTES));
   app.use((request: express.Request, response: express.Response, next: express.NextFunction) => {
     if (request.path.startsWith("/api/v1/files/content") && request.method === "PUT") return next();
-    if (request.path === "/api/v1/import" || request.path === "/api/v1/notes/import" || request.path.startsWith("/api/v1/notes/images")) return next();
+    if (request.path === "/api/v1/import" || request.path === "/api/v1/notes/import" || request.path.startsWith("/api/v1/notes/images") || request.path.startsWith("/api/v1/pcs/") || request.path.startsWith("/api/v1/agent/reply/")) return next();
     return json(MAX_WRITE_BYTES)(request, response, next);
   });
   app.use((_request: express.Request, response: express.Response, next: express.NextFunction) => {
