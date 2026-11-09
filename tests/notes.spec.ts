@@ -1079,7 +1079,7 @@ test("메모 창: 더 넣기 메뉴로 알림 상자·수식·접기·각주를 
   await expect(source).toHaveValue(/> \[!CAUTION\]\n> 내용을 입력하세요\n$/);
 });
 
-test("메모 창: 표 열 너비는 내용에 맞춰 나뉘고, 줄간격(110~200%)은 본문·표·Markdown 원문에 함께 쓰이며 다시 열어도 남는다", async ({ page }) => {
+test("메모 창: 표 열 너비는 내용에 맞춰 나뉘고, 줄간격(110~400%, 기본 200%)은 본문·표·Markdown 원문에 함께 쓰이며 다시 열어도 남는다", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
@@ -1108,17 +1108,28 @@ test("메모 창: 표 열 너비는 내용에 맞춰 나뉘고, 줄간격(110~20
   // 표는 본문 너비 안에 머문다(가로 스크롤 없음).
   expect(await prose.locator(".tableWrapper").evaluate((wrapper) => wrapper.scrollWidth <= wrapper.clientWidth + 1)).toBe(true);
 
-  // 줄간격: 기본 180%. 서식 도구에서 고르면 본문과 표 글줄이 함께 바뀐다(표는 본문의 0.9배).
+  // 줄간격: 기본 200%. 서식 도구에서 고르면 본문과 표 글줄이 함께 바뀐다(표는 본문의 0.9배).
   const ratio = (locator: Locator) => locator.evaluate((element) => { const style = getComputedStyle(element); return parseFloat(style.lineHeight) / parseFloat(style.fontSize); });
   const paragraph = prose.locator("p").first();
   const cell = prose.locator("td").first();
-  expect(await ratio(paragraph)).toBeCloseTo(1.8, 2);
-  expect(await ratio(cell)).toBeCloseTo(1.62, 2);
+  expect(await ratio(paragraph)).toBeCloseTo(2, 2);
+  expect(await ratio(cell)).toBeCloseTo(1.8, 2);
   const tool = toolbar.getByRole("button", { name: "줄간격" });
   const menu = page.getByRole("menu", { name: "줄간격" });
   await tool.click();
-  await expect(menu.getByRole("menuitemradio")).toHaveText([110, 120, 130, 140, 150, 160, 170, 180, 190, 200].map((value) => value === 180 ? /^180%\s*기본$/ : `${value}%`));
-  await expect(menu.getByRole("menuitemradio", { name: /^180%/ })).toHaveAttribute("aria-checked", "true");
+  // 110~400%를 10%씩 고른다. 목록이 길어 굴려 보며, 열면 지금 고른 값이 보인다.
+  const values = Array.from({ length: 30 }, (_, index) => 110 + index * 10);
+  await expect(menu.getByRole("menuitemradio")).toHaveText(values.map((value) => value === 200 ? /^200%\s*기본$/ : `${value}%`));
+  await expect(menu.getByRole("menuitemradio", { name: /^200%/ })).toHaveAttribute("aria-checked", "true");
+  await expect(menu.getByRole("menuitemradio", { name: /^200%/ })).toBeInViewport({ ratio: 1 });
+  expect(await menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await menu.getByRole("menuitemradio", { name: "400%" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect.poll(() => ratio(paragraph)).toBeCloseTo(4, 2);
+  expect(await ratio(cell)).toBeCloseTo(3.6, 2);
+  await tool.click();
+  await expect(menu.getByRole("menuitemradio", { name: "400%" })).toHaveAttribute("aria-checked", "true");
+  await expect(menu.getByRole("menuitemradio", { name: "400%" })).toBeInViewport({ ratio: 1 });
   // 읽기만 하던 중에 고르면 본문에 커서를 넣지 않는다(원문을 건드리지 않는다).
   await menu.getByRole("menuitemradio", { name: "130%" }).click();
   await expect(menu).toHaveCount(0);
@@ -1128,9 +1139,13 @@ test("메모 창: 표 열 너비는 내용에 맞춰 나뉘고, 줄간격(110~20
   // 가장 좁게 골라도 표 글줄은 1.1 밑으로 줄지 않는다. 목록은 ↑↓·Home·End로 옮겨 Enter로 고른다.
   await tool.click();
   await expect(menu.getByRole("menuitemradio", { name: "130%" })).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Home");
+  await expect(menu.getByRole("menuitemradio", { name: "110%" })).toBeFocused();
   await page.keyboard.press("End");
-  await expect(menu.getByRole("menuitemradio", { name: "200%" })).toBeFocused();
+  await expect(menu.getByRole("menuitemradio", { name: "400%" })).toBeFocused();
+  await expect(menu.getByRole("menuitemradio", { name: "400%" })).toBeInViewport({ ratio: 1 });
   await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitemradio", { name: "110%" })).toBeInViewport({ ratio: 1 });
   await expect(menu.getByRole("menuitemradio", { name: "110%" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(menu).toHaveCount(0);

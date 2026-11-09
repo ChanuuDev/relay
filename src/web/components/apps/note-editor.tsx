@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import { Popover } from "radix-ui";
 import {
@@ -380,7 +380,13 @@ function TableTool({ editor, active, disabled }: { editor: Editor | null; active
   </Popover.Root>;
 }
 
-/** 본문 줄간격(110~200%). 서식·Markdown 보기 모두에 쓰는 창 전체 설정이다. */
+/** 목록 안에서 항목이 가운데 오도록 목록만 굴린다(페이지는 건드리지 않는다). */
+function centerIn(list: HTMLElement, item: HTMLElement | null) {
+  // offsetTop은 목록(position: relative) 기준이라 나타나는 동안의 크기 변형에 흔들리지 않는다.
+  if (item) list.scrollTop = item.offsetTop - (list.clientHeight - item.offsetHeight) / 2;
+}
+
+/** 본문 줄간격(110~400%, 기본 200%). 서식·Markdown 보기 모두에 쓰는 창 전체 설정이다. 목록이 길어 굴려 보고, 100%마다 구분선을 둔다. */
 function LeadingTool({ editor }: { editor: Editor | null }) {
   const [open, setOpen] = useState(false);
   const leading = useNoteLeading((state) => state.leading);
@@ -398,7 +404,10 @@ function LeadingTool({ editor }: { editor: Editor | null }) {
           // 키보드로 열면 지금 고른 값에 초점을 둔다.
           const menu = event.currentTarget as HTMLElement;
           focusMenuOnOpen(menu);
-          if (menu.contains(document.activeElement) && document.activeElement !== menu) menu.querySelector<HTMLElement>('[aria-checked="true"]')?.focus({ preventScroll: true });
+          const checked = menu.querySelector<HTMLElement>('[aria-checked="true"]');
+          if (menu.contains(document.activeElement) && document.activeElement !== menu) checked?.focus({ preventScroll: true });
+          // 지금 고른 값이 보이도록 목록을 굴린다. 높이 제한은 CSS에 정해져 있어 바로 굴린다(뒤로 미루면 그사이 키보드로 옮긴 자리를 되돌린다).
+          centerIn(menu, checked);
         }}
         onKeyDown={(event) => {
           const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[role=menuitemradio]"));
@@ -407,6 +416,7 @@ function LeadingTool({ editor }: { editor: Editor | null }) {
           if (next === undefined) return;
           event.preventDefault();
           items[next]?.focus({ preventScroll: true });
+          items[next]?.scrollIntoView({ block: "nearest" });
         }}
         onPointerMove={(event) => followPointer(event.currentTarget, event.target)} onPointerLeave={(event) => followPointer(event.currentTarget, null)}
         onCloseAutoFocus={(event) => {
@@ -415,11 +425,14 @@ function LeadingTool({ editor }: { editor: Editor | null }) {
           if (document.getElementById("note-body")?.contains(target)) { event.preventDefault(); if (editor) editor.view.focus(); else (target as HTMLElement).focus({ preventScroll: true }); }
           else if (target instanceof HTMLElement && target !== document.body && target.isConnected) { event.preventDefault(); target.focus({ preventScroll: true }); }
         }}>
-        {NOTE_LEADINGS.map((value) => <button key={value} type="button" className="menu-item" role="menuitemradio" aria-checked={value === leading}
-          onClick={() => { setLeading(value); setOpen(false); }}>
-          <span className="menu-check" aria-hidden="true">{value === leading ? <Check /> : null}</span>{value}%
-          {value === DEFAULT_LEADING && <span className="leading-default">기본</span>}
-        </button>)}
+        {NOTE_LEADINGS.map((value) => <Fragment key={value}>
+          {value > NOTE_LEADINGS[0]! && value % 100 === 10 && <div role="separator" className="menu-separator" />}
+          <button type="button" className="menu-item" role="menuitemradio" aria-checked={value === leading}
+            onClick={() => { setLeading(value); setOpen(false); }}>
+            <span className="menu-check" aria-hidden="true">{value === leading ? <Check /> : null}</span>{value}%
+            {value === DEFAULT_LEADING && <span className="leading-default">기본</span>}
+          </button>
+        </Fragment>)}
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>;
