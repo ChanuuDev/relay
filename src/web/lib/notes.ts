@@ -389,6 +389,20 @@ export const useNoteMode = create<{ mode: NoteMode; setMode: (mode: NoteMode) =>
   },
 }));
 
+/** 본문 줄간격(%). 글자 크기에 곱하는 배수를 백분율로 보인다(180% = line-height 1.8). 보기 방식처럼 창 전체 설정이고 원문에는 남지 않는다. */
+export const NOTE_LEADINGS = [110, 120, 130, 140, 150, 160, 170, 180, 190, 200] as const;
+export type NoteLeading = (typeof NOTE_LEADINGS)[number];
+export const DEFAULT_LEADING: NoteLeading = 180;
+const LEADING_KEY = "relay-notes-leading";
+const isLeading = (value: number): value is NoteLeading => (NOTE_LEADINGS as readonly number[]).includes(value);
+export const useNoteLeading = create<{ leading: NoteLeading; setLeading: (leading: NoteLeading) => void }>((set) => ({
+  leading: (() => { try { const value = Number(localStorage.getItem(LEADING_KEY)); return isLeading(value) ? value : DEFAULT_LEADING; } catch { return DEFAULT_LEADING; } })(),
+  setLeading: (leading) => {
+    try { if (leading === DEFAULT_LEADING) localStorage.removeItem(LEADING_KEY); else localStorage.setItem(LEADING_KEY, String(leading)); } catch { /* 저장하지 못해도 지금 창에서는 바뀐다. */ }
+    set({ leading });
+  },
+}));
+
 // ── DB와 맞추기 ─────────────────────────────────────────────
 // 고친 항목만 모아 SAVE_DELAY 뒤에 한 번에 보낸다(POST). 보내지 못한 변경은 PENDING_KEY에 남겨 창을 닫아도 다음에 보낸다.
 // POLL_MS마다 저장 번호(ETag)만 묻고, 다른 탭·창이 고쳤을 때만 목록을 다시 받는다. 아직 보내지 못한 이 창의 변경이 이긴다.

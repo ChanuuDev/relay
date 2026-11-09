@@ -1078,3 +1078,88 @@ test("메모 창: 더 넣기 메뉴로 알림 상자·수식·접기·각주를 
   await insert("알림 상자 · 주의");
   await expect(source).toHaveValue(/> \[!CAUTION\]\n> 내용을 입력하세요\n$/);
 });
+
+test("메모 창: 표 열 너비는 내용에 맞춰 나뉘고, 줄간격(110~200%)은 본문·표·Markdown 원문에 함께 쓰이며 다시 열어도 남는다", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  const markdown = "우선순위 기준은 다음과 같다.\n\n"
+    + "| ID | 우선 | 계층 | 개선점 | 개선 후 차이(요약) |\n| --- | --- | --- | --- | --- |\n"
+    + "| A1 | P0 | BE | 모든 `@Scheduled`가 단일 스레드를 공유한다 | 발언자 이벤트 최악 지연이 \"100ms + 다른 작업 시간(최대 수 초)\"에서 \"100ms + 자기 처리 시간\"으로 줄어든다 |\n"
+    + "| A2 | P1 | BE+앱 | path 재조정이 닫힌 채널을 영구 검사하고, 재시작마다 전체 DELETE를 재발행한다 | 닫힌 채널 22개 기준 분당 SQL 540 → 12, 재시작 DELETE 22 → 0 |";
+  await seed(page, [{ id: "t", kind: "note", parentId: null, title: "개선점", body: markdown }], { selected: "t" });
+  const notes = page.locator(win("notes"));
+  const prose = notes.locator(".note-prose");
+  const toolbar = notes.getByRole("toolbar", { name: "서식" });
+  await expect(prose.locator("table th")).toHaveCount(5);
+
+  // 짧은 칸(ID·우선·계층)은 좁고 긴 글 칸이 넓다. 예전처럼 다섯 칸이 똑같이 나뉘지 않는다.
+  const [id, priority, layer, change, result] = await prose.locator("table tr").first().locator("th")
+    .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+  for (const short of [id!, priority!, layer!]) expect(short).toBeLessThan(Math.min(change!, result!) / 2);
+  // 짧은 칸의 글자는 한 줄에 선다(한글 낱말이 칸 안에서 쪼개지지 않는다).
+  const lines = await prose.locator("table tr").evaluateAll((rows) => rows.flatMap((row) => Array.from(row.children).slice(0, 3).map((cell) => {
+    const text = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT).nextNode();
+    const range = document.createRange();
+    if (text) range.selectNodeContents(text);
+    return range.getClientRects().length;
+  })));
+  expect(lines).toEqual(Array(9).fill(1));
+  // 표는 본문 너비 안에 머문다(가로 스크롤 없음).
+  expect(await prose.locator(".tableWrapper").evaluate((wrapper) => wrapper.scrollWidth <= wrapper.clientWidth + 1)).toBe(true);
+
+  // 줄간격: 기본 180%. 서식 도구에서 고르면 본문과 표 글줄이 함께 바뀐다(표는 본문의 0.9배).
+  const ratio = (locator: Locator) => locator.evaluate((element) => { const style = getComputedStyle(element); return parseFloat(style.lineHeight) / parseFloat(style.fontSize); });
+  const paragraph = prose.locator("p").first();
+  const cell = prose.locator("td").first();
+  expect(await ratio(paragraph)).toBeCloseTo(1.8, 2);
+  expect(await ratio(cell)).toBeCloseTo(1.62, 2);
+  const tool = toolbar.getByRole("button", { name: "줄간격" });
+  const menu = page.getByRole("menu", { name: "줄간격" });
+  await tool.click();
+  await expect(menu.getByRole("menuitemradio")).toHaveText([110, 120, 130, 140, 150, 160, 170, 180, 190, 200].map((value) => value === 180 ? /^180%\s*기본$/ : `${value}%`));
+  await expect(menu.getByRole("menuitemradio", { name: /^180%/ })).toHaveAttribute("aria-checked", "true");
+  // 읽기만 하던 중에 고르면 본문에 커서를 넣지 않는다(원문을 건드리지 않는다).
+  await menu.getByRole("menuitemradio", { name: "130%" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByLabel("본문", { exact: true })).not.toBeFocused();
+  await expect.poll(() => ratio(paragraph)).toBeCloseTo(1.3, 2);
+  expect(await ratio(cell)).toBeCloseTo(1.17, 2);
+  // 가장 좁게 골라도 표 글줄은 1.1 밑으로 줄지 않는다. 목록은 ↑↓·Home·End로 옮겨 Enter로 고른다.
+  await tool.click();
+  await expect(menu.getByRole("menuitemradio", { name: "130%" })).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("End");
+  await expect(menu.getByRole("menuitemradio", { name: "200%" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitemradio", { name: "110%" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await expect.poll(() => ratio(paragraph)).toBeCloseTo(1.1, 2);
+  expect(await ratio(cell)).toBeCloseTo(1.1, 2);
+
+  // Markdown 보기의 원문 칸도 같은 줄간격이다. 줄간격은 보기 설정이라 원문은 바뀌지 않는다.
+  await toolbar.getByRole("button", { name: "Markdown", exact: true }).click();
+  expect(await ratio(notes.locator("textarea#note-body"))).toBeCloseTo(1.1, 2);
+  await toolbar.getByRole("button", { name: "서식", exact: true }).click();
+  await page.waitForTimeout(600);
+  expect((await saved(page)).items.find((entry: { id: string }) => entry.id === "t")?.body).toBe(markdown);
+
+  // 쓰던 중에 고르면 본문으로 돌아가 이어서 쓴다.
+  await notes.locator(".note-prose p").first().click();
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
+  await tool.click();
+  await menu.getByRole("menuitemradio", { name: "150%" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
+  await expect.poll(() => ratio(notes.locator(".note-prose p").first())).toBeCloseTo(1.5, 2);
+
+  // 다시 열어도 고른 줄간격이 남는다.
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("메모")).click();
+  await item(page, "개선점").click();
+  await expect.poll(() => ratio(notes.locator(".note-prose p").first())).toBeCloseTo(1.5, 2);
+  await toolbar.getByRole("button", { name: "줄간격" }).click();
+  await expect(menu.getByRole("menuitemradio", { name: "150%" })).toHaveAttribute("aria-checked", "true");
+  expect(errors).toEqual([]);
+});

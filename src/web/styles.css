@@ -925,6 +925,10 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .link-form { display: flex; align-items: center; gap: 6px; width: 320px; }
 .link-form [data-slot="input"] { flex: 1; min-width: 0; height: calc(1em + 13px); }
 .format-menu { min-width: 180px; padding: 4px; }
+/* 줄간격 목록: 숫자 자리를 맞추고, 기본값에는 옅은 꼬리표를 단다 */
+.leading-menu { min-width: 132px; font-variant-numeric: tabular-nums; }
+.leading-default { margin-left: auto; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.menu-item:focus .leading-default { color: rgba(255, 255, 255, .78); }
 
 /* 아래쪽 입력 창: 창 너비를 그대로 쓰고, 좌우 여백은 경로 줄·서식 도구와 비슷하게만 둔다 */
 .note-scroll { flex: 1; min-height: 0; overflow-y: auto; cursor: text; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
@@ -934,7 +938,7 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .note-title::placeholder, .note-source::placeholder { color: color-mix(in srgb, var(--foreground) 30%, transparent); }
 .note-rich { flex: 1; display: flex; flex-direction: column; margin-top: 12px; }
 .note-source { flex: 1; width: 100%; min-height: 320px; margin-top: 14px; padding: 0 0 48px; border: 0; outline: none; resize: none; background: transparent;
-  color: var(--foreground); caret-color: var(--notes-accent); font-size: var(--fs-13); line-height: 1.75; letter-spacing: 0;
+  color: var(--foreground); caret-color: var(--notes-accent); font-size: var(--fs-13); line-height: var(--note-leading, 1.75); letter-spacing: 0;
   /* 고정폭 글꼴에는 한글이 없으므로 한글은 Pretendard로 받는다(generic monospace의 넓은 한글 대신). */
   font-family: "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, "Pretendard Variable", Pretendard, ui-monospace, monospace;
   field-sizing: content; tab-size: 2; }
@@ -952,9 +956,9 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .ProseMirror-hideselection * { caret-color: transparent; }
 .ProseMirror-focused .ProseMirror-gapcursor { display: block; }
 
-/* 본문 서식 */
+/* 본문 서식. 줄간격은 메모 창이 고른 값(--note-leading, 서식 도구의 줄간격)을 따르고, 파일 보기 창은 기본값을 쓴다 */
 .note-prose { flex: 1; min-height: 240px; padding-bottom: 56px; outline: none; color: var(--foreground); caret-color: var(--notes-accent);
-  font-size: var(--fs-14); line-height: 1.8; letter-spacing: -.005em; }
+  font-size: var(--fs-14); line-height: var(--note-leading, 1.8); letter-spacing: -.005em; }
 .note-prose > * + * { margin-top: .55em; }
 .note-prose p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: color-mix(in srgb, var(--foreground) 30%, transparent); }
 .note-prose h1, .note-prose h2, .note-prose h3, .note-prose h4, .note-prose h5, .note-prose h6 { font-weight: 700; letter-spacing: -.02em; line-height: 1.4; scroll-margin-top: 16px; }
@@ -986,7 +990,7 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .note-prose li + li { margin-top: .15em; }
 .note-prose ul[data-type="taskList"] { list-style: none; padding-left: 2px; }
 .note-prose ul[data-type="taskList"] > li { display: flex; align-items: flex-start; gap: 9px; }
-.note-prose ul[data-type="taskList"] > li > label { display: flex; align-items: center; height: 1.8em; flex-shrink: 0; user-select: none; }
+.note-prose ul[data-type="taskList"] > li > label { display: flex; align-items: center; height: calc(var(--note-leading, 1.8) * 1em); flex-shrink: 0; user-select: none; }
 .note-prose ul[data-type="taskList"] > li > label input { width: 15px; height: 15px; margin: 0; accent-color: var(--notes-accent); cursor: pointer; }
 .note-prose ul[data-type="taskList"] > li > div { flex: 1; min-width: 0; }
 .note-prose ul[data-type="taskList"] > li[data-checked="true"] > div { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted-foreground) 60%, transparent); }
@@ -1145,7 +1149,9 @@ canvas.md-stl:active { cursor: grabbing; }
 /* 다이어그램을 그리는 숨은 틀(화면 밖). 크기를 재야 하므로 숨기지 않고 밖으로만 뺀다 */
 .mermaid-frame { position: fixed; top: 0; left: -10000px; width: 760px; height: 600px; border: 0; opacity: 0; pointer-events: none; }
 .note-prose .tableWrapper { margin: .9em 0; overflow-x: auto; }
-.note-prose table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-13); line-height: 1.6; }
+/* 열 너비는 내용에 맞춰 나눈다(auto). 짧은 칸(ID·우선순위)은 좁게, 긴 글 칸은 넓게 서고, 한글 낱말은 keep-all로 칸 안에서 쪼개지지 않는다.
+   표 글줄은 본문 줄간격의 0.9배(기본 1.62)이고 1.1 밑으로는 줄이지 않는다 */
+.note-prose table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: var(--fs-13); line-height: max(1.1, calc(var(--note-leading, 1.8) * .9)); }
 .note-prose th, .note-prose td { position: relative; min-width: 60px; padding: 6px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
 /* 칸 정렬(:---:)은 align 속성으로 온다. 위의 text-align이 속성을 덮으므로 다시 맞춘다 */
 .note-prose th[align="center"], .note-prose td[align="center"] { text-align: center; }

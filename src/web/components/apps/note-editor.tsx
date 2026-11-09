@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode, type SubmitEvent } from "react";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import { Popover } from "radix-ui";
 import {
-  Asterisk, Bold, Box, Code, CodeXml, Download, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Info, Italic, Keyboard, Lightbulb, Link, List, ListCollapse, ListOrdered,
+  Asterisk, Bold, Box, Check, Code, CodeXml, Download, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Info, Italic, Keyboard, Lightbulb, Link, List, ListChevronsUpDown, ListCollapse, ListOrdered,
   ListTodo, Map as MapIcon, MessageSquareWarning, Minus, OctagonAlert, Pilcrow, Plus, Redo2, Sigma, SquareCode, SquareFunction, Strikethrough, Subscript, Superscript, Table,
   TextQuote, TriangleAlert, Underline, Undo2, Unlink, Workflow, type LucideIcon,
 } from "lucide-react";
@@ -10,7 +10,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { focusMenuOnOpen, followPointer } from "../desktop/menu";
-import { fileNameOf, labelOf, markdownFile, useNoteMode, useNotes, type Note } from "../../lib/notes";
+import { DEFAULT_LEADING, NOTE_LEADINGS, fileNameOf, labelOf, markdownFile, useNoteLeading, useNoteMode, useNotes, type Note } from "../../lib/notes";
 import { IMAGE_ACCEPT, imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
 import { joinTexts, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 import { NoteImageUpload, appendTextToNote, appendToNote, insertImages } from "./note-extensions";
@@ -63,6 +63,7 @@ const asBlock = (source: HTMLTextAreaElement, text: string) => {
 export function NoteDocument({ note }: { note: Note }) {
   const mode = useNoteMode((state) => state.mode);
   const setMode = useNoteMode((state) => state.setMode);
+  const leading = useNoteLeading((state) => state.leading);
   const { update } = useNotes.getState();
   // 이 창이 마지막으로 저장한 본문. 다른 곳(다른 탭·되살리기)에서 바뀐 본문만 편집기에 다시 넣는다.
   const emitted = useRef(note.body);
@@ -184,7 +185,8 @@ export function NoteDocument({ note }: { note: Note }) {
     <FormatToolbar editor={mode === "rich" ? editor : null} mode={mode} onMode={(next) => { emitted.current = note.body; setMode(next); }} onDownload={download}
       onImage={() => fileRef.current?.click()} onInsert={addKind} />
     <input ref={fileRef} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={pickImages} data-testid="note-image-file" />
-    <div className="note-scroll" onMouseDown={(event) => {
+    {/* 줄간격은 본문·표·Markdown 원문이 함께 쓰는 값(styles.css의 --note-leading)이다. */}
+    <div className="note-scroll" style={{ "--note-leading": leading / 100 } as CSSProperties} onMouseDown={(event) => {
       // 본문 아래 빈 곳을 누르면 본문 끝에 커서를 둔다.
       if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains("note-sheet")) { event.preventDefault(); focusBody("end"); }
     }}>
@@ -262,6 +264,7 @@ function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onInsert }: 
       <InsertMenu editor={editor} disabled={mode === "rich" && (off || state.codeBlock)} onInsert={onInsert} />
     </div>
     <div className="format-end">
+      <LeadingTool editor={editor} />
       <div className="format-mode" role="group" aria-label="보기">
         <button type="button" aria-pressed={mode === "rich"} onClick={() => onMode("rich")}>서식</button>
         <button type="button" aria-pressed={mode === "source"} onClick={() => onMode("source")}>Markdown</button>
@@ -372,6 +375,51 @@ function TableTool({ editor, active, disabled }: { editor: Editor | null; active
         {action("행 삭제", (chain) => chain.deleteRow())}
         {action("열 삭제", (chain) => chain.deleteColumn())}
         {action("표 삭제", (chain) => chain.deleteTable(), true)}
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>;
+}
+
+/** 본문 줄간격(110~200%). 서식·Markdown 보기 모두에 쓰는 창 전체 설정이다. */
+function LeadingTool({ editor }: { editor: Editor | null }) {
+  const [open, setOpen] = useState(false);
+  const leading = useNoteLeading((state) => state.leading);
+  const setLeading = useNoteLeading((state) => state.setLeading);
+  // 열기 전의 초점. 보기 설정이라 닫으면 그 자리로 돌아간다: 본문을 쓰던 중이면 본문, 트리 등을 보던 중이면 그곳.
+  // 읽기만 하던 편집기에 커서를 넣지 않는다. 커서가 처음 들어간 편집기는 맨 끝에 빈 문단을 붙여(표·코드 블록으로 끝나는 메모) 원문을 다시 저장한다.
+  const before = useRef<Element | null>(null);
+  return <Popover.Root open={open} onOpenChange={setOpen}>
+    <Tool icon={ListChevronsUpDown} label="줄간격" active={open} trigger={(button) => <Popover.Trigger asChild>{button}</Popover.Trigger>} />
+    <Popover.Portal>
+      <Popover.Content className="format-popover format-menu leading-menu material-menu" role="menu" aria-label="줄간격" side="bottom" align="end" sideOffset={6}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          before.current = document.activeElement;
+          // 키보드로 열면 지금 고른 값에 초점을 둔다.
+          const menu = event.currentTarget as HTMLElement;
+          focusMenuOnOpen(menu);
+          if (menu.contains(document.activeElement) && document.activeElement !== menu) menu.querySelector<HTMLElement>('[aria-checked="true"]')?.focus({ preventScroll: true });
+        }}
+        onKeyDown={(event) => {
+          const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[role=menuitemradio]"));
+          const at = items.indexOf(document.activeElement as HTMLElement);
+          const next = { ArrowDown: (at + 1) % items.length, ArrowUp: at <= 0 ? items.length - 1 : at - 1, Home: 0, End: items.length - 1 }[event.key];
+          if (next === undefined) return;
+          event.preventDefault();
+          items[next]?.focus({ preventScroll: true });
+        }}
+        onPointerMove={(event) => followPointer(event.currentTarget, event.target)} onPointerLeave={(event) => followPointer(event.currentTarget, null)}
+        onCloseAutoFocus={(event) => {
+          const target = before.current;
+          before.current = null;
+          if (document.getElementById("note-body")?.contains(target)) { event.preventDefault(); if (editor) editor.view.focus(); else (target as HTMLElement).focus({ preventScroll: true }); }
+          else if (target instanceof HTMLElement && target !== document.body && target.isConnected) { event.preventDefault(); target.focus({ preventScroll: true }); }
+        }}>
+        {NOTE_LEADINGS.map((value) => <button key={value} type="button" className="menu-item" role="menuitemradio" aria-checked={value === leading}
+          onClick={() => { setLeading(value); setOpen(false); }}>
+          <span className="menu-check" aria-hidden="true">{value === leading ? <Check /> : null}</span>{value}%
+          {value === DEFAULT_LEADING && <span className="leading-default">기본</span>}
+        </button>)}
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>;
