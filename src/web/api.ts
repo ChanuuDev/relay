@@ -6,6 +6,7 @@ import type { SessionAction } from "../session/session.types";
 import { sessionStatus } from "../validation";
 import { version } from "../../package.json";
 import { buildId } from "./assets";
+import { localTimeZone, parseActivityDayQuery, parseActivityQuery, sessionActivity, sessionActivityDay } from "../planner/activity";
 
 function params(url: URL, allowed: string[]) {
   const result: Record<string, string> = {};
@@ -52,6 +53,9 @@ export function api(url: URL, service: SessionService, config: Config): unknown 
     return { schemaVersion: 1, status: "ok", appVersion: version, build: buildId,
       dataDirectory: config.dataDirectory, databasePath: config.databasePath };
   }
+  // 잔디: 날마다 남긴 세션 기록 수와 그날 기록한 세션
+  if (url.pathname === "/api/v1/activity") return sessionActivity(service.repo.db, parseActivityQuery(params(url, ["from", "to", "tz", "provider"]), { tz: localTimeZone() }));
+  if (url.pathname === "/api/v1/activity/day") return sessionActivityDay(service.repo.db, parseActivityDayQuery(params(url, ["date", "tz", "provider"]), { tz: localTimeZone() }));
   if (url.pathname === "/api/v1/sessions") return service.list(params(url, ["provider", "agent", "cwd", "q", "status", "pinned", "limit", "offset"]));
   const match = /^\/api\/v1\/sessions\/([^/]+)(?:\/(updates|children|chain))?$/.exec(url.pathname);
   if (match) {

@@ -3,7 +3,7 @@
 const CACHE = "relay-shell-v1";
 const SHELL = ["/", "/app.js", "/style.css", "/theme.js", "/icon.svg", "/manifest.webmanifest", "/fonts/PretendardVariable.woff2",
   "/fonts/JetBrainsMono-latin.woff2", "/fonts/JetBrainsMono-latin-italic.woff2", "/fonts/JetBrainsMono-latin-ext.woff2", "/fonts/JetBrainsMono-latin-ext-italic.woff2",
-  "/wallpaper-dark.jpg", "/wallpaper-light.jpg", "/icons/app-192.png", "/icons/sessions.png", "/icons/command.png", "/icons/settings.png", "/icons/youtube.png", "/icons/notes.png", "/icons/files.png", "/icons/viewer.png", "/icons/calculator.png", "/icons/office.png",
+  "/wallpaper-dark.jpg", "/wallpaper-light.jpg", "/icons/app-192.png", "/icons/sessions.png", "/icons/command.png", "/icons/settings.png", "/icons/youtube.png", "/icons/notes.png", "/icons/files.png", "/icons/viewer.png", "/icons/calculator.png", "/icons/office.png", "/icons/activity.png", "/icons/tasks.png", "/icons/board.png", "/icons/calendar.png",
   "/office/kit-night.png", "/office/floors-night.png", "/office/kit-birch.png", "/office/floors-birch.png", "/office/kit-oak.png", "/office/floors-oak.png",
   "/office/backdrop-night.webp", "/office/backdrop-birch.webp", "/office/backdrop-oak.webp", "/office/worker.png", "/office/badges.png"];
 /** 목록과 세션 상세 주소는 같은 HTML을 받는다. 그 밖의 주소는 보관본으로 대신하지 않는다. */

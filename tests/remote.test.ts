@@ -159,6 +159,20 @@ test("웹은 메모 그림 올리기·보기를 원격 서버로 중계하고 �
   // 주소 꼴이 틀리면 원격으로 보내지 않고 로컬 처리로 넘긴다.
   expect(await (await request("/api/v1/notes/images/not-a-hash")).json()).toEqual({ local: true });
 });
+test("일정 관리(Tasks·보드·일정·잔디)는 원격 모드에서 원격 서버로 중계한다", async () => {
+  const handler = remoteHandler(config(), () => Response.json({ local: true }));
+  const request = (route: string, init: RequestInit = {}) => handler(new Request("http://127.0.0.1:7474" + route, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
+  const write = { origin: "http://127.0.0.1:7474", "sec-fetch-site": "same-origin", "Content-Type": "application/json" };
+  for (const route of ["/api/v1/tasks", "/api/v1/board", "/api/v1/events"]) {
+    expect(await (await request(route, { method: "POST", body: JSON.stringify({ upserts: [], deletes: [] }), headers: write })).json()).toEqual({ schemaVersion: 1, ok: true });
+    expect(received.at(-1)).toMatchObject({ route, body: { upserts: [], deletes: [] } });
+  }
+  for (const route of ["/api/v1/tasks?provider=anthropic", "/api/v1/activity?tz=Asia%2FSeoul", "/api/v1/activity/day?date=2026-11-09"]) {
+    expect(await (await request(route)).json()).toEqual({ schemaVersion: 1, ok: true });
+  }
+  // 다른 출처의 쓰기는 원격으로 보내기 전에 막는다.
+  expect((await request("/api/v1/tasks", { method: "POST", body: "{}", headers: { ...write, origin: "https://evil.test" } })).status).toBe(403);
+});
 test("출처 간 붙여넣기는 로컬에 스트리밍하고 성공 뒤에만 이동 원본을 지운다", async () => {
   const handler = remoteHandler(config(), () => new Response(null, { status: 404 }));
   const response = await handler(new Request("http://127.0.0.1:7474/api/v1/files/paste", { method: "POST", headers: { host: "127.0.0.1:7474", origin: "http://127.0.0.1:7474", "Content-Type": "application/json" }, body: JSON.stringify({ sources: ["remote:/a.txt"], destination: f.dir, mode: "copy" }) }));

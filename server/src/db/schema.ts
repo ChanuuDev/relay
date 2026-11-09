@@ -127,3 +127,60 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
   body: jsonb("body").$type<unknown>().notNull(),
   createdAt: stamp("created_at").notNull().defaultNow(),
 });
+
+/** 일정 관리 Task. 업무 보드는 board·status·position으로 칸과 순서를 읽는다. 시각은 화면이 ms 정수로 비교하므로 bigint다. */
+export const tasks = pgTable("tasks", {
+  userId: text("user_id").notNull().references(() => users.id),
+  id: text("id").notNull(),
+  title: text("title").notNull().default(""),
+  project: text("project").notNull().default(""),
+  memo: text("memo").notNull().default(""),
+  provider: text("provider"),
+  status: text("status").notNull(),
+  board: boolean("board").notNull().default(false),
+  position: doublePrecision("position"),
+  notes: jsonb("notes").$type<string[]>().notNull().default([]),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  completedAt: bigint("completed_at", { mode: "number" }),
+  revision: integer("revision").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.userId, t.id] }),
+  check("tasks_status_check", sql`${t.status} IN ('todo', 'doing', 'review', 'done')`),
+  check("tasks_provider_check", sql`${t.provider} IS NULL OR ${t.provider} IN ('anthropic', 'openai', 'xai', 'cursor')`),
+]);
+
+/** 캘린더 일정. start·end는 종일이면 YYYY-MM-DD, 아니면 시간대 없는 YYYY-MM-DDTHH:MM이라 글자 순서가 시간 순서다. */
+export const calendarEvents = pgTable("calendar_events", {
+  userId: text("user_id").notNull().references(() => users.id),
+  id: text("id").notNull(),
+  title: text("title").notNull().default(""),
+  allDay: boolean("all_day").notNull(),
+  startAt: text("start_at").notNull(),
+  endAt: text("end_at").notNull(),
+  memo: text("memo").notNull().default(""),
+  color: text("color").notNull(),
+  attachments: jsonb("attachments").$type<Array<{ kind: "note" | "task"; id: string }>>().notNull().default([]),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  revision: integer("revision").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.userId, t.id] }),
+  index("calendar_events_user_start_idx").on(t.userId, t.startAt),
+  check("calendar_events_range_check", sql`${t.endAt} >= ${t.startAt}`),
+]);
+
+export const plannerMeta = pgTable("planner_meta", {
+  userId: text("user_id").primaryKey().references(() => users.id),
+  revision: integer("revision").notNull().default(0),
+});
+
+/** 잔디용 기록 로그. session_updates에 에이전트 기록이 들어올 때 트리거가 남기며, 세션이 보관 기간으로 지워져도 남는다. */
+export const activityLog = pgTable("activity_log", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  userId: text("user_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  provider: text("provider").notNull(),
+  agent: text("agent").notNull(),
+  createdAt: stamp("created_at").notNull(),
+}, (t) => [index("activity_log_user_created_idx").on(t.userId, t.createdAt)]);

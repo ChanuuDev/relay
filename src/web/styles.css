@@ -695,7 +695,10 @@ img.agent-avatar { background: transparent; object-fit: contain; }
 .desktop[data-mobile] .dock-row { width: 100%; }
 .desktop[data-mobile] .dock-bar { width: 100%; height: 64px; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); border-radius: 0; border: 0; border-top: 1px solid var(--glass-border);
   box-shadow: none; gap: 0; align-items: center; }
-.desktop[data-mobile] .dock-item { flex: 1; width: 100%; gap: 4px; }
+/* 앱이 많아 한 줄에 다 들어가지 않으면 탭바를 가로로 민다(스크롤 막대는 숨긴다). */
+.desktop[data-mobile] .dock-bar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
+.desktop[data-mobile] .dock-bar::-webkit-scrollbar { display: none; }
+.desktop[data-mobile] .dock-item { flex: 1 0 54px; width: 100%; min-width: 54px; gap: 4px; }
 .desktop[data-mobile] .dock-item .app-icon { filter: none; transform: none; }
 .desktop[data-mobile] .dock-label { font-size: 10px; line-height: 1; color: var(--glass-text-muted); }
 .desktop[data-mobile] .dock-item[data-active] .dock-label { color: var(--primary); }
@@ -1813,3 +1816,424 @@ form.files-path { flex: 1; min-width: 140px; }
 .office-toast[data-tone="error"] > span { color: var(--destructive); }
 .office-toast > svg { width: 14px; height: 14px; color: var(--system-yellow); flex-shrink: 0; }
 .office-toast [data-slot="button"] svg { width: 13px; height: 13px; }
+
+/* ── 일정 관리: Tasks · 업무 · 캘린더 · 잔디 ───────────────────
+   목록·인벤토리·고른 날은 유리(material-chrome) 곁 패널, 편집기·보드·달력·잔디는 불투명 바탕이다.
+   진행 상태 색은 세션 작업 상태(--status-*)와 같은 계열이고, 일정 색은 Apple 시스템 색을 쓴다. */
+:root {
+  --task-todo: #8e8e93; --task-doing: #0a7cff; --task-review: #af52de; --task-done: #1a8a3c;
+  --event-blue: #0a7cff; --event-green: #28a745; --event-orange: #f08c00; --event-red: #e5484d; --event-purple: #9f55e0; --event-gray: #8e8e93;
+  --lane-fill: color-mix(in srgb, var(--foreground) 4%, transparent);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 0 0 .5px rgba(0, 0, 0, .08);
+  --card-shadow-hover: 0 6px 16px -6px rgba(0, 0, 0, .22), 0 0 0 .5px rgba(0, 0, 0, .1);
+  --grass-0: #ebedf0; --grass-1: #9be9a8; --grass-2: #40c463; --grass-3: #30a14e; --grass-4: #216e39;
+}
+.dark {
+  --task-todo: #98989f; --task-doing: #0a84ff; --task-review: #bf5af2; --task-done: #30d158;
+  --event-blue: #0a84ff; --event-green: #30d158; --event-orange: #ff9f0a; --event-red: #ff6961; --event-purple: #bf5af2; --event-gray: #98989f;
+  --lane-fill: color-mix(in srgb, var(--foreground) 5%, transparent);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 .5px rgba(255, 255, 255, .08);
+  --card-shadow-hover: 0 8px 20px -6px rgba(0, 0, 0, .6), 0 0 0 .5px rgba(255, 255, 255, .12);
+  --grass-0: #2a2d33; --grass-1: #0e4429; --grass-2: #006d32; --grass-3: #26a641; --grass-4: #39d353;
+}
+.window[data-window="tasks"] .window-frame { container: tasks / inline-size; }
+.window[data-window="board"] .window-frame { container: board / inline-size; }
+.window[data-window="calendar"] .window-frame { container: calendar / inline-size; }
+.window[data-window="activity"] .window-frame { container: activity / inline-size; }
+.planner-body { position: relative; background: var(--background); }
+.planner-body > .split-view { flex: 1; min-height: 0; }
+
+/* 공용 조각 */
+.planner-provider { flex-shrink: 0; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .12); }
+.planner-provider-none { display: inline-block; flex-shrink: 0; border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--foreground) 30%, transparent); box-sizing: border-box; }
+.planner-status-dot { display: inline-block; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--task-todo); }
+.planner-status-dot[data-status="doing"], [data-status="doing"] > .planner-status-dot { background: var(--task-doing); }
+.planner-status-dot[data-status="review"], [data-status="review"] > .planner-status-dot { background: var(--task-review); }
+.planner-status-dot[data-status="done"], [data-status="done"] > .planner-status-dot { background: var(--task-done); }
+.planner-status-dot[data-status="todo"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--task-todo); }
+.planner-count { display: inline-grid; place-items: center; min-width: calc(1em + 7px); height: calc(1em + 5px); padding: 0 5px; margin-left: 6px; border-radius: 999px;
+  background: var(--glass-control-fill); font-size: var(--fs-11); font-weight: 500; line-height: 1; color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.planner-project { display: inline-flex; align-items: center; max-width: 14em; height: calc(1em + 7px); padding: 0 7px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--primary) 10%, transparent); color: color-mix(in srgb, var(--primary) 80%, var(--foreground));
+  font-size: var(--fs-11); font-weight: 500; line-height: 1; white-space: nowrap; text-overflow: ellipsis; }
+.planner-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 28px 20px; text-align: center;
+  font-size: var(--fs-12); line-height: 1.6; color: var(--glass-text-muted); word-break: keep-all; }
+.planner-empty svg { width: 30px; height: 30px; margin-bottom: 8px; opacity: .5; stroke-width: 1.5px; }
+.planner-empty strong { font-size: var(--fs-13); font-weight: 600; color: var(--foreground); }
+.planner-undo { bottom: 44px; }
+.planner-danger { color: var(--destructive); }
+.planner-danger:hover { background: color-mix(in srgb, var(--destructive) 10%, transparent); color: var(--destructive); }
+
+/* 세그먼트(보기·진행 상태·에이전트): 알약 바깥 안에 알약 단추 */
+.planner-segment, .planner-agents { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border-radius: var(--radius-control); background: var(--glass-control-fill);
+  box-shadow: inset 0 0 0 1px var(--glass-control-border); }
+.planner-segment > button, .planner-agents > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: calc(1em + 11px); padding: 0 11px;
+  border-radius: var(--radius-control); font-size: var(--fs-12); font-weight: 500; line-height: 1; color: var(--glass-text-muted); white-space: nowrap;
+  transition: background-color .14s ease-out, color .14s ease-out, box-shadow .14s ease-out; }
+.planner-segment > button:hover, .planner-agents > button:hover { color: var(--foreground); }
+.planner-segment > button[aria-checked="true"], .planner-segment > button[aria-selected="true"],
+.planner-agents > button[aria-checked="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px rgba(0, 0, 0, .06); }
+.dark .planner-segment > button[aria-checked="true"], .dark .planner-segment > button[aria-selected="true"],
+.dark .planner-agents > button[aria-checked="true"] { background: color-mix(in srgb, var(--foreground) 16%, transparent); box-shadow: 0 1px 2px rgba(0, 0, 0, .4); }
+.planner-segment > button:focus-visible, .planner-agents > button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
+.planner-agents > button svg { width: 13px; height: 13px; }
+.planner-segment-fill { display: flex; }
+.planner-segment-fill > button { flex: 1; }
+.planner-segment-fill .planner-count { margin-left: 2px; background: transparent; }
+
+/* 둥근 완료 체크 */
+.planner-check { display: grid; place-items: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--foreground) 32%, transparent);
+  color: #fff; transition: background-color .15s ease-out, border-color .15s ease-out, transform .12s ease-out; }
+.planner-check:hover { border-color: var(--task-done); }
+.planner-check:active { transform: scale(.9); }
+.planner-check[aria-checked="true"] { border-color: var(--task-done); background: var(--task-done); }
+.planner-check svg { width: 11px; height: 11px; stroke-width: 3px; }
+.planner-check:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent); }
+
+/* 빠른 추가 칸 */
+.planner-quick { display: flex; align-items: center; gap: 8px; height: calc(1em + 17px); padding: 0 12px; border-radius: 10px; background: var(--glass-control-fill);
+  box-shadow: inset 0 0 0 1px var(--glass-control-border); transition: background-color .14s ease-out, box-shadow .14s ease-out; }
+.planner-quick:hover { background: var(--glass-control-hover); }
+.planner-quick:focus-within { background: var(--background); box-shadow: inset 0 0 0 1px var(--ring), 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent); }
+.planner-quick svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--primary); }
+.planner-quick input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--foreground); font: inherit; font-size: var(--fs-13); }
+.planner-quick input::placeholder { color: var(--glass-text-muted); }
+
+/* 첨부 칩 */
+.planner-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.planner-chip { display: inline-flex; align-items: center; max-width: 100%; height: calc(1em + 11px); border-radius: 8px; background: var(--glass-control-fill);
+  box-shadow: inset 0 0 0 1px var(--glass-control-border); font-size: var(--fs-12); overflow: hidden; }
+.planner-chip-open { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 100%; padding: 0 9px; color: var(--foreground); }
+.planner-chip-open:hover:not(:disabled) { background: var(--glass-control-hover); }
+.planner-chip-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.planner-chip-open svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--notes-accent, #0f9478); }
+.planner-chip[data-kind="task"] .planner-chip-open svg { color: var(--event-orange); }
+.planner-chip[data-missing] { opacity: .55; }
+.planner-chip[data-missing] .planner-chip-open { text-decoration: line-through; }
+.planner-chip-remove { display: grid; place-items: center; width: 22px; height: 100%; border-left: 1px solid var(--glass-control-border); color: var(--glass-text-muted); }
+.planner-chip-remove:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.planner-chip-remove svg { width: 11px; height: 11px; }
+.planner-attach { color: var(--primary); }
+.planner-attach svg { width: 13px; height: 13px; }
+
+/* Task 편집기 */
+.planner-form { display: flex; flex-direction: column; gap: 18px; padding: 22px 26px 18px; }
+.planner-form-title { display: flex; align-items: center; gap: 12px; }
+.planner-form-title .planner-check { width: 22px; height: 22px; }
+.planner-form-title .planner-check svg { width: 13px; height: 13px; }
+.planner-title-input { flex: 1; min-width: 0; height: calc(1em + 12px); padding: 0; border: 0; outline: none; background: transparent; color: var(--foreground);
+  font: inherit; font-size: var(--fs-22); font-weight: 600; letter-spacing: -.02em; }
+.planner-title-input::placeholder { color: color-mix(in srgb, var(--foreground) 32%, transparent); }
+.planner-form:has(.planner-check[aria-checked="true"]) .planner-title-input { color: var(--glass-text-muted); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.planner-fields { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); align-items: start; gap: 14px 16px; margin: 0; font-size: var(--fs-13); }
+.planner-fields > dt { padding-top: 6px; color: var(--glass-text-muted); font-size: var(--fs-12); font-weight: 500; white-space: nowrap; }
+.planner-fields > dd { margin: 0; min-width: 0; }
+.planner-project-input { max-width: 320px; }
+.planner-memo { min-height: 120px; max-height: 360px; resize: vertical; font-size: var(--fs-13); line-height: 1.6; border-radius: 10px; field-sizing: content; }
+.planner-board-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: calc(1em + 15px); }
+.planner-board-state { display: inline-flex; align-items: center; gap: 6px; color: var(--glass-text-muted); font-size: var(--fs-12); }
+.planner-board-state svg { width: 14px; height: 14px; color: var(--primary); }
+.planner-form-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.planner-form-meta { font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.planner-form-actions { display: flex; flex-wrap: wrap; gap: 2px; }
+.planner-form-actions svg { width: 13px; height: 13px; }
+
+/* 편집·고르기 창(Radix Dialog) */
+.planner-dialog, .planner-picker { position: fixed; left: 50%; top: 50%; z-index: 96; translate: -50% -50%; display: flex; flex-direction: column;
+  max-height: calc(100vh - 64px); border-radius: 16px; color: var(--foreground); outline: none; animation: confirm-pop .22s cubic-bezier(.2, .8, .2, 1); }
+.planner-dialog[data-state="closed"], .planner-picker[data-state="closed"] { animation: confirm-drop .12s ease-in forwards; }
+.planner-dialog { width: min(600px, calc(100vw - 32px)); overflow: auto; scrollbar-width: thin; }
+.planner-dialog .planner-form { padding: 6px 20px 16px; }
+.planner-dialog-head, .planner-picker-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 6px 20px; }
+.planner-dialog-head .properties-title, .planner-picker-head .properties-title { color: var(--glass-text-muted); font-size: var(--fs-12); font-weight: 600; letter-spacing: .02em; }
+.planner-dialog-head [data-slot="button"] svg, .planner-picker-head [data-slot="button"] svg { width: 13px; height: 13px; }
+.planner-dialog-foot { display: flex; align-items: center; gap: 8px; padding: 14px 20px 16px; border-top: 1px solid var(--border); }
+.planner-dialog-foot svg { width: 13px; height: 13px; }
+.planner-dialog-spacer { flex: 1; }
+.planner-picker { z-index: 98; width: min(440px, calc(100vw - 32px)); height: min(520px, calc(100vh - 64px)); }
+/* 일정 편집 창 위에서 여는 고르기 창은 편집 창까지 흐리게 덮는다. */
+.planner-picker-overlay { z-index: 97; }
+.planner-picker-search { margin: 4px 16px 8px; width: auto; }
+.planner-picker-search [data-slot="input-group-addon"] svg { width: 13px; height: 13px; }
+.planner-picker-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 10px; scrollbar-width: thin; }
+.planner-picker-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 8px; text-align: left; color: var(--foreground); }
+.planner-picker-item:hover:not(:disabled), .planner-picker-item:focus-visible { background: var(--primary); color: #fff; outline: none; }
+.planner-picker-item:hover:not(:disabled) .planner-picker-meta, .planner-picker-item:focus-visible .planner-picker-meta { color: rgba(255, 255, 255, .8); }
+.planner-picker-item:disabled { opacity: .55; }
+.planner-picker-item > svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--notes-accent, #0f9478); }
+.planner-picker-item:hover:not(:disabled) > svg { color: inherit; }
+.planner-picker-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.planner-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-13); }
+.planner-picker-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.planner-picker-check { width: 14px; height: 14px; color: var(--primary); }
+.planner-picker-empty { padding: 32px 16px; text-align: center; font-size: var(--fs-12); color: var(--glass-text-muted); }
+.planner-switch { position: relative; display: inline-flex; width: 38px; height: 22px; cursor: pointer; }
+.planner-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.planner-switch span { width: 100%; height: 100%; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 18%, transparent); transition: background-color .18s ease-out; }
+.planner-switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  transition: transform .2s cubic-bezier(.3, .7, .3, 1); }
+.planner-switch input:checked + span { background: var(--system-green); }
+.planner-switch input:checked + span::after { transform: translateX(16px); }
+.planner-switch input:focus-visible + span { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent); }
+
+/* ── Tasks ── */
+.tasks-layout { flex: 1; min-height: 0; display: flex; }
+.tasks-sidebar { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.tasks-tools { display: flex; flex-direction: column; gap: 8px; padding: 12px 12px 8px; flex-shrink: 0; }
+.tasks-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tasks-filters > :first-child { grid-column: 1 / -1; }
+.tasks-filters [data-slot="native-select-wrapper"] { width: 100%; min-width: 0; }
+.tasks-filters [data-slot="native-select"] { width: 100%; padding-inline: 10px 26px; font-size: var(--fs-12); }
+.tasks-filters [data-slot="native-select-icon"] { right: 9px; }
+.tasks-search [data-slot="input-group-addon"] svg { width: 13px; height: 13px; }
+.tasks-search [data-slot="input-group-addon"] { color: var(--glass-text-muted); }
+.tasks-list { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 4px 8px 12px; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.tasks-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; cursor: default; outline: none; transition: background-color .12s ease-out; }
+.tasks-row + .tasks-row { margin-top: 1px; }
+.tasks-row:hover { background: var(--glass-control-fill); }
+.tasks-row[aria-selected="true"] { background: var(--selected); }
+.window:not([data-focused]) .tasks-row[aria-selected="true"] { background: var(--selected-inactive); }
+.tasks-row:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.tasks-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.tasks-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-13); font-weight: 500; line-height: var(--lh-16); }
+.tasks-row-title[data-empty] { color: var(--glass-text-muted); font-weight: 400; }
+.tasks-row[data-status="done"] .tasks-row-title { color: var(--glass-text-muted); text-decoration: line-through; }
+.tasks-row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.planner-status-tag { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; font-weight: 500; }
+.planner-status-tag .planner-status-dot { width: 7px; height: 7px; }
+.tasks-row-flag, .board-card-flag { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.tasks-row-flag svg, .board-card-flag svg { width: 12px; height: 12px; }
+.tasks-row-agent { display: grid; place-items: center; flex-shrink: 0; }
+.tasks-detail { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--background); scrollbar-width: thin; }
+.tasks-detail-bar { display: none; padding: 10px 12px 0; }
+.tasks-detail-bar svg { width: 13px; height: 13px; }
+.planner-empty-detail { min-height: 100%; }
+@container tasks (max-width: 44em) {
+  .tasks-layout[data-pane="list"] #tasks-main, .tasks-layout[data-pane="detail"] #tasks-side, .tasks-layout > .split-handle { display: none !important; }
+  .tasks-layout #tasks-side, .tasks-layout #tasks-main { flex: 1 1 auto !important; max-width: none !important; }
+  .tasks-detail-bar { display: block; }
+  .planner-form { padding: 14px 16px; }
+  .planner-fields { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .planner-fields > dt { padding-top: 6px; }
+}
+
+/* ── 업무(칸반) ── */
+.board-layout { flex: 1; min-height: 0; display: flex; }
+.board-columns { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(4, minmax(190px, 1fr)); gap: 12px; padding: 14px; overflow: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .4) transparent; }
+.board-column { display: flex; flex-direction: column; min-height: 0; border-radius: 14px; background: var(--lane-fill); box-shadow: inset 0 0 0 1px var(--border);
+  transition: background-color .15s ease-out, box-shadow .15s ease-out; }
+.board-column[data-drop] { background: color-mix(in srgb, var(--primary) 7%, var(--lane-fill)); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary) 55%, transparent); }
+.board-column-head { display: flex; align-items: center; gap: 8px; height: calc(1em + 25px); padding: 0 8px 0 14px; flex-shrink: 0; }
+.board-column-head h3 { margin: 0; font-size: var(--fs-13); font-weight: 600; }
+.board-column-head .planner-count { margin-left: 0; }
+.board-column-actions { display: flex; gap: 2px; margin-left: auto; }
+.board-column-actions svg { width: 14px; height: 14px; }
+.board-column-add { margin: 0 8px 8px; background: var(--background); }
+.board-cards { flex: 1; min-height: 60px; list-style: none; margin: 0; padding: 2px 8px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .35) transparent; }
+.board-card { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 11px 12px; border-radius: 10px; background: var(--card); box-shadow: var(--card-shadow);
+  cursor: grab; outline: none; user-select: none; transition: box-shadow .16s ease-out, transform .16s ease-out, opacity .16s ease-out; }
+.board-card::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--task-todo); opacity: .9; }
+.board-card[data-status="doing"]::before { background: var(--task-doing); }
+.board-card[data-status="review"]::before { background: var(--task-review); }
+.board-card[data-status="done"]::before { background: var(--task-done); }
+.board-card:hover { box-shadow: var(--card-shadow-hover); transform: translateY(-1px); }
+.board-card:active { cursor: grabbing; }
+.board-card:focus-visible, .board-card[data-menu] { box-shadow: 0 0 0 2px var(--ring), var(--card-shadow); }
+.board-card[data-dragging] { opacity: .35; transform: none; }
+.board-card-title { font-size: var(--fs-13); font-weight: 500; line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.board-card-title[data-empty] { color: var(--glass-text-muted); font-weight: 400; }
+.board-card[data-status="done"] .board-card-title { color: var(--glass-text-muted); text-decoration: line-through; }
+.board-card-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.board-card-agent { display: grid; margin-left: auto; }
+.board-card-place { position: absolute; top: 7px; right: 7px; display: none; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--primary); color: #fff; box-shadow: 0 2px 6px rgba(10, 124, 255, .4); }
+.board-card-place svg { width: 13px; height: 13px; }
+.board-card:hover .board-card-place, .board-card:focus-within .board-card-place { display: grid; }
+.board-drop-line { height: 3px; margin: -5px 2px; border-radius: 2px; background: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.board-column-empty { display: grid; place-items: center; flex: 1; min-height: 64px; border: 1.5px dashed color-mix(in srgb, var(--foreground) 14%, transparent); border-radius: 10px;
+  font-size: var(--fs-11); color: var(--glass-text-muted); transition: border-color .15s ease-out, background-color .15s ease-out, color .15s ease-out; }
+.board-column-empty[data-drop] { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); color: var(--primary); }
+.board-inventory { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; transition: box-shadow .15s ease-out; }
+.board-inventory[data-drop] { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent); }
+.board-inventory-head { padding: 14px 16px 4px; }
+.board-inventory-head h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: var(--fs-13); font-weight: 600; }
+.board-inventory-head h3 svg { width: 15px; height: 15px; color: var(--glass-text-muted); }
+.board-inventory-head p { margin: 4px 0 0; font-size: var(--fs-11); line-height: 1.5; color: var(--glass-text-muted); word-break: keep-all; }
+.board-inventory-tools { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; }
+.board-inventory-cards { padding: 4px 12px 12px; }
+.board-inventory-cards .board-card::before { background: color-mix(in srgb, var(--foreground) 18%, transparent); }
+.board-inventory-empty { min-height: 0; }
+@container board (max-width: 60em) {
+  .board-columns { grid-template-columns: repeat(4, minmax(180px, 220px)); }
+}
+/* 보드↔인벤토리, 달력↔일정 전환 단추는 좁은 창에서만 보인다. */
+.planner-pane-toggle { display: none; margin-right: 6px; }
+.planner-pane-toggle > button { height: calc(1em + 9px); padding: 0 10px; }
+@container board (max-width: 44em) {
+  .planner-pane-toggle { display: inline-flex; }
+  .board-layout[data-pane="board"] #board-side, .board-layout[data-pane="inventory"] #board-main, .board-layout > .split-handle { display: none !important; }
+  .board-layout #board-side, .board-layout #board-main { flex: 1 1 auto !important; max-width: none !important; }
+  .board-card-place { display: grid; }
+}
+@media (hover: none) { .board-card-place { display: grid; } }
+
+/* ── 캘린더 ── */
+.cal-tools { display: flex; align-items: center; gap: 2px; }
+.cal-tools [data-slot="button"] { color: inherit; }
+.cal-tools [data-slot="button"] svg { width: 16px; height: 16px; }
+.cal-today { height: 28px; padding: 0 12px; font-size: var(--fs-12); font-weight: 500; }
+.cal-layout { flex: 1; min-height: 0; display: flex; }
+.cal-month { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 14px 16px 16px; background: var(--background); }
+.cal-month-title { margin: 0 0 10px 4px; font-size: var(--fs-22); font-weight: 600; letter-spacing: -.02em; }
+.cal-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); padding: 0 0 6px; font-size: var(--fs-11); font-weight: 600; color: var(--glass-text-muted); text-align: right; }
+.cal-weekdays span { padding-right: 10px; }
+.cal-weekdays [data-weekday="0"] { color: color-mix(in srgb, var(--event-red) 80%, var(--foreground)); }
+.cal-weekdays [data-weekday="6"] { color: color-mix(in srgb, var(--event-blue) 80%, var(--foreground)); }
+.cal-grid { flex: 1; min-height: 0; display: grid; grid-template-rows: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+.cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 0; }
+.cal-day { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0; min-height: 0; padding: 5px 5px 4px; border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border); overflow: hidden; outline: none; cursor: default; transition: background-color .12s ease-out; }
+.cal-day:hover { background: var(--glass-control-fill); }
+.cal-day[aria-selected="true"] { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.cal-day:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.cal-day[data-out] { background: color-mix(in srgb, var(--foreground) 2.5%, transparent); }
+.cal-day[data-out] .cal-day-num { color: color-mix(in srgb, var(--foreground) 30%, transparent); }
+.cal-day[data-drop] { background: color-mix(in srgb, var(--primary) 14%, transparent); box-shadow: inset 0 0 0 1.5px var(--primary); }
+.cal-day-num { align-self: flex-end; display: grid; place-items: center; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 999px;
+  font-size: var(--fs-12); font-weight: 500; font-variant-numeric: tabular-nums; }
+.cal-day[data-weekday="0"]:not([data-out]) .cal-day-num { color: color-mix(in srgb, var(--event-red) 85%, var(--foreground)); }
+.cal-day[data-weekday="6"]:not([data-out]) .cal-day-num { color: color-mix(in srgb, var(--event-blue) 85%, var(--foreground)); }
+.cal-day[data-today] .cal-day-num { background: var(--event-red); color: #fff !important; font-weight: 600; }
+.cal-chips { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; min-height: 0; }
+.cal-chip { --chip: var(--event-blue); display: flex; align-items: center; gap: 5px; height: calc(1em + 7px); min-width: 0; padding: 0 6px; border-radius: 5px;
+  font-size: var(--fs-11); line-height: 1; cursor: pointer; transition: filter .12s ease-out; }
+.cal-chip:hover { filter: brightness(.96); }
+.cal-chip[data-all-day] { background: color-mix(in srgb, var(--chip) 18%, transparent); color: color-mix(in srgb, var(--chip) 70%, var(--foreground)); font-weight: 600; }
+.cal-chip:not([data-all-day])::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--chip); }
+.cal-chip-time { flex-shrink: 0; color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.cal-chip-time:empty { display: none; }
+.cal-chip-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-more { padding: 0 6px; font-size: var(--fs-11); font-weight: 500; color: var(--glass-text-muted); }
+:is(.cal-chip, .cal-agenda-item, .cal-colors button, .cal-dialog-swatch)[data-color="green"] { --chip: var(--event-green); }
+:is(.cal-chip, .cal-agenda-item, .cal-colors button, .cal-dialog-swatch)[data-color="orange"] { --chip: var(--event-orange); }
+:is(.cal-chip, .cal-agenda-item, .cal-colors button, .cal-dialog-swatch)[data-color="red"] { --chip: var(--event-red); }
+:is(.cal-chip, .cal-agenda-item, .cal-colors button, .cal-dialog-swatch)[data-color="purple"] { --chip: var(--event-purple); }
+:is(.cal-chip, .cal-agenda-item, .cal-colors button, .cal-dialog-swatch)[data-color="gray"] { --chip: var(--event-gray); }
+:is(.cal-chip, .cal-agenda-item, .cal-colors button, .cal-dialog-swatch)[data-color="blue"] { --chip: var(--event-blue); }
+.cal-agenda { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.cal-agenda-head { display: flex; align-items: flex-start; gap: 8px; padding: 18px 12px 10px 18px; }
+.cal-agenda-head > div { flex: 1; min-width: 0; }
+.cal-agenda-head h3 { margin: 0; font-size: var(--fs-14); font-weight: 600; }
+.cal-agenda-head span { font-size: var(--fs-11); color: var(--glass-text-muted); }
+.cal-agenda-head svg { width: 14px; height: 14px; }
+.cal-agenda-list { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 0 10px 12px; display: flex; flex-direction: column; gap: 6px; scrollbar-width: thin; }
+.cal-agenda-item { --chip: var(--event-blue); position: relative; display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 9px 10px 9px 14px; border-radius: 10px;
+  background: color-mix(in srgb, var(--chip) 10%, var(--background)); text-align: left; color: var(--foreground); transition: background-color .12s ease-out; }
+.cal-agenda-item::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--chip); }
+.cal-agenda-item:hover { background: color-mix(in srgb, var(--chip) 16%, var(--background)); }
+.cal-agenda-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
+.cal-agenda-time { flex-shrink: 0; width: 5.6em; padding-top: 1px; font-size: var(--fs-11); font-weight: 500; color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.cal-agenda-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cal-agenda-title { font-size: var(--fs-13); font-weight: 600; overflow-wrap: anywhere; }
+.cal-agenda-memo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.cal-agenda-attachments { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 4px 2px 14px; }
+.cal-agenda-attachments .planner-chip { height: calc(1em + 9px); font-size: var(--fs-11); }
+.cal-dialog form { display: flex; flex-direction: column; }
+.cal-dialog-swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--chip); }
+.cal-title-input { margin: 4px 20px 14px; }
+.cal-form { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); align-items: center; gap: 12px 14px; padding: 0 20px 18px; font-size: var(--fs-13); }
+.cal-form-label { color: var(--glass-text-muted); font-size: var(--fs-12); font-weight: 500; }
+.cal-form > .planner-memo, .cal-form > .planner-attachments { align-self: start; }
+.cal-form > label.cal-form-label[for="cal-memo"] { align-self: start; padding-top: 8px; }
+.cal-when { display: flex; gap: 8px; }
+.cal-when [data-slot="input"] { width: auto; min-width: 0; font-variant-numeric: tabular-nums; }
+.cal-when [type="date"] { flex: 1.3; }
+.cal-when [type="time"] { flex: 1; }
+.cal-error { grid-column: 2; margin: -6px 0 0; font-size: var(--fs-12); color: var(--destructive); }
+.cal-colors { display: flex; gap: 10px; }
+.cal-colors button { width: 20px; height: 20px; border-radius: 50%; background: var(--chip); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); transition: transform .12s ease-out; }
+.cal-colors button:hover { transform: scale(1.12); }
+.cal-colors button[aria-checked="true"] { box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--chip); }
+.cal-colors button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring); }
+@container calendar (max-width: 46em) {
+  .cal-chip-time { display: none; }
+  .cal-month { padding: 10px; }
+  .cal-day { padding: 3px 2px; }
+  .cal-chip { padding: 0 3px; }
+}
+@container calendar (max-width: 44em) {
+  .planner-pane-toggle { display: inline-flex; }
+  .cal-layout[data-pane="month"] #calendar-side, .cal-layout[data-pane="agenda"] #calendar-main, .cal-layout > .split-handle { display: none !important; }
+  .cal-layout #calendar-side, .cal-layout #calendar-main { flex: 1 1 auto !important; max-width: none !important; }
+}
+
+/* ── 잔디 ── */
+.activity-body { overflow: hidden; }
+.activity-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 16px; scrollbar-width: thin; }
+.activity-period { min-width: 9em; text-align: center; font-size: var(--fs-12); font-weight: 600; font-variant-numeric: tabular-nums; }
+.activity-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; }
+.activity-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+.activity-stats > div { min-width: 92px; padding: 10px 14px; border-radius: 12px; background: var(--lane-fill); box-shadow: inset 0 0 0 1px var(--border); }
+.activity-stats dt { font-size: var(--fs-11); font-weight: 500; color: var(--glass-text-muted); }
+.activity-stats dd { display: flex; align-items: baseline; gap: 3px; margin: 4px 0 0; font-size: var(--fs-22); font-weight: 600; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.activity-stats dd small { font-size: var(--fs-12); font-weight: 500; color: var(--glass-text-muted); letter-spacing: 0; }
+.activity-stats dd svg { align-self: center; width: 17px; height: 17px; margin-right: 2px; color: var(--event-orange); }
+.activity-stats [data-accent] { background: color-mix(in srgb, var(--event-orange) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--event-orange) 22%, transparent); }
+.activity-card { position: relative; padding: 18px 20px 14px; border-radius: 14px; background: var(--card); box-shadow: var(--card-shadow); overflow-x: auto; container-type: inline-size; }
+/* 칸 크기는 카드 폭에 맞춘다: 53주 칸과 52개 틈, 요일 이름 칸(약 30px)이 폭을 채운다. */
+.activity-graph { --gap: 3px; --cell: clamp(9px, calc((100cqi - 190px) / 53), 17px); display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 6px; row-gap: 4px; width: max-content; margin: 0 auto; }
+.activity-months { grid-column: 2; display: grid; grid-template-columns: repeat(var(--weeks), var(--cell)); column-gap: var(--gap); height: calc(1em + 2px);
+  font-size: var(--fs-10); color: var(--glass-text-muted); white-space: nowrap; }
+.activity-weekdays { grid-row: 2; display: grid; grid-template-rows: repeat(7, var(--cell)); row-gap: var(--gap); font-size: var(--fs-10); line-height: var(--cell); color: var(--glass-text-muted); }
+.activity-grid { position: relative; grid-row: 2; grid-column: 2; display: grid; grid-template-rows: repeat(7, var(--cell)); grid-auto-flow: column; grid-auto-columns: var(--cell); gap: var(--gap); }
+.activity-grid[data-loading] .activity-cell { animation: activity-pulse 1.2s ease-in-out infinite alternate; }
+@keyframes activity-pulse { from { opacity: .45; } to { opacity: .9; } }
+.activity-cell { width: var(--cell); height: var(--cell); padding: 0; border-radius: calc(var(--cell) / 4); background: var(--grass-0); box-shadow: inset 0 0 0 1px rgba(27, 31, 36, .06); outline: none;
+  transition: transform .1s ease-out; }
+.activity-cell[data-level="1"] { background: var(--grass-1); }
+.activity-cell[data-level="2"] { background: var(--grass-2); }
+.activity-cell[data-level="3"] { background: var(--grass-3); }
+.activity-cell[data-level="4"] { background: var(--grass-4); }
+.activity-cell[data-future] { background: transparent; box-shadow: none; }
+.activity-cell:not(:disabled):hover { transform: scale(1.25); }
+.activity-cell[aria-selected="true"] { box-shadow: 0 0 0 1.5px var(--background), 0 0 0 3px var(--foreground); }
+.activity-cell:focus-visible { box-shadow: 0 0 0 1.5px var(--background), 0 0 0 3px var(--ring); }
+.activity-tip { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; border-radius: 8px; transform: translate(-50%, calc(-100% - 8px));
+  white-space: nowrap; pointer-events: none; font-size: 12px; color: var(--foreground); }
+.activity-tip strong { font-weight: 600; }
+.activity-tip span { font-size: 11px; color: var(--glass-text-muted); }
+.activity-legend { display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-top: 10px; font-size: var(--fs-10); color: var(--glass-text-muted); }
+.activity-legend span { margin: 0 4px; }
+.activity-legend i { width: 11px; height: 11px; border-radius: 3px; background: var(--grass-0); box-shadow: inset 0 0 0 1px rgba(27, 31, 36, .06); }
+.activity-legend i[data-level="1"] { background: var(--grass-1); }
+.activity-legend i[data-level="2"] { background: var(--grass-2); }
+.activity-legend i[data-level="3"] { background: var(--grass-3); }
+.activity-legend i[data-level="4"] { background: var(--grass-4); }
+.activity-day header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 2px 8px; }
+.activity-day h3 { margin: 0; font-size: var(--fs-14); font-weight: 600; }
+.activity-day header span { font-size: var(--fs-12); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.activity-sessions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.activity-session { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; border-radius: 12px; background: var(--lane-fill); box-shadow: inset 0 0 0 1px var(--border);
+  text-align: left; color: var(--foreground); transition: background-color .12s ease-out; }
+.activity-session:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.activity-session:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
+.activity-session:disabled { opacity: .65; }
+.activity-session-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.activity-session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-13); font-weight: 600; }
+.activity-session-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.activity-session-count { flex-shrink: 0; font-size: var(--fs-11); color: var(--glass-text-muted); }
+.activity-session-count strong { margin-right: 1px; font-size: var(--fs-14); font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.activity-session-time { flex-shrink: 0; width: 7.5em; text-align: right; font-size: var(--fs-11); color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+.activity-empty { padding: 22px 16px; border-radius: 12px; background: var(--lane-fill); }
+.activity-empty svg { width: 22px; height: 22px; margin-bottom: 4px; color: var(--grass-3); opacity: .8; }
+@container activity (max-width: 52em) {
+  .activity-session-time { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-card, .activity-cell, .cal-chip, .planner-switch span::after { transition: none; }
+  .activity-grid[data-loading] .activity-cell { animation: none; }
+}

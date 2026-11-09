@@ -15,6 +15,13 @@
       "when": 1793923200000,
       "tag": "0001_note_images",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794182400000,
+      "tag": "0002_planner",
+      "breakpoints": true
     }
   ]
 }

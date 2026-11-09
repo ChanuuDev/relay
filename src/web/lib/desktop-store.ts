@@ -24,7 +24,7 @@ export function clampBox(box: Box, W: number, H: number, min: { w: number; h: nu
 function defaults(W: number, H: number): Windows {
   const make = (id: AppId, open: boolean, z: number): Win =>
     ({ ...clampBox(APPS[id].box(W, H), W, H, APPS[id].min), open, minimized: false, maximized: false, z });
-  return { sessions: make("sessions", true, 1), office: make("office", false, 0), command: make("command", false, 0), notes: make("notes", false, 0), files: make("files", false, 0), viewer: make("viewer", false, 0), calculator: make("calculator", false, 0), settings: make("settings", false, 0), youtube: make("youtube", false, 0) };
+  return { sessions: make("sessions", true, 1), activity: make("activity", false, 0), tasks: make("tasks", false, 0), board: make("board", false, 0), calendar: make("calendar", false, 0), office: make("office", false, 0), command: make("command", false, 0), notes: make("notes", false, 0), files: make("files", false, 0), viewer: make("viewer", false, 0), calculator: make("calculator", false, 0), settings: make("settings", false, 0), youtube: make("youtube", false, 0) };
 }
 
 type Saved = Record<string, Partial<Win>>;

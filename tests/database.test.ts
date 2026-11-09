@@ -10,7 +10,7 @@ import v4Schema from "../src/db/migrations/004_init.sql" with { type: "text" };
 import v5Schema from "../src/db/migrations/005_init.sql" with { type: "text" };
 import v6Schema from "../src/db/migrations/006_init.sql" with { type: "text" };
 import v7Schema from "../src/db/migrations/007_init.sql" with { type: "text" };
-import v8Schema from "../src/db/migrations/008_init.sql" with { type: "text" };
+import v9Schema from "../src/db/migrations/009_init.sql" with { type: "text" };
 import { CalculatorStore } from "../src/calculator/calculator.store";
 import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
@@ -154,7 +154,7 @@ describe("Database record migration", () => {
     } finally { db.close(); }
   });
 
-  test("v7 databases gain the note pictures table in place, keep their notes and match a fresh v8 schema", () => {
+  test("v7 databases gain the note pictures table in place, keep their notes and match a fresh schema", () => {
     const db = new Database(path.join(dir, "relay.db"));
     db.exec(v7Schema);
     db.exec("PRAGMA user_version = 7");
@@ -162,7 +162,7 @@ describe("Database record migration", () => {
     const before = db.query("SELECT * FROM notes").all();
     db.close();
     const fresh = new Database(":memory:");
-    fresh.exec(v8Schema);
+    fresh.exec(v9Schema);
     const schemaOf = (target: Database) => target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all();
     const writer = openDatabase(loadConfig(dir));
     try {

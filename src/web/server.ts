@@ -8,6 +8,7 @@ import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
 import { exportFileName, MAX_IMAGE_UPLOAD_BYTES, NOTE_IMAGES_PATH, NoteStore, parseBatch, parseExport, parseExportImages, parseImageUpload } from "../notes/notes.store";
 import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.store";
+import { parseBoardAction, parseEventBatch, parseEventFilter, parseTaskBatch, parseTaskFilter, PlannerStore } from "../planner/planner.store";
 import { copyToClipboard, deleteItems, fileResponse, listDirectory, makeFolder, openPath, pasteItems, places, renameItem, saveFile, statPath, systemLauncher, systemRemover, type FileClipboardWriter, type Launcher, type Remover } from "../files/files.service";
 import { api, parseAction } from "./api";
 import { assets, mermaidFrameHtml } from "./assets";
@@ -36,6 +37,11 @@ const FILES_CHANGE_PATHS = new Set([FILES_PASTE_PATH, FILES_DELETE_PATH, FILES_M
 /** 파일 탐색기의 쓰기 경로. 모두 같은 출처 JSON POST만 받는다. */
 const FILES_WRITE_PATHS = new Set([FILES_OPEN_PATH, FILES_SAVE_PATH, ...FILES_CHANGE_PATHS]);
 export const CALCULATOR_PATH = "/api/v1/calculator/history";
+/** 일정 관리: Tasks, 업무 보드(칸반), 캘린더 일정. 모두 GET 조회와 같은 출처 JSON POST 저장이다. */
+export const TASKS_PATH = "/api/v1/tasks";
+export const BOARD_PATH = "/api/v1/board";
+export const EVENTS_PATH = "/api/v1/events";
+const PLANNER_PATHS = new Set([TASKS_PATH, BOARD_PATH, EVENTS_PATH]);
 /** 목록에서 하는 세션 정리. `:id`는 Relay 내부 ID다. */
 export const SESSION_ACTIONS = /^\/api\/v1\/sessions\/([^/]+)\/actions$/;
 
@@ -51,10 +57,12 @@ export interface Features {
   writer?: SessionService;
   /** 계산기 이력(GET·POST /api/v1/calculator/history) */
   calculator?: CalculatorStore;
+  /** 일정 관리(GET·POST /api/v1/tasks, /api/v1/board, /api/v1/events) */
+  planner?: PlannerStore;
 }
 
 /** 세션 조회는 service(읽기 전용 연결)로 한다. 쓰기는 features에 준 저장소로만 하며 모두 같은 출처 JSON만 받는다. */
-export function handler(service: SessionService, config: Config, { notes, files, writer, calculator }: Features = {}) {
+export function handler(service: SessionService, config: Config, { notes, files, writer, calculator, planner }: Features = {}) {
   // 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
   const pid = { [PID_HEADER]: String(process.pid) };
   const headers = { ...securityHeaders(config.webPort), ...pid };
@@ -170,6 +178,37 @@ export function handler(service: SessionService, config: Config, { notes, files,
       return Response.json(calculator!.apply(parseHistoryAction(await readBody(request))), { headers });
     } catch (error) { return failed(error, "GET, POST"); }
   };
+  /** query를 키 하나에 값 하나로 읽는다. */
+  const queryOf = (url: URL) => {
+    const result: Record<string, string> = {};
+    for (const [key, value] of url.searchParams) {
+      if (Object.hasOwn(result, key)) throw new RelayError("INVALID_ARGUMENT", `중복된 query key: ${key}`);
+      result[key] = value;
+    }
+    return result;
+  };
+  /** Task·보드·일정 조회. ETag가 저장 번호(revision)라 바뀌지 않았으면 304로 본문 없이 답한다. */
+  const readPlanner = (request: Request, url: URL) => {
+    const store = planner!;
+    const query = queryOf(url);
+    if (url.pathname === BOARD_PATH && url.search) throw new RelayError("INVALID_ARGUMENT", "업무 보드는 query를 받지 않습니다.");
+    const taskFilter = url.pathname === TASKS_PATH ? parseTaskFilter(query) : {};
+    const eventFilter = url.pathname === EVENTS_PATH ? parseEventFilter(query) : {};
+    const tag = `"${store.revision()}"`;
+    if (request.headers.get("if-none-match") === tag) return new Response(null, { status: 304, headers: { ...headers, ETag: tag } });
+    const data = url.pathname === TASKS_PATH ? store.tasks(taskFilter) : url.pathname === EVENTS_PATH ? store.events(eventFilter) : store.board();
+    return Response.json(data, { headers: { ...headers, ETag: `"${data.revision}"` } });
+  };
+  /** Task·일정 저장 묶음과 보드 동작. 메모 저장과 같은 쓰기 검사(같은 출처 JSON)를 거친다. */
+  const savePlanner = async (request: Request, pathname: string) => {
+    try {
+      checkWrite(request, config.webPort);
+      if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "저장은 query를 받지 않습니다.");
+      const body = await readBody(request);
+      return Response.json(pathname === TASKS_PATH ? planner!.applyTasks(parseTaskBatch(body))
+        : pathname === EVENTS_PATH ? planner!.applyEvents(parseEventBatch(body)) : planner!.applyBoard(parseBoardAction(body)), { headers });
+    } catch (error) { return failed(error, "GET, POST"); }
+  };
   /** 파일 탐색기 조회. 디스크 내용이라 다른 사이트(같은 컴퓨터의 다른 포트 포함)가 넣는 요청은 받지 않는다. */
   const readFiles = (request: Request, url: URL): Response => {
     const site = request.headers.get("sec-fetch-site");
@@ -197,17 +236,19 @@ export function handler(service: SessionService, config: Config, { notes, files,
       const filesPath = Boolean(files) && (url.pathname === FILES_PATH || url.pathname.startsWith(`${FILES_PATH}/`));
       const actionPath = Boolean(writer) && SESSION_ACTIONS.test(url.pathname);
       const calculatorPath = Boolean(calculator) && url.pathname === CALCULATOR_PATH;
-      if ((notesPath && notes) || calculatorPath) allow = "GET, POST";
+      const plannerPath = Boolean(planner) && PLANNER_PATHS.has(url.pathname);
+      if ((notesPath && notes) || calculatorPath || plannerPath) allow = "GET, POST";
       if (importPath || uploadPath || actionPath || (filesPath && FILES_WRITE_PATHS.has(url.pathname))) allow = "POST";
       const player = url.pathname === PLAYER_PATH;
       checkRequest(request, config.webPort, { allowCrossSite: player });
       if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : uploadPath ? "그림 올리기" : actionPath ? "세션 정리" : filesPath && url.pathname === FILES_SAVE_PATH ? "저장" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
-      if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? `${calculatorPath ? "계산 이력" : "메모"}는 GET 조회와 POST 저장만 허용합니다.` : "GET 조회만 허용합니다.", 2, 405);
+      if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? `${calculatorPath ? "계산 이력" : plannerPath ? "일정 관리" : "메모"}는 GET 조회와 POST 저장만 허용합니다.` : "GET 조회만 허용합니다.", 2, 405);
       if (notesPath) return listNotes(request, url);
       if (calculatorPath) {
         if (url.search) throw new RelayError("INVALID_ARGUMENT", "계산 이력은 query를 받지 않습니다.");
         return Response.json(calculator!.list(), { headers });
       }
+      if (plannerPath) return readPlanner(request, url);
       if (exportPath) return exportNotes(url);
       if (image) return readImage(request, url, image[1]!);
       if (filesPath) return readFiles(request, url);
@@ -230,6 +271,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
       if (files && FILES_CHANGE_PATHS.has(pathname)) return writeFiles(request, pathname);
       if (files && pathname === FILES_SAVE_PATH) return saveText(request);
       if (calculator && pathname === CALCULATOR_PATH) return saveCalculation(request);
+      if (planner && PLANNER_PATHS.has(pathname)) return savePlanner(request, pathname);
       const action = writer ? SESSION_ACTIONS.exec(pathname) : null;
       if (action) return actOnSession(request, action[1]);
     }
@@ -250,7 +292,7 @@ export function startServer(config: Config) {
   let server;
   try {
     server = Bun.serve({ hostname: config.webHost, port: config.webPort,
-      fetch: handler(service, config, { notes, files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb) }),
+      fetch: handler(service, config, { notes, files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb), planner: new PlannerStore(writeDb) }),
       maxRequestBodySize: config.mode === "remote" ? 256 * 1024 * 1024 : MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
     db.close(); writeDb.close();

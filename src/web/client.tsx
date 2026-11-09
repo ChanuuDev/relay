@@ -20,6 +20,10 @@ import { FilesWindow } from "./components/apps/files-window";
 import { ViewerWindow } from "./components/apps/viewer-window";
 import { CalculatorWindow } from "./components/apps/calculator-window";
 import { OfficeWindow } from "./components/apps/office-window";
+import { TasksWindow } from "./components/apps/tasks-window";
+import { BoardWindow } from "./components/apps/board-window";
+import { CalendarWindow } from "./components/apps/calendar-window";
+import { ActivityWindow } from "./components/apps/activity-window";
 import { ConnectionError, resource, type BriefSession, type ChainData, type DetailData, type HealthData, type HistoryData, type ListData } from "./lib/queries";
 import { AUTO_LAUNCH_INTERVAL, autoLaunchServer } from "./lib/launch";
 import { listLocation, navigate, useUI } from "./lib/store";
@@ -230,6 +234,10 @@ function App() {
       <FilesWindow />
       <ViewerWindow />
       <CalculatorWindow copy={copy} />
+      <TasksWindow copy={copy} />
+      <BoardWindow copy={copy} />
+      <CalendarWindow />
+      <ActivityWindow />
     </main>
     <Dock />
     {updateReady && <div id="update-status" className="update-toast material-toast" role="status">

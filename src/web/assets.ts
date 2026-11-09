@@ -22,6 +22,10 @@ import iconFiles from "./public/icons/files.png" with { type: "file" };
 import iconViewer from "./public/icons/viewer.png" with { type: "file" };
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs" with { type: "file" };
 import iconCalculator from "./public/icons/calculator.png" with { type: "file" };
+import iconActivity from "./public/icons/activity.png" with { type: "file" };
+import iconTasks from "./public/icons/tasks.png" with { type: "file" };
+import iconBoard from "./public/icons/board.png" with { type: "file" };
+import iconCalendar from "./public/icons/calendar.png" with { type: "file" };
 import iconOffice from "./public/icons/office.png" with { type: "file" };
 import officeWorker from "./public/office/worker.png" with { type: "file" };
 import officeKitNight from "./public/office/kit-night.png" with { type: "file" };
@@ -86,6 +90,10 @@ export const assets = new Map<string, Asset>([
   // PDF 미리 보기(pdf.js)의 작업 스레드. 화면 스크립트와 같은 출처라 CSP(script-src 'self')가 허용한다.
   ["/pdf.worker.mjs", { file: pdfWorker, type: "text/javascript; charset=utf-8", cache: "public, max-age=86400" }],
   ["/icons/calculator.png", image(iconCalculator, "image/png")],
+  ["/icons/activity.png", image(iconActivity, "image/png")],
+  ["/icons/tasks.png", image(iconTasks, "image/png")],
+  ["/icons/board.png", image(iconBoard, "image/png")],
+  ["/icons/calendar.png", image(iconCalendar, "image/png")],
   ["/icons/office.png", image(iconOffice, "image/png")],
   // 사무실 앱: 사옥마다 그림 묶음(가구·벽 조각·벽 장식 아틀라스)과 바닥 재질·배경, 캐릭터 스프라이트 아틀라스, 상태 배지
   ["/office/worker.png", image(officeWorker, "image/png")],

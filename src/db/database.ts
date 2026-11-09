@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/008_init.sql" with { type: "text" };
+import schema from "./migrations/009_init.sql" with { type: "text" };
 
-export const DB_VERSION = 8;
+export const DB_VERSION = 9;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -135,9 +135,68 @@ function migrateV7(db: Database) {
 `);
 }
 
+// v9 adds the planner: tasks (the kanban board reads their status and position), calendar events and one shared
+// revision the screen polls. It also starts activity_log, which a trigger fills whenever an agent writes a history entry, so the
+// activity grid keeps a year even after old sessions expire; existing history is copied in once. Other tables are untouched.
+function migrateV8(db: Database) {
+  db.exec(`CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  project TEXT NOT NULL DEFAULT '',
+  memo TEXT NOT NULL DEFAULT '',
+  provider TEXT CHECK(provider IS NULL OR provider IN ('anthropic', 'openai', 'xai', 'cursor')),
+  status TEXT NOT NULL CHECK(status IN ('todo', 'doing', 'review', 'done')),
+  board INTEGER NOT NULL DEFAULT 0 CHECK(board IN (0, 1)),
+  position REAL,
+  notes_json TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  revision INTEGER NOT NULL
+);
+CREATE TABLE calendar_events (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  all_day INTEGER NOT NULL CHECK(all_day IN (0, 1)),
+  start_at TEXT NOT NULL,
+  end_at TEXT NOT NULL,
+  memo TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL,
+  attachments_json TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  CHECK(end_at >= start_at)
+);
+CREATE INDEX idx_calendar_events_start ON calendar_events(start_at);
+CREATE TABLE planner_meta (
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
+INSERT INTO planner_meta (key, value) VALUES ('revision', 0);
+CREATE TABLE activity_log (
+  id INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_activity_log_created ON activity_log(created_at);
+INSERT INTO activity_log (session_id, provider, agent, created_at)
+  SELECT u.session_id, s.provider, s.agent, u.created_at FROM session_updates u JOIN sessions s ON s.id = u.session_id
+  WHERE u.summary <> '세션 첫 기록 (훅 자동 기록)' ORDER BY u.created_at, u.id;
+CREATE TRIGGER session_updates_activity AFTER INSERT ON session_updates
+WHEN NEW.summary <> '세션 첫 기록 (훅 자동 기록)'
+BEGIN
+  INSERT INTO activity_log (session_id, provider, agent, created_at)
+    SELECT NEW.session_id, provider, agent, NEW.created_at FROM sessions WHERE id = NEW.session_id;
+END;
+`);
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current < 0 || current > 7) {
+  if (current < 0 || current > 8) {
     checkVersion(db);
     return;
   }
@@ -159,6 +218,7 @@ function initializeOrMigrate(db: Database) {
       migrateV5(db);
       migrateV6(db);
       migrateV7(db);
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 2) {
       migrateV2(db);
@@ -167,6 +227,7 @@ function initializeOrMigrate(db: Database) {
       migrateV5(db);
       migrateV6(db);
       migrateV7(db);
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 3) {
       migrateV3(db);
@@ -174,24 +235,32 @@ function initializeOrMigrate(db: Database) {
       migrateV5(db);
       migrateV6(db);
       migrateV7(db);
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 4) {
       migrateV4(db);
       migrateV5(db);
       migrateV6(db);
       migrateV7(db);
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 5) {
       migrateV5(db);
       migrateV6(db);
       migrateV7(db);
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 6) {
       migrateV6(db);
       migrateV7(db);
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 7) {
       migrateV7(db);
+      migrateV8(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 8) {
+      migrateV8(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);
