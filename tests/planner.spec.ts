@@ -190,16 +190,22 @@ test("잔디: 에이전트 기록이 오늘 칸을 칠하고, 칸을 누르면 �
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   record("grass-a", "잔디 확인 세션", "anthropic", "claude-code");
-  record("grass-b", "두 번째 세션");
+  // 그날 세션 목록이 창보다 길어도 잔디 칸이 눌리지 않아야 한다(실제 데이터에서 찾은 문제).
+  for (let index = 0; index < 11; index++) record(`grass-${index}`, `세션 ${index}`);
   await ready(page);
   await openApp(page, "잔디", "activity");
   const activity = win(page, "activity");
   const today = local();
   const cell = activity.locator(`.activity-cell[data-date="${today}"]`);
   await expect(cell).toHaveAttribute("data-level", "4");
-  await expect(cell).toHaveAttribute("aria-label", /기록 2회, 세션 2개/);
-  await expect(activity.locator(".activity-stats")).toContainText("총 기록2회");
-  await expect(activity.locator(".activity-session")).toHaveCount(2);
+  await expect(cell).toHaveAttribute("aria-label", /기록 12회, 세션 12개/);
+  await expect(activity.locator(".activity-stats")).toContainText("총 기록12회");
+  await expect(activity.locator(".activity-session")).toHaveCount(12);
+  const grid = (await activity.locator(".activity-grid").boundingBox())!;
+  const card = (await activity.locator(".activity-card").boundingBox())!;
+  expect(grid.height).toBeGreaterThan(60);
+  expect(card.height).toBeGreaterThan(grid.height);
+  await expect(cell).toBeInViewport();
   // Provider로 거르면 그 에이전트 기록만 센다.
   await activity.getByRole("radio", { name: "Claude Code" }).click();
   await expect(cell).toHaveAttribute("aria-label", /기록 1회, 세션 1개/);
