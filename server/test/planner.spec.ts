@@ -99,6 +99,16 @@ describe("원격 일정 관리 API", () => {
     expect((await t.get("/api/v1/activity?from=2024-01-01&to=2026-01-01")).body.error.code).toBe("INVALID_ARGUMENT");
   });
 
+  test("공휴일 API: 계산한 공휴일·대체공휴일·선거일을 준다", async () => {
+    const list = (await t.get("/api/v1/holidays?from=2026-10-01&to=2026-10-31").expect(200)).body;
+    expect(list.items).toEqual([
+      { date: "2026-10-03", name: "개천절", kind: "holiday" },
+      { date: "2026-10-05", name: "대체공휴일", kind: "substitute", of: "개천절" },
+      { date: "2026-10-09", name: "한글날", kind: "holiday" },
+    ]);
+    expect((await t.get("/api/v1/holidays?year=2026&from=2026-01-01")).body.error.code).toBe("INVALID_ARGUMENT");
+  });
+
   test("사용자마다 따로 둔다: 다른 사용자의 같은 id는 서로 덮지 않는다", async () => {
     await t.post("/api/v1/tasks", { upserts: [task("same")] }).expect(200);
     await t.db.execute(sql`INSERT INTO users (id, name) VALUES ('other', 'other')`);

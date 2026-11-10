@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import path from "node:path";
-import { activityStreaks, bucketActivity, dayKey, isDate, isDateTime, parseActivityQuery, parseEvent, parseTask, placeOnBoard, removeFromBoard, type Task } from "@relay/core";
+import { activityStreaks, bucketActivity, dayKey, holidaysBetween, isDate, isDateTime, koreanHolidays, parseActivityQuery, parseEvent, parseHolidayQuery, parseTask, placeOnBoard,
+  removeFromBoard, type Task } from "@relay/core";
 import { handler } from "../src/web/server";
 import { loadConfig } from "../src/config";
 import { DB_VERSION, openDatabase } from "../src/db/database";
@@ -80,6 +81,52 @@ describe("일정 관리 공용 규칙", () => {
   });
 });
 
+describe("대한민국 공휴일 계산", () => {
+  /** 그해 공휴일을 「MM-DD 이름」으로. 대체공휴일은 무엇을 대신하는지 괄호로 붙인다. */
+  const days = (year: number) => koreanHolidays(year).map((item) => `${item.date.slice(5)} ${item.kind === "substitute" ? `대체(${item.of})` : item.name}`);
+
+  test("2026년: 노동절·제헌절이 공휴일이고, 토·일과 겹친 국경일·부처님 오신 날은 대체공휴일이 생기며, 지방선거일이 임시공휴일이다", () => {
+    expect(days(2026)).toEqual(["01-01 신정", "02-16 설날 연휴", "02-17 설날", "02-18 설날 연휴", "03-01 삼일절", "03-02 대체(삼일절)", "05-01 노동절", "05-05 어린이날",
+      "05-24 부처님 오신 날", "05-25 대체(부처님 오신 날)", "06-03 지방선거일", "06-06 현충일", "07-17 제헌절", "08-15 광복절", "08-17 대체(광복절)",
+      "09-24 추석 연휴", "09-25 추석", "09-26 추석 연휴", "10-03 개천절", "10-05 대체(개천절)", "10-09 한글날", "12-25 기독탄신일"]);
+    expect(koreanHolidays(2026).find((item) => item.date === "2026-06-03")?.kind).toBe("temporary");
+  });
+
+  test("지난해들의 대체공휴일이 그때 규정대로 나온다", () => {
+    const substitutes = (year: number) => days(year).filter((line) => line.includes("대체"));
+    // 2021: 국경일 대체공휴일 확대 뒤 광복절·개천절·한글날. 성탄절(토)은 아직 대상이 아니었다.
+    expect(substitutes(2021)).toEqual(["08-16 대체(광복절)", "10-04 대체(개천절)", "10-11 대체(한글날)"]);
+    // 2022: 추석 연휴가 일요일과 겹치고 한글날이 일요일. 부처님 오신 날·성탄절이 일요일이어도 대상이 아니었다.
+    expect(substitutes(2022)).toEqual(["09-12 대체(추석)", "10-10 대체(한글날)"]);
+    // 2023: 설 연휴 일요일, 부처님 오신 날(토)은 2023-05-04 확대 뒤라 대체된다.
+    expect(substitutes(2023)).toEqual(["01-24 대체(설날)", "05-29 대체(부처님 오신 날)"]);
+    // 2024: 설 연휴 일요일, 어린이날 일요일. 2025: 삼일절 토요일, 어린이날과 부처님 오신 날이 같은 날, 추석 연휴 일요일.
+    expect(substitutes(2024)).toEqual(["02-12 대체(설날)", "05-06 대체(어린이날)"]);
+    expect(substitutes(2025)).toEqual(["03-03 대체(삼일절)", "05-06 대체(어린이날)", "10-08 대체(추석)"]);
+    expect(days(2025)).toContain("01-27 임시공휴일");
+    expect(days(2025)).toContain("06-03 대통령선거일");
+    // 2028: 추석과 개천절이 평일에 겹친다.
+    expect(substitutes(2028)).toEqual(["10-05 대체(추석)"]);
+    // 2027: 노동절·제헌절도 토요일이면 대체된다.
+    expect(substitutes(2027)).toEqual(["02-09 대체(설날)", "05-03 대체(노동절)", "07-19 대체(제헌절)", "08-16 대체(광복절)", "10-04 대체(개천절)", "10-11 대체(한글날)", "12-27 대체(기독탄신일)"]);
+  });
+
+  test("음력 공휴일은 윤달을 건너뛰고, 공휴일 제도 변화(한글날·제헌절·식목일)를 따른다", () => {
+    // 2020년은 윤4월이 있다. 부처님 오신 날은 평달 4월 8일(4/30)이다.
+    expect(days(2020)).toContain("04-30 부처님 오신 날");
+    expect(days(2020)).not.toContain("05-30 부처님 오신 날");
+    expect(days(2012).some((line) => line.includes("한글날"))).toBe(false);
+    expect(days(2013)).toContain("10-09 한글날");
+    expect(days(2007)).toContain("07-17 제헌절");
+    expect(days(2025).some((line) => line.includes("제헌절"))).toBe(false);
+    expect(days(2005)).toContain("04-05 식목일");
+    expect(holidaysBetween("2025-12-20", "2026-01-05").map((item) => item.date)).toEqual(["2025-12-25", "2026-01-01"]);
+    expect(() => koreanHolidays(1999)).toThrow("2000–2100");
+    expect(parseHolidayQuery({}, Date.parse("2026-12-31T16:00:00Z"))).toEqual({ from: "2027-01-01", to: "2027-12-31" });
+    expect(() => parseHolidayQuery({ from: "2026-01-01", to: "2029-01-01" })).toThrow("2년");
+  });
+});
+
 describe("일정 관리 로컬 저장소와 HTTP API", () => {
   let f: ReturnType<typeof fixture>;
   let send: (url: string, init?: RequestInit) => Promise<Response>;
@@ -146,6 +193,11 @@ describe("일정 관리 로컬 저장소와 HTTP API", () => {
     expect((await (await send(`/api/v1/activity/day?date=${today}&tz=${tz}`)).json()).sessions.find((session: { deleted: boolean }) => session.deleted))
       .toMatchObject({ provider: "anthropic", agent: "claude-code", providerSessionId: null });
     expect((await send("/api/v1/activity/day")).status).toBe(400);
+    // 공휴일 API는 계산이라 저장소 없이 답한다.
+    const holidays = await (await send("/api/v1/holidays?year=2026")).json();
+    expect(holidays).toMatchObject({ schemaVersion: 1, from: "2026-01-01", to: "2026-12-31", knownUntil: "2026-12-31" });
+    expect(holidays.items).toContainEqual({ date: "2026-10-05", name: "대체공휴일", kind: "substitute", of: "개천절" });
+    expect((await send("/api/v1/holidays?year=1990")).status).toBe(400);
     expect((await send("/api/v1/activity", { method: "POST", headers: { origin, "content-type": "application/json" } })).status).toBe(405);
   });
 

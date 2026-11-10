@@ -167,7 +167,7 @@ test("일정 관리(Tasks·보드·일정·잔디)는 원격 모드에서 원격
     expect(await (await request(route, { method: "POST", body: JSON.stringify({ upserts: [], deletes: [] }), headers: write })).json()).toEqual({ schemaVersion: 1, ok: true });
     expect(received.at(-1)).toMatchObject({ route, body: { upserts: [], deletes: [] } });
   }
-  for (const route of ["/api/v1/tasks?provider=anthropic", "/api/v1/activity?tz=Asia%2FSeoul", "/api/v1/activity/day?date=2026-11-09"]) {
+  for (const route of ["/api/v1/tasks?provider=anthropic", "/api/v1/holidays?year=2026", "/api/v1/activity?tz=Asia%2FSeoul", "/api/v1/activity/day?date=2026-11-09"]) {
     expect(await (await request(route)).json()).toEqual({ schemaVersion: 1, ok: true });
   }
   // 다른 출처의 쓰기는 원격으로 보내기 전에 막는다.

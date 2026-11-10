@@ -7,6 +7,7 @@ import { sessionStatus } from "../validation";
 import { version } from "../../package.json";
 import { buildId } from "./assets";
 import { localTimeZone, parseActivityDayQuery, parseActivityQuery, sessionActivity, sessionActivityDay } from "../planner/activity";
+import { holidayList, parseHolidayQuery } from "@relay/core";
 
 function params(url: URL, allowed: string[]) {
   const result: Record<string, string> = {};
@@ -53,6 +54,8 @@ export function api(url: URL, service: SessionService, config: Config): unknown 
     return { schemaVersion: 1, status: "ok", appVersion: version, build: buildId,
       dataDirectory: config.dataDirectory, databasePath: config.databasePath };
   }
+  // 법정 공휴일·대체공휴일·선거일·임시공휴일(계산)
+  if (url.pathname === "/api/v1/holidays") return holidayList(parseHolidayQuery(params(url, ["year", "from", "to"])));
   // 잔디: 날마다 남긴 세션 기록 수와 그날 기록한 세션
   if (url.pathname === "/api/v1/activity") return sessionActivity(service.repo.db, parseActivityQuery(params(url, ["from", "to", "tz", "provider"]), { tz: localTimeZone() }));
   if (url.pathname === "/api/v1/activity/day") return sessionActivityDay(service.repo.db, parseActivityDayQuery(params(url, ["date", "tz", "provider"]), { tz: localTimeZone() }));

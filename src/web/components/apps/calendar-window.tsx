@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { Dialog } from "radix-ui";
 import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, FileText, ListTodo, Paperclip, Plus, Trash2, X } from "lucide-react";
-import { addDays, compareEvents, daysBetween, EVENT_COLORS, eventDays, weekdayOf, type EventAttachment, type EventColor } from "@relay/core";
+import { addDays, compareEvents, daysBetween, EVENT_COLORS, eventDays, holidaysBetween, weekdayOf, type EventAttachment, type EventColor, type Holiday } from "@relay/core";
 import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { SplitView } from "../desktop/split-view";
@@ -17,6 +17,13 @@ const COLOR_LABELS: Record<EventColor, string> = { blue: "파랑", green: "초�
 const monthTitle = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long" });
 const dayTitle = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" });
 const fullDay = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+/** 날 칸에 쓰는 이름. 대체공휴일은 그대로 「대체공휴일」이다. */
+const holidayLabel = (items: Holiday[]) => [...new Set(items.map((item) => item.name))].join(" · ");
+/** 아주 좁은 달력(모바일)에 쓰는 짧은 이름 */
+const shortName = (item: Holiday) => (item.kind === "substitute" ? "대체휴일" : item.name.endsWith("선거일") ? "선거일" : item.name === "임시공휴일" ? "임시휴일" : item.name);
+const holidayShort = (items: Holiday[]) => [...new Set(items.map(shortName))].join("·");
+/** 고른 날 목록에 쓰는 이름: 대체공휴일은 무엇을 대신하는지, 선거일·임시공휴일은 그 이름을 쓴다. */
+const holidayTitle = (item: Holiday) => (item.kind === "substitute" ? `대체공휴일 (${item.of})` : item.name);
 
 /** 일정 편집 창에서 다루는 값. 날짜와 시각을 따로 둔다. */
 type Draft = { id: string | null; title: string; allDay: boolean; startDate: string; startTime: string; endDate: string; endTime: string;
@@ -158,6 +165,13 @@ export function CalendarWindow() {
     }
     return map;
   }, [events, start, last]);
+  // 법정 공휴일·대체공휴일·선거일·임시공휴일. 계산이라 서버에 묻지 않는다.
+  const holidays = useMemo(() => {
+    const map = new Map<string, Holiday[]>();
+    for (const item of holidaysBetween(start, last)) map.set(item.date, [...(map.get(item.date) ?? []), item]);
+    return map;
+  }, [start, last]);
+  const selectedHolidays = useMemo(() => holidaysBetween(selected, selected), [selected]);
   const agenda = useMemo(() => Object.values(events).filter((event) => { const span = eventDays(event); return span.first <= selected && span.last >= selected; }).sort(compareEvents),
     [events, selected]);
 
@@ -218,7 +232,11 @@ export function CalendarWindow() {
           <div><h3>{dayTitle.format(parseDate(selected))}</h3><span>{selected === today ? "오늘" : `${parseDate(selected).getFullYear()}년`}</span></div>
           <Button type="button" variant="ghost" size="icon-xs" aria-label="이날 새 일정" title="이날 새 일정" onClick={() => setDraft(draftFor(selected, false))}><Plus aria-hidden="true" /></Button>
         </header>
-        {agenda.length ? <ol className="cal-agenda-list">
+        {agenda.length || selectedHolidays.length ? <ol className="cal-agenda-list">
+          {selectedHolidays.map((item) => <li key={`${item.kind}:${item.name}`} className="cal-agenda-holiday" data-kind={item.kind}>
+            <span className="cal-agenda-time">휴일</span>
+            <span className="cal-agenda-title">{holidayTitle(item)}</span>
+          </li>)}
           {agenda.map((event) => <li key={event.id}>
             <button type="button" className="cal-agenda-item" data-color={event.color} data-id={event.id} onClick={() => setDraft(draftOf(event))}>
               <span className="cal-agenda-time">{timeText(event, selected)}</span>
@@ -247,15 +265,21 @@ export function CalendarWindow() {
             {days.slice(week * 7, week * 7 + 7).map((day) => {
               const list = byDay.get(day) ?? [];
               const more = list.length - 3;
+              const off = holidays.get(day);
               return <div key={day} role="gridcell" className="cal-day" data-date={day} tabIndex={day === selected ? 0 : -1}
-                aria-selected={day === selected} aria-label={`${fullDay.format(parseDate(day))}${list.length ? `, 일정 ${list.length}개` : ""}`}
+                aria-selected={day === selected} aria-label={`${fullDay.format(parseDate(day))}${off ? `, ${holidayLabel(off)}` : ""}${list.length ? `, 일정 ${list.length}개` : ""}`}
                 data-out={day.slice(0, 7) !== month ? "" : undefined} data-today={day === today ? "" : undefined} data-weekday={weekdayOf(day)}
-                data-drop={dropDay === day ? "" : undefined}
+                data-drop={dropDay === day ? "" : undefined} data-holiday={off ? "" : undefined}
                 onClick={() => setSelected(day)} onDoubleClick={() => setDraft(draftFor(day, true))}
                 onDragOver={(event) => { if (!event.dataTransfer.types.includes(DRAG_TYPE)) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; if (dropDay !== day) setDropDay(day); }}
                 onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null) && dropDay === day) setDropDay(null); }}
                 onDrop={(event) => onDrop(event, day)}>
-                <span className="cal-day-num">{Number(day.slice(8, 10))}</span>
+                <div className="cal-day-head">
+                  {off && <span className="cal-holiday" title={off.map(holidayTitle).join(" · ")}>
+                    <span className="cal-holiday-full">{holidayLabel(off)}</span><span className="cal-holiday-short" aria-hidden="true">{holidayShort(off)}</span>
+                  </span>}
+                  <span className="cal-day-num">{Number(day.slice(8, 10))}</span>
+                </div>
                 {list.length > 0 && <ul className="cal-chips">{list.slice(0, more > 0 ? 2 : 3).map((event) => chip(event, day))}</ul>}
                 {more > 0 && <span className="cal-more">+{more + 1}개</span>}
               </div>;

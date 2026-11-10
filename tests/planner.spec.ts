@@ -186,6 +186,45 @@ test("캘린더: 종일·시간 일정을 만들고 메모와 Task를 첨부하�
   expect(errors).toEqual([]);
 });
 
+test("캘린더: 법정 공휴일·대체공휴일을 날 칸과 고른 날 목록에 보인다", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await ready(page);
+  await openApp(page, "캘린더", "calendar");
+  const calendar = win(page, "calendar");
+  // 2026년 10월로 옮긴다(오늘이 언제든 같은 달을 본다).
+  const title = calendar.locator(".cal-month-title");
+  for (let step = 0; step < 240 && (await title.textContent()) !== "2026년 10월"; step++) {
+    const [year, month] = ((await title.textContent()) ?? "").match(/\d+/g)!.map(Number) as [number, number];
+    await calendar.getByRole("button", { name: year * 12 + month > 2026 * 12 + 10 ? "이전 달" : "다음 달" }).click();
+  }
+  await expect(title).toHaveText("2026년 10월");
+  const day = (date: string) => calendar.locator(`.cal-day[data-date="${date}"]`);
+  await expect(day("2026-10-03").locator(".cal-holiday-full")).toHaveText("개천절");
+  await expect(day("2026-10-05").locator(".cal-holiday-full")).toHaveText("대체공휴일");
+  await expect(day("2026-10-09").locator(".cal-holiday-full")).toHaveText("한글날");
+  await expect(day("2026-10-05")).toHaveAttribute("data-holiday", "");
+  await expect(day("2026-10-06")).not.toHaveAttribute("data-holiday", "");
+  await expect(day("2026-10-05")).toHaveAttribute("aria-label", /대체공휴일/);
+  await day("2026-10-05").click();
+  await expect(calendar.locator(".cal-agenda-holiday")).toHaveText(["휴일대체공휴일 (개천절)"]);
+  await day("2026-10-12").click();
+  await expect(calendar.locator(".cal-agenda-holiday")).toHaveCount(0);
+  await expect(calendar.locator(".cal-agenda .planner-empty")).toContainText("일정이 없습니다");
+  // 음력 공휴일: 9월의 추석 연휴
+  await calendar.getByRole("button", { name: "이전 달" }).click();
+  await expect(title).toHaveText("2026년 9월");
+  await expect(calendar.locator(".cal-day[data-holiday]:not([data-out]) .cal-holiday-full")).toHaveText(["추석 연휴", "추석", "추석 연휴"]);
+  // 모바일 폭에서는 짧은 이름을 날짜 아래 줄에 보인다.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await calendar.getByRole("button", { name: "다음 달" }).click();
+  await expect(day("2026-10-05").locator(".cal-holiday-short")).toBeVisible();
+  await expect(day("2026-10-05").locator(".cal-holiday-short")).toHaveText("대체휴일");
+  await expect(day("2026-10-05").locator(".cal-holiday-full")).toBeHidden();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect(errors).toEqual([]);
+});
+
 test("잔디: 에이전트 기록이 오늘 칸을 칠하고, 칸을 누르면 그날 세션이 보이며 세션 창으로 연다", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

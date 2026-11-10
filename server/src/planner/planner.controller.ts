@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Post, Query, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { RelayError, parseActivityDayQuery, parseActivityQuery, parseBoardAction, parseEventBatch, parseEventFilter, parseTaskBatch, parseTaskFilter } from "@relay/core";
+import { RelayError, holidayList, parseActivityDayQuery, parseActivityQuery, parseBoardAction, parseEventBatch, parseEventFilter, parseHolidayQuery, parseTaskBatch,
+  parseTaskFilter } from "@relay/core";
 import { Auth, type AuthContext } from "../common/decorators.js";
 import { PlannerService } from "./planner.service.js";
 
@@ -78,6 +79,15 @@ export class EventsController {
   save(@Auth() auth: AuthContext, @Body() body: unknown, @Query() query: Record<string, unknown>) {
     noQuery(query, "일정 저장");
     return this.planner.applyEvents(auth.userId, parseEventBatch(body));
+  }
+}
+
+/** 대한민국 관공서 공휴일·대체공휴일·선거일·임시공휴일. 계산이라 저장소를 쓰지 않는다. */
+@Controller("api/v1/holidays")
+export class HolidaysController {
+  @Get()
+  list(@Query() query: Record<string, unknown>) {
+    return holidayList(parseHolidayQuery(single(query)));
   }
 }
 
