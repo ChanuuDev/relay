@@ -7,6 +7,7 @@ export * from "./notes.js";
 export * from "./calculator.js";
 export * from "./planner.js";
 export * from "./holidays.js";
+export * from "./holiday-api.js";
 export * from "./files.js";
 
 export * from "./format.js";

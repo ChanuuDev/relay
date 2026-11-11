@@ -25,7 +25,9 @@ import { NotesService } from "./notes/notes.service.js";
 import { AgentController } from "./pcs/agent.controller.js";
 import { PcBroker } from "./pcs/pc-broker.service.js";
 import { PcsController } from "./pcs/pcs.controller.js";
-import { ActivityController, BoardController, EventsController, HolidaysController, TasksController } from "./planner/planner.controller.js";
+import { ActivityController, BoardController, EventsController, TasksController } from "./planner/planner.controller.js";
+import { HolidaysController } from "./holidays/holidays.controller.js";
+import { HolidaysService } from "./holidays/holidays.service.js";
 import { PlannerService } from "./planner/planner.service.js";
 import { SessionsController } from "./sessions/sessions.controller.js";
 import { SessionsService } from "./sessions/sessions.service.js";
@@ -41,7 +43,7 @@ export class AppModule implements NestModule {
       providers: [
         { provide: CONFIG, useValue: config },
         { provide: "RELAY_LOG", useValue: options.log !== false },
-        AuthService, DevicesService, SessionsService, NotesService, CalculatorService, FilesService, ImportService, MaintenanceService, PcBroker, PlannerService,
+        AuthService, DevicesService, SessionsService, NotesService, CalculatorService, FilesService, ImportService, MaintenanceService, PcBroker, PlannerService, HolidaysService,
         { provide: APP_FILTER, useClass: RelayErrorFilter },
         { provide: APP_GUARD, useClass: AuthGuard },
         { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },

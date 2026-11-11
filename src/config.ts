@@ -6,7 +6,10 @@ import { directory, integer } from "./validation";
 
 /** shareFiles: 브라우저 모드 화면에서 이 PC의 파일을 보게 할지(기본 켜짐, false면 끔). src/remote/agent.ts */
 export interface RemoteConfig { url: string; token: string; deviceId?: string | null; deviceName?: string; shareFiles?: boolean }
-export interface Config { dataDirectory: string; databasePath: string; webHost: "127.0.0.1"; webPort: number; retentionDays: number; mode?: "local" | "remote"; remote?: RemoteConfig }
+/** holidayApiKey: 공휴일 공공 API(한국천문연구원 특일 정보) 인증키. 로컬 모드에서 매일 00시에 공휴일을 받는다(src/planner/holidays.ts).
+ *  holidayApiUrl은 시험용으로 RELAY_HOLIDAY_API_URL에서만 읽는다. */
+export interface Config { dataDirectory: string; databasePath: string; webHost: "127.0.0.1"; webPort: number; retentionDays: number; mode?: "local" | "remote"; remote?: RemoteConfig;
+  holidayApiKey?: string; holidayApiUrl?: string }
 
 export function remoteUrl(input: unknown): string {
   if (typeof input !== "string" || !input.trim()) throw new RelayError("INVALID_CONFIG", "원격 서버 주소가 필요합니다.");
@@ -33,7 +36,7 @@ export function loadConfig(dataDir?: string, port?: string): Config {
   } catch (error) {
     if ((error as { code?: string }).code !== "ENOENT") throw new RelayError("INVALID_CONFIG", "config.json을 읽을 수 없거나 JSON 형식이 잘못되었습니다.");
   }
-  if (Object.keys(raw).some(k => !["webHost", "webPort", "retentionDays", "schemaVersion", "mode", "remote", "desktop"].includes(k)) ||
+  if (Object.keys(raw).some(k => !["webHost", "webPort", "retentionDays", "schemaVersion", "mode", "remote", "desktop", "holidayApiKey"].includes(k)) ||
     (raw.webHost !== undefined && raw.webHost !== "127.0.0.1") ||
     (raw.schemaVersion !== undefined && raw.schemaVersion !== 1 && raw.schemaVersion !== 2) ||
     (raw.mode !== undefined && raw.mode !== "local" && raw.mode !== "remote") ||
@@ -54,9 +57,16 @@ export function loadConfig(dataDir?: string, port?: string): Config {
       (value.deviceId != null && typeof value.deviceId !== "string") || (value.shareFiles !== undefined && typeof value.shareFiles !== "boolean")) throw new RelayError("INVALID_CONFIG", "원격 서버 토큰·기기 설정을 확인하세요.");
     remote = { url: remoteUrl(value.url), token: value.token.trim(), deviceId: value.deviceId, deviceName: value.deviceName, ...(value.shareFiles === false ? { shareFiles: false } : {}) };
   }
+  const holidayKey = raw.holidayApiKey ?? process.env.RELAY_HOLIDAY_API_KEY;
+  if (holidayKey !== undefined && (typeof holidayKey !== "string" || /\s/.test(holidayKey.trim()) || holidayKey.length > 500)) {
+    throw new RelayError("INVALID_CONFIG", "holidayApiKey는 공백 없는 공공데이터포털 인증키 문자열이어야 합니다.");
+  }
+  const holidayUrl = process.env.RELAY_HOLIDAY_API_URL?.trim();
   return { dataDirectory, databasePath: path.join(dataDirectory, "relay.db"),
     webHost: "127.0.0.1", webPort: integer(port, "port", configPort, 1, 65535), retentionDays,
-    ...(raw.mode ? { mode: raw.mode as "local" | "remote" } : {}), ...(remote ? { remote } : {}) };
+    ...(raw.mode ? { mode: raw.mode as "local" | "remote" } : {}), ...(remote ? { remote } : {}),
+    ...(typeof holidayKey === "string" && holidayKey.trim() ? { holidayApiKey: holidayKey.trim() } : {}),
+    ...(holidayUrl ? { holidayApiUrl: holidayUrl } : {}) };
 }
 
 export function ensureDataDirectory(config: Config) {

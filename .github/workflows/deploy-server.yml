@@ -111,9 +111,9 @@ jobs:
           scp -i ~/.ssh/deploy_key deploy/nginx/relay-web.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay-web.conf.new"
           scp -i ~/.ssh/deploy_key deploy/nginx/relay-web.http.conf "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/relay/nginx/relay-web.http.conf.new"
       - name: 이미지 받아 다시 띄우기
-        # 스크립트는 파일로 두고 stdin으로는 토큰과 화면 도메인 두 줄만 보낸다(docker 명령이 stdin을 삼키지 않게).
+        # 스크립트는 파일로 두고 stdin으로는 토큰·화면 도메인·공휴일 API 인증키 세 줄만 보낸다(docker 명령이 stdin을 삼키지 않게).
         run: |
           owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           tag="${{ needs.build.outputs.tag }}"
-          printf '%s\n%s\n' "${{ secrets.GITHUB_TOKEN }}" "${{ secrets.RELAY_WEB_DOMAIN }}" | ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+          printf '%s\n%s\n%s\n' "${{ secrets.GITHUB_TOKEN }}" "${{ secrets.RELAY_WEB_DOMAIN }}" "${{ secrets.HOLIDAY_API_KEY }}" | ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             bash /srv/relay/deploy-remote.sh "ghcr.io/${owner}/relay-api:${tag}" "${{ github.actor }}"

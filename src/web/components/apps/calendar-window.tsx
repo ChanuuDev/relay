@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import { Dialog } from "radix-ui";
+import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, FileText, ListTodo, Paperclip, Plus, Trash2, X } from "lucide-react";
-import { addDays, compareEvents, daysBetween, EVENT_COLORS, eventDays, holidaysBetween, weekdayOf, type EventAttachment, type EventColor, type Holiday } from "@relay/core";
+import { addDays, compareEvents, daysBetween, EVENT_COLORS, eventDays, holidaysBetween, weekdayOf, type EventAttachment, type EventColor, type Holiday,
+  type HolidaySource } from "@relay/core";
 import { Window } from "../desktop/window";
 import { WindowTitleBar } from "../desktop/window-title-bar";
 import { SplitView } from "../desktop/split-view";
@@ -20,7 +22,13 @@ const fullDay = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long
 /** 날 칸에 쓰는 이름. 대체공휴일은 그대로 「대체공휴일」이다. */
 const holidayLabel = (items: Holiday[]) => [...new Set(items.map((item) => item.name))].join(" · ");
 /** 아주 좁은 달력(모바일)에 쓰는 짧은 이름 */
-const shortName = (item: Holiday) => (item.kind === "substitute" ? "대체휴일" : item.name.endsWith("선거일") ? "선거일" : item.name === "임시공휴일" ? "임시휴일" : item.name);
+const shortName = (item: Holiday) => (item.kind === "substitute" ? "대체휴일" : item.name.includes("선거") ? "선거일" : item.name === "임시공휴일" ? "임시휴일" : item.name);
+const syncTime = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+/** 그해 공휴일을 어디서 가져왔는지 */
+const sourceText = (source: HolidaySource | undefined) => (source?.source === "kasi"
+  ? `출처: 한국천문연구원 특일 정보${source.syncedAt ? ` · ${syncTime.format(new Date(source.syncedAt))} 받음` : ""}`
+  : "출처: 「관공서의 공휴일에 관한 규정」에 따른 계산");
+type HolidayResponse = { items: Holiday[]; sources: HolidaySource[] };
 const holidayShort = (items: Holiday[]) => [...new Set(items.map(shortName))].join("·");
 /** 고른 날 목록에 쓰는 이름: 대체공휴일은 무엇을 대신하는지, 선거일·임시공휴일은 그 이름을 쓴다. */
 const holidayTitle = (item: Holiday) => (item.kind === "substitute" ? `대체공휴일 (${item.of})` : item.name);
@@ -165,13 +173,25 @@ export function CalendarWindow() {
     }
     return map;
   }, [events, start, last]);
-  // 법정 공휴일·대체공휴일·선거일·임시공휴일. 계산이라 서버에 묻지 않는다.
+  // 법정 공휴일·대체공휴일·선거일·임시공휴일. 서버가 공공 API(한국천문연구원)로 매일 00시에 받아 둔 자료를 쓰고,
+  // 서버에 닿지 않거나 받기 전에는 같은 규정으로 계산한 공휴일을 보인다.
+  const remoteHolidays = useQuery({ queryKey: ["relay", "holidays", start, last], staleTime: 30 * 60_000, retry: 1,
+    queryFn: async ({ signal }): Promise<HolidayResponse> => {
+      const response = await fetch(`/api/v1/holidays?from=${start}&to=${last}`, { cache: "no-store", signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      // 서버가 화면보다 옛 판이면 sources가 없을 수 있다. 모양이 다르면 받은 것만 쓰고 나머지는 비운다(화면 전체가 멈추지 않게).
+      const data = await response.json() as Partial<HolidayResponse> | null;
+      if (!data || !Array.isArray(data.items)) throw new Error("공휴일 응답 형식이 다릅니다.");
+      return { items: data.items, sources: Array.isArray(data.sources) ? data.sources : [] };
+    } });
+  const holidayItems = useMemo(() => remoteHolidays.data?.items ?? holidaysBetween(start, last), [remoteHolidays.data, start, last]);
   const holidays = useMemo(() => {
     const map = new Map<string, Holiday[]>();
-    for (const item of holidaysBetween(start, last)) map.set(item.date, [...(map.get(item.date) ?? []), item]);
+    for (const item of holidayItems) map.set(item.date, [...(map.get(item.date) ?? []), item]);
     return map;
-  }, [start, last]);
-  const selectedHolidays = useMemo(() => holidaysBetween(selected, selected), [selected]);
+  }, [holidayItems]);
+  const selectedHolidays = holidays.get(selected) ?? (selected < start || selected > last ? holidaysBetween(selected, selected) : []);
+  const selectedSource = remoteHolidays.data?.sources.find((source) => source.year === Number(selected.slice(0, 4)));
   const agenda = useMemo(() => Object.values(events).filter((event) => { const span = eventDays(event); return span.first <= selected && span.last >= selected; }).sort(compareEvents),
     [events, selected]);
 
@@ -233,7 +253,8 @@ export function CalendarWindow() {
           <Button type="button" variant="ghost" size="icon-xs" aria-label="이날 새 일정" title="이날 새 일정" onClick={() => setDraft(draftFor(selected, false))}><Plus aria-hidden="true" /></Button>
         </header>
         {agenda.length || selectedHolidays.length ? <ol className="cal-agenda-list">
-          {selectedHolidays.map((item) => <li key={`${item.kind}:${item.name}`} className="cal-agenda-holiday" data-kind={item.kind}>
+          {selectedHolidays.map((item) => <li key={`${item.kind}:${item.name}`} className="cal-agenda-holiday" data-kind={item.kind}
+            data-source={selectedSource?.source ?? "computed"} title={sourceText(selectedSource)}>
             <span className="cal-agenda-time">휴일</span>
             <span className="cal-agenda-title">{holidayTitle(item)}</span>
           </li>)}

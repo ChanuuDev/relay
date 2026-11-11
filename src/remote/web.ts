@@ -41,7 +41,7 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
       let body: unknown;
       const fileApi = url.pathname === "/api/v1/files" || url.pathname.startsWith("/api/v1/files/");
       const explicitFiles = url.pathname === "/api/v1/remote/files" || url.pathname.startsWith("/api/v1/remote/files/");
-      const dataApi = /^\/api\/v1\/(sessions(?:\/[^/]+(?:\/(?:updates|children|chain|actions))?)?|notes(?:\/export|\/import|\/images(?:\/[0-9a-f]{64})?)?|calculator\/history|tasks|board|events|holidays|activity(?:\/day)?)$/.test(url.pathname);
+      const dataApi = /^\/api\/v1\/(sessions(?:\/[^/]+(?:\/(?:updates|children|chain|actions))?)?|notes(?:\/export|\/import|\/images(?:\/[0-9a-f]{64})?)?|calculator\/history|tasks|board|events|holidays(?:\/sync)?|activity(?:\/day)?)$/.test(url.pathname);
       if (!["GET", "POST", "PUT"].includes(request.method)) throw new RelayError("METHOD_NOT_ALLOWED", "지원하지 않는 HTTP 메서드입니다.", 2, 405);
       if ((fileApi || explicitFiles || image) && request.method === "GET") {
         const site = request.headers.get("sec-fetch-site");

@@ -175,6 +175,13 @@ export const plannerMeta = pgTable("planner_meta", {
   revision: integer("revision").notNull().default(0),
 });
 
+/** 공휴일 공공 API(한국천문연구원 특일 정보)로 받아 둔 해. 매일 서울 00:00에 올해·내년을 다시 받는다. 사용자와 무관하다. */
+export const holidayYears = pgTable("holiday_years", {
+  year: integer("year").primaryKey(),
+  items: jsonb("items").$type<Array<{ date: string; name: string; kind: "holiday" | "substitute" | "temporary"; of?: string }>>().notNull(),
+  syncedAt: stamp("synced_at").notNull(),
+});
+
 /** 잔디용 기록 로그. session_updates에 에이전트 기록이 들어올 때 트리거가 남기며, 세션이 보관 기간으로 지워져도 남는다. */
 export const activityLog = pgTable("activity_log", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),

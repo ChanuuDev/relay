@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { HolidaysService } from "../src/holidays/holidays.service.js";
 import { sql } from "drizzle-orm";
 import { HOOK_SUMMARY, dayKey } from "@relay/core";
 import { recordInput, testApp, type TestApp } from "./helpers.js";
@@ -7,6 +10,42 @@ const task = (id: string, extra: Record<string, unknown> = {}) =>
   ({ id, title: `할 일 ${id}`, project: "relay", memo: "", provider: "anthropic", status: "todo", board: false, position: null, notes: [], createdAt: 1000, updatedAt: 1000, ...extra });
 const event = (id: string, extra: Record<string, unknown> = {}) =>
   ({ id, title: `일정 ${id}`, allDay: true, start: "2026-11-09", end: "2026-11-09", memo: "", color: "blue", attachments: [], createdAt: 1000, updatedAt: 1000, ...extra });
+
+describe("원격 공휴일 공공 API 동기화", () => {
+  let upstream: Server;
+  let t: TestApp;
+  const seen: string[] = [];
+  beforeEach(async () => {
+    seen.length = 0;
+    // 특일 정보 API 흉내: 2026년 10월에 실제에 없는 임시공휴일을 하나 더 준다. 다른 달은 비어 있다.
+    upstream = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://upstream");
+      seen.push(url.search);
+      const october = url.searchParams.get("solYear") === "2026" && url.searchParams.get("solMonth") === "10";
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ response: { header: { resultCode: "00", resultMsg: "NORMAL SERVICE" }, body: { items: october ? { item: [
+        { locdate: 20261003, dateName: "개천절", isHoliday: "Y" }, { locdate: 20261005, dateName: "대체공휴일", isHoliday: "Y" },
+        { locdate: 20261009, dateName: "한글날", isHoliday: "Y" }, { locdate: 20261030, dateName: "임시공휴일", isHoliday: "Y" }] } : "" } } }));
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    t = await testApp({ holidayApiKey: "test-key", holidayApiUrl: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/getRestDeInfo` });
+  });
+  afterEach(async () => { await t.close(); await new Promise((resolve) => upstream.close(resolve)); });
+
+  test("즉시 동기화로 받아 저장하고, 받은 해는 그 자료로 답한다", async () => {
+    const result = (await t.post("/api/v1/holidays/sync", {}).expect(200)).body;
+    expect(result.years.map((item: { count: number }) => item.count)).toEqual([4, 0]);
+    expect(seen.some((query) => query.includes("serviceKey=test-key") && query.includes("_type=json"))).toBe(true);
+    const list = (await t.get("/api/v1/holidays?from=2026-10-01&to=2026-10-31").expect(200)).body;
+    expect(list.items).toEqual([
+      { date: "2026-10-03", name: "개천절", kind: "holiday" }, { date: "2026-10-05", name: "대체공휴일", kind: "substitute", of: "개천절" },
+      { date: "2026-10-09", name: "한글날", kind: "holiday" }, { date: "2026-10-30", name: "임시공휴일", kind: "temporary" }]);
+    expect(list.sources[0]).toMatchObject({ year: 2026, source: "kasi" });
+    expect(list.sync).toMatchObject({ configured: true, lastError: null });
+    // 내년은 아직 발표 전이라 계산으로 채운다.
+    expect((await t.get("/api/v1/holidays?year=2027").expect(200)).body.sources[0].source).toBe("computed");
+  });
+});
 
 describe("원격 일정 관리 API", () => {
   let t: TestApp;
@@ -97,6 +136,12 @@ describe("원격 일정 관리 API", () => {
     expect(after.sessions.find((session: { deleted: boolean }) => session.deleted)).toMatchObject({ provider: "anthropic", agent: "claude-code", providerSessionId: null });
     expect((await t.get("/api/v1/activity?tz=Mars/Base")).body.error.code).toBe("INVALID_ARGUMENT");
     expect((await t.get("/api/v1/activity?from=2024-01-01&to=2026-01-01")).body.error.code).toBe("INVALID_ARGUMENT");
+  });
+
+  test("공휴일 동기화: 인증키가 없으면 409이고, 매일 서울 00:00 Cron으로 등록돼 있다", async () => {
+    expect((await t.post("/api/v1/holidays/sync", {})).body.error.code).toBe("HOLIDAY_API_KEY_MISSING");
+    expect(Reflect.getMetadata("SCHEDULE_CRON_OPTIONS", HolidaysService.prototype.nightly)).toMatchObject({ cronTime: "0 0 0 * * *", timeZone: "Asia/Seoul" });
+    expect((await t.get("/api/v1/holidays?year=2026").expect(200)).body.sources).toEqual([{ year: 2026, source: "computed", syncedAt: null }]);
   });
 
   test("공휴일 API: 계산한 공휴일·대체공휴일·선거일을 준다", async () => {

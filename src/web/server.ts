@@ -9,6 +9,7 @@ import { SessionService } from "../session/session.service";
 import { exportFileName, MAX_IMAGE_UPLOAD_BYTES, NOTE_IMAGES_PATH, NoteStore, parseBatch, parseExport, parseExportImages, parseImageUpload } from "../notes/notes.store";
 import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.store";
 import { parseBoardAction, parseEventBatch, parseEventFilter, parseTaskBatch, parseTaskFilter, PlannerStore } from "../planner/planner.store";
+import { startHolidaySync, syncLocalHolidays } from "../planner/holidays";
 import { copyToClipboard, deleteItems, fileResponse, listDirectory, makeFolder, openPath, pasteItems, places, renameItem, saveFile, statPath, systemLauncher, systemRemover, type FileClipboardWriter, type Launcher, type Remover } from "../files/files.service";
 import { api, parseAction } from "./api";
 import { assets, mermaidFrameHtml } from "./assets";
@@ -42,6 +43,8 @@ export const TASKS_PATH = "/api/v1/tasks";
 export const BOARD_PATH = "/api/v1/board";
 export const EVENTS_PATH = "/api/v1/events";
 const PLANNER_PATHS = new Set([TASKS_PATH, BOARD_PATH, EVENTS_PATH]);
+/** 공휴일 공공 API를 지금 받아 온다(평소에는 매일 서울 00:00에 받는다). */
+export const HOLIDAY_SYNC_PATH = "/api/v1/holidays/sync";
 /** 목록에서 하는 세션 정리. `:id`는 Relay 내부 ID다. */
 export const SESSION_ACTIONS = /^\/api\/v1\/sessions\/([^/]+)\/actions$/;
 
@@ -209,6 +212,15 @@ export function handler(service: SessionService, config: Config, { notes, files,
         : pathname === EVENTS_PATH ? planner!.applyEvents(parseEventBatch(body)) : planner!.applyBoard(parseBoardAction(body)), { headers });
     } catch (error) { return failed(error, "GET, POST"); }
   };
+  /** 공휴일 즉시 동기화. 메모 저장과 같은 쓰기 검사를 거친다. 인증키가 없으면 409다. */
+  const syncHolidays = async (request: Request) => {
+    try {
+      checkWrite(request, config.webPort);
+      if (new URL(request.url).search) throw new RelayError("INVALID_ARGUMENT", "공휴일 동기화는 query를 받지 않습니다.");
+      await readBody(request);
+      return Response.json(await syncLocalHolidays(config), { headers });
+    } catch (error) { return failed(error, "POST"); }
+  };
   /** 파일 탐색기 조회. 디스크 내용이라 다른 사이트(같은 컴퓨터의 다른 포트 포함)가 넣는 요청은 받지 않는다. */
   const readFiles = (request: Request, url: URL): Response => {
     const site = request.headers.get("sec-fetch-site");
@@ -238,10 +250,11 @@ export function handler(service: SessionService, config: Config, { notes, files,
       const calculatorPath = Boolean(calculator) && url.pathname === CALCULATOR_PATH;
       const plannerPath = Boolean(planner) && PLANNER_PATHS.has(url.pathname);
       if ((notesPath && notes) || calculatorPath || plannerPath) allow = "GET, POST";
+      if (url.pathname === HOLIDAY_SYNC_PATH) allow = "POST";
       if (importPath || uploadPath || actionPath || (filesPath && FILES_WRITE_PATHS.has(url.pathname))) allow = "POST";
       const player = url.pathname === PLAYER_PATH;
       checkRequest(request, config.webPort, { allowCrossSite: player });
-      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${importPath ? "가져오기" : uploadPath ? "그림 올리기" : actionPath ? "세션 정리" : filesPath && url.pathname === FILES_SAVE_PATH ? "저장" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
+      if (allow === "POST") throw new RelayError("METHOD_NOT_ALLOWED", `${url.pathname === HOLIDAY_SYNC_PATH ? "공휴일 동기화" : importPath ? "가져오기" : uploadPath ? "그림 올리기" : actionPath ? "세션 정리" : filesPath && url.pathname === FILES_SAVE_PATH ? "저장" : filesPath && url.pathname !== FILES_OPEN_PATH ? "파일 정리" : "열기"}는 POST만 허용합니다.`, 2, 405);
       if (request.method !== "GET") throw new RelayError("METHOD_NOT_ALLOWED", allow ? `${calculatorPath ? "계산 이력" : plannerPath ? "일정 관리" : "메모"}는 GET 조회와 POST 저장만 허용합니다.` : "GET 조회만 허용합니다.", 2, 405);
       if (notesPath) return listNotes(request, url);
       if (calculatorPath) {
@@ -272,6 +285,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
       if (files && pathname === FILES_SAVE_PATH) return saveText(request);
       if (calculator && pathname === CALCULATOR_PATH) return saveCalculation(request);
       if (planner && PLANNER_PATHS.has(pathname)) return savePlanner(request, pathname);
+      if (pathname === HOLIDAY_SYNC_PATH) return syncHolidays(request);
       const action = writer ? SESSION_ACTIONS.exec(pathname) : null;
       if (action) return actOnSession(request, action[1]);
     }
@@ -305,6 +319,8 @@ export function startServer(config: Config) {
   timer.unref();
   // 원격 모드면 브라우저 모드 화면이 이 PC의 파일을 볼 수 있게 서버에 연결해 둔다(remote.shareFiles: false면 켜지 않는다).
   const agent = startAgent(config);
+  // 로컬 모드이고 공휴일 인증키가 있으면 매일 서울 00:00에 공휴일을 받는다.
+  const holidays = startHolidaySync(config);
   let stopped = false;
-  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); agent.stop(); await server.stop(false); db.close(); writeDb.close(); } } };
+  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); agent.stop(); holidays.stop(); await server.stop(false); db.close(); writeDb.close(); } } };
 }

@@ -14,6 +14,10 @@ export interface ServerConfig {
   logLevel: "debug" | "info" | "warn" | "error";
   /** 브라우저 모드 화면이 다른 출처에서 이 서버를 부를 때 허용할 출처(`https://host`). 비우면 CORS를 열지 않는다. */
   corsOrigins?: string[];
+  /** 공휴일 공공 API(한국천문연구원 특일 정보) 인증키(HOLIDAY_API_KEY). 없으면 매일 00시 동기화를 하지 않고 계산만 쓴다. */
+  holidayApiKey?: string | null;
+  /** 공휴일 API 주소(HOLIDAY_API_URL). 시험용이며 기본은 공공데이터포털 주소다. */
+  holidayApiUrl?: string | null;
 }
 
 /** RELAY_CORS_ORIGINS(쉼표로 구분). 출처 형식만 받고, http는 이 컴퓨터만 허용한다. */
@@ -47,5 +51,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     bootstrapUser: env.RELAY_BOOTSTRAP_USER?.trim() || "relay",
     logLevel: level as ServerConfig["logLevel"],
     corsOrigins: parseCorsOrigins(env.RELAY_CORS_ORIGINS),
+    holidayApiKey: env.HOLIDAY_API_KEY?.trim() || null,
+    holidayApiUrl: env.HOLIDAY_API_URL?.trim() || null,
   };
 }

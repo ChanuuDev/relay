@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import path from "node:path";
-import { activityStreaks, bucketActivity, dayKey, holidaysBetween, isDate, isDateTime, koreanHolidays, parseActivityQuery, parseEvent, parseHolidayQuery, parseTask, placeOnBoard,
-  removeFromBoard, type Task } from "@relay/core";
+import { activityStreaks, bucketActivity, dayKey, fetchHolidayYear, holidayApiRequest, holidaysBetween, holidaysStale, isDate, isDateTime, koreanHolidays, mergedHolidayList,
+  msUntilSeoulMidnight, normalizeApiHolidays, parseActivityQuery, parseEvent, parseHolidayApi, parseHolidayQuery, parseTask, placeOnBoard, removeFromBoard, type Task } from "@relay/core";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { holidayCachePath, readHolidayCache, startHolidaySync, syncLocalHolidays } from "../src/planner/holidays";
 import { handler } from "../src/web/server";
 import { loadConfig } from "../src/config";
 import { DB_VERSION, openDatabase } from "../src/db/database";
@@ -127,6 +129,102 @@ describe("대한민국 공휴일 계산", () => {
   });
 });
 
+/** 특일 정보 API 응답 한 달치(JSON). rows가 하나면 item을 객체로, 없으면 빈 문자열로 준다(실제 API와 같다). */
+const kasi = (rows: Array<[string, string]>) => JSON.stringify({ response: { header: { resultCode: "00", resultMsg: "NORMAL SERVICE" }, body: {
+  items: rows.length === 0 ? "" : rows.length === 1 ? { item: { dateKind: "01", dateName: rows[0]![1], isHoliday: "Y", locdate: Number(rows[0]![0]), seq: 1 } }
+    : { item: rows.map(([date, name], index) => ({ dateKind: "01", dateName: name, isHoliday: "Y", locdate: date, seq: index + 1 })) },
+  numOfRows: 100, pageNo: 1, totalCount: rows.length } } });
+/** 2026년 10월에 실제에 없는 임시공휴일(10/30)을 하나 더한 가짜 특일 정보 */
+const fakeMonth = (year: number, month: number) => (year !== 2026 ? [] : month === 10
+  ? [[`20261003`, "개천절"], [`20261005`, "대체공휴일"], [`20261009`, "한글날"], [`20261030`, "임시공휴일"]] as Array<[string, string]>
+  : month === 1 ? [["20260101", "1월1일"]] as Array<[string, string]> : []);
+const fakeFetch = (calls: string[] = []) => (async (input: string | URL | Request) => {
+  const url = new URL(String(input));
+  calls.push(url.search);
+  return new Response(kasi(fakeMonth(Number(url.searchParams.get("solYear")), Number(url.searchParams.get("solMonth")))), { headers: { "Content-Type": "application/json" } });
+}) as typeof fetch;
+
+describe("공휴일 공공 API(한국천문연구원 특일 정보)", () => {
+  test("요청 주소: Decoding 키는 인코딩하고 Encoding 키는 그대로 쓴다", () => {
+    expect(holidayApiRequest("https://api.test/getRestDeInfo", "a+b/c=", 2026, 3)).toBe("https://api.test/getRestDeInfo?serviceKey=a%2Bb%2Fc%3D&solYear=2026&solMonth=03&numOfRows=100&pageNo=1&_type=json");
+    expect(holidayApiRequest("https://api.test/x", "a%2Bb", 2026, 12)).toContain("serviceKey=a%2Bb&solYear=2026&solMonth=12");
+  });
+
+  test("응답: 여러 건·한 건·없음·쉬는 날 아님을 가리고, 인증키 오류(JSON·XML)는 오류로 바꾼다", () => {
+    expect(parseHolidayApi(kasi([["20261003", "개천절"], ["20261005", "대체공휴일"]]))).toEqual([{ date: "2026-10-03", name: "개천절" }, { date: "2026-10-05", name: "대체공휴일" }]);
+    expect(parseHolidayApi(kasi([["20260101", "1월1일"]]))).toEqual([{ date: "2026-01-01", name: "1월1일" }]);
+    expect(parseHolidayApi(kasi([]))).toEqual([]);
+    const notHoliday = JSON.stringify({ response: { header: { resultCode: "00" }, body: { items: { item: { locdate: 20260505, dateName: "어린이날", isHoliday: "N" } } } } });
+    expect(parseHolidayApi(notHoliday)).toEqual([]);
+    const gateway = JSON.stringify({ OpenAPI_ServiceResponse: { cmmMsgHeader: { errMsg: "SERVICE_KEY_IS_NOT_REGISTERED_ERROR", returnAuthMsg: "등록되지 않은 서비스키", returnReasonCode: "30" } } });
+    expect(() => parseHolidayApi(gateway, 401)).toThrow("등록되지 않은 서비스키");
+    expect(() => parseHolidayApi("<OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE ERROR</errMsg><returnAuthMsg>LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR</returnAuthMsg></cmmMsgHeader></OpenAPI_ServiceResponse>"))
+      .toThrow("LIMITED_NUMBER");
+    expect(() => parseHolidayApi(JSON.stringify({ response: { header: { resultCode: "22", resultMsg: "LIMITED" } } }))).toThrow("22 LIMITED");
+    expect(parseHolidayApi("<response><header><resultCode>00</resultCode></header><body><items><item><dateName>설날</dateName><isHoliday>Y</isHoliday><locdate>20260217</locdate></item></items></body></response>"))
+      .toEqual([{ date: "2026-02-17", name: "설날" }]);
+  });
+
+  test("이름과 종류를 맞추고(신정·부처님 오신 날·선거일), 대체공휴일이 대신하는 공휴일은 계산에서 찾는다", () => {
+    expect(normalizeApiHolidays(2026, [{ date: "2026-01-01", name: "1월1일" }, { date: "2026-05-24", name: "부처님오신날" }, { date: "2026-05-25", name: "대체공휴일" },
+      { date: "2026-06-03", name: "전국동시지방선거" }, { date: "2026-06-03", name: "전국동시지방선거" }, { date: "2027-01-01", name: "1월1일" }])).toEqual([
+      { date: "2026-01-01", name: "신정", kind: "holiday" }, { date: "2026-05-24", name: "부처님 오신 날", kind: "holiday" },
+      { date: "2026-05-25", name: "대체공휴일", kind: "substitute", of: "부처님 오신 날" }, { date: "2026-06-03", name: "전국동시지방선거", kind: "temporary" },
+    ]);
+  });
+
+  test("한 해를 열두 달 차례로 받고, 받아 둔 해는 그 자료를, 없는 해는 계산을 쓴다", async () => {
+    const calls: string[] = [];
+    const items = await fetchHolidayYear(2026, { key: "k", base: "https://api.test/getRestDeInfo", fetch: fakeFetch(calls) });
+    expect(calls).toHaveLength(12);
+    expect(items.map((item) => `${item.date} ${item.name}`)).toEqual(["2026-01-01 신정", "2026-10-03 개천절", "2026-10-05 대체공휴일", "2026-10-09 한글날", "2026-10-30 임시공휴일"]);
+    const synced = (year: number) => (year === 2026 ? { year, syncedAt: "2026-11-11T00:00:00.000Z", items } : null);
+    const list = mergedHolidayList({ from: "2026-10-01", to: "2027-01-31" }, synced);
+    expect(list.sources).toEqual([{ year: 2026, source: "kasi", syncedAt: "2026-11-11T00:00:00.000Z" }, { year: 2027, source: "computed", syncedAt: null }]);
+    expect(list.items.map((item) => item.date)).toEqual(["2026-10-03", "2026-10-05", "2026-10-09", "2026-10-30", "2027-01-01"]);
+    expect(holidaysStale(synced, Date.parse("2026-11-11T12:00:00Z"))).toBe(false);
+    expect(holidaysStale(synced, Date.parse("2026-11-12T12:00:00Z"))).toBe(true);
+    expect(holidaysStale(() => null, Date.parse("2026-11-11T12:00:00Z"))).toBe(true);
+  });
+
+  test("다음 서울 00시까지 남은 시간", () => {
+    expect(msUntilSeoulMidnight(Date.parse("2026-11-10T14:59:00Z"))).toBe(60_000); // 서울 23:59
+    expect(msUntilSeoulMidnight(Date.parse("2026-11-10T15:00:00Z"))).toBe(86_400_000); // 서울 00:00 정각이면 하루 뒤
+    expect(msUntilSeoulMidnight(Date.parse("2026-11-10T03:00:00Z"))).toBe(12 * 3_600_000); // 서울 정오
+  });
+
+  test("로컬 동기화: 받아 holidays.json에 두고, 인증키 오류면 이유를 남기며 받아 둔 자료는 지우지 않는다", async () => {
+    const f = fixture();
+    try {
+      const config = { ...f.config, holidayApiKey: "k", holidayApiUrl: "https://api.test/getRestDeInfo" };
+      const result = await syncLocalHolidays(config, Date.parse("2026-11-11T00:00:05+09:00"), fakeFetch());
+      expect(result.years).toEqual([{ year: 2026, count: 5, stored: true }, { year: 2027, count: 0, stored: false }]);
+      expect(readHolidayCache(config).years["2026"]?.items).toHaveLength(5);
+      const refused = (async () => new Response(JSON.stringify({ OpenAPI_ServiceResponse: { cmmMsgHeader: { returnAuthMsg: "등록되지 않은 서비스키" } } }), { status: 401 })) as unknown as typeof fetch;
+      await expect(syncLocalHolidays(config, Date.now(), refused)).rejects.toThrow("등록되지 않은 서비스키");
+      const cache = readHolidayCache(config);
+      expect(cache.state.lastError).toContain("등록되지 않은 서비스키");
+      expect(cache.years["2026"]?.items).toHaveLength(5);
+      await expect(syncLocalHolidays(f.config)).rejects.toThrow("holidayApiKey");
+    } finally { f.close(); }
+  });
+
+  test("로컬 스케줄러: 자료가 없으면 켤 때 곧 받고, 인증키가 없거나 원격 모드면 아무것도 하지 않는다", async () => {
+    const f = fixture();
+    try {
+      const config = { ...f.config, holidayApiKey: "k", holidayApiUrl: "https://api.test/getRestDeInfo" };
+      startHolidaySync({ ...f.config }).stop();
+      startHolidaySync({ ...config, mode: "remote" as const }).stop();
+      expect(existsSync(holidayCachePath(config))).toBe(false);
+      const job = startHolidaySync(config, { send: fakeFetch(), startDelayMs: 0 });
+      try {
+        await Bun.sleep(300);
+        expect(readHolidayCache(config).state.lastSuccessAt).not.toBeNull();
+      } finally { job.stop(); }
+    } finally { f.close(); }
+  });
+});
+
 describe("일정 관리 로컬 저장소와 HTTP API", () => {
   let f: ReturnType<typeof fixture>;
   let send: (url: string, init?: RequestInit) => Promise<Response>;
@@ -193,11 +291,22 @@ describe("일정 관리 로컬 저장소와 HTTP API", () => {
     expect((await (await send(`/api/v1/activity/day?date=${today}&tz=${tz}`)).json()).sessions.find((session: { deleted: boolean }) => session.deleted))
       .toMatchObject({ provider: "anthropic", agent: "claude-code", providerSessionId: null });
     expect((await send("/api/v1/activity/day")).status).toBe(400);
-    // 공휴일 API는 계산이라 저장소 없이 답한다.
+    // 공휴일 API: 받아 둔 자료가 없으면 계산으로 답한다.
     const holidays = await (await send("/api/v1/holidays?year=2026")).json();
-    expect(holidays).toMatchObject({ schemaVersion: 1, from: "2026-01-01", to: "2026-12-31", knownUntil: "2026-12-31" });
+    expect(holidays).toMatchObject({ schemaVersion: 1, from: "2026-01-01", to: "2026-12-31", knownUntil: "2026-12-31", sources: [{ year: 2026, source: "computed", syncedAt: null }],
+      sync: { configured: false, lastError: null } });
     expect(holidays.items).toContainEqual({ date: "2026-10-05", name: "대체공휴일", kind: "substitute", of: "개천절" });
     expect((await send("/api/v1/holidays?year=1990")).status).toBe(400);
+    // 받아 둔 해(holidays.json)는 그 자료를 쓴다.
+    writeFileSync(holidayCachePath(f.config), JSON.stringify({ schemaVersion: 1, state: {}, years: { "2026": { year: 2026, syncedAt: "2026-11-11T00:00:00.000Z",
+      items: [{ date: "2026-10-30", name: "임시공휴일", kind: "temporary" }] } } }));
+    const synced = await (await send("/api/v1/holidays?from=2026-10-01&to=2026-10-31")).json();
+    expect(synced.items).toEqual([{ date: "2026-10-30", name: "임시공휴일", kind: "temporary" }]);
+    expect(synced.sources[0]).toMatchObject({ source: "kasi" });
+    // 인증키가 없으면 즉시 동기화는 409이고, GET으로는 부를 수 없다.
+    expect((await post("/api/v1/holidays/sync", {})).status).toBe(409);
+    expect((await send("/api/v1/holidays/sync")).status).toBe(405);
+    expect(JSON.parse(readFileSync(holidayCachePath(f.config), "utf8")).years["2026"].items).toHaveLength(1);
     expect((await send("/api/v1/activity", { method: "POST", headers: { origin, "content-type": "application/json" } })).status).toBe(405);
   });
 

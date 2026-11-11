@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# 서버에서 Actions가 부른다: 첫 줄로 GHCR 토큰을, 둘째 줄로 브라우저 모드 화면 도메인(없으면 빈 줄)을 stdin에서 읽고, 이미지를 받아 다시 띄운다.
-#   printf '%s\n%s\n' "$TOKEN" "$WEB_DOMAIN" | bash /srv/relay/deploy-remote.sh ghcr.io/<owner>/relay-api:<tag> <github actor>
+# 서버에서 Actions가 부른다: 첫 줄로 GHCR 토큰을, 둘째 줄로 브라우저 모드 화면 도메인(없으면 빈 줄)을, 셋째 줄로 공휴일 API 인증키(없으면 빈 줄)를
+# stdin에서 읽고, 이미지를 받아 다시 띄운다.
+#   printf '%s\n%s\n%s\n' "$TOKEN" "$WEB_DOMAIN" "$HOLIDAY_KEY" | bash /srv/relay/deploy-remote.sh ghcr.io/<owner>/relay-api:<tag> <github actor>
 # docker 명령은 stdin을 /dev/null로 돌려 스크립트 입력을 삼키지 않게 한다. 도메인은 로그에 적지 않는다.
 set -euo pipefail
 IMAGE="${1:?image}"
 ACTOR="${2:?actor}"
 IFS= read -r TOKEN
 IFS= read -r WEB_DOMAIN || WEB_DOMAIN=""
+IFS= read -r HOLIDAY_KEY || HOLIDAY_KEY=""
 cd /srv/relay
 chmod +x backup.sh 2>/dev/null || true
 sudo sh /srv/relay/install-cli.sh
@@ -73,6 +75,13 @@ unset TOKEN
 # 고른 이미지 태그를 .env에 남겨 두어 나중에 compose up을 다시 해도 같은 이미지를 쓴다.
 grep -v '^RELAY_API_IMAGE=' .env > .env.next || true
 echo "RELAY_API_IMAGE=${IMAGE}" >> .env.next
+# 공휴일 API 인증키: Actions 비밀로 받았으면 .env의 값을 바꾸고, 비어 있으면 서버에 직접 둔 값을 그대로 둔다. 값은 출력하지 않는다.
+if [ -n "$HOLIDAY_KEY" ]; then
+  grep -v '^HOLIDAY_API_KEY=' .env.next > .env.key || true
+  printf 'HOLIDAY_API_KEY=%s\n' "$HOLIDAY_KEY" >> .env.key
+  mv .env.key .env.next
+fi
+unset HOLIDAY_KEY
 mv .env.next .env && chmod 600 .env
 docker compose pull relay-api </dev/null >/dev/null 2>&1
 docker compose up -d --remove-orphans </dev/null

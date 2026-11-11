@@ -163,7 +163,7 @@ test("일정 관리(Tasks·보드·일정·잔디)는 원격 모드에서 원격
   const handler = remoteHandler(config(), () => Response.json({ local: true }));
   const request = (route: string, init: RequestInit = {}) => handler(new Request("http://127.0.0.1:7474" + route, { ...init, headers: { host: "127.0.0.1:7474", ...init.headers } }));
   const write = { origin: "http://127.0.0.1:7474", "sec-fetch-site": "same-origin", "Content-Type": "application/json" };
-  for (const route of ["/api/v1/tasks", "/api/v1/board", "/api/v1/events"]) {
+  for (const route of ["/api/v1/tasks", "/api/v1/board", "/api/v1/events", "/api/v1/holidays/sync"]) {
     expect(await (await request(route, { method: "POST", body: JSON.stringify({ upserts: [], deletes: [] }), headers: write })).json()).toEqual({ schemaVersion: 1, ok: true });
     expect(received.at(-1)).toMatchObject({ route, body: { upserts: [], deletes: [] } });
   }

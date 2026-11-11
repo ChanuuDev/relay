@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import { env, ready, record, useRelayServer } from "./web-helpers";
 
 useRelayServer();
@@ -222,6 +224,55 @@ test("캘린더: 법정 공휴일·대체공휴일을 날 칸과 고른 날 목�
   await expect(day("2026-10-05").locator(".cal-holiday-short")).toHaveText("대체휴일");
   await expect(day("2026-10-05").locator(".cal-holiday-full")).toBeHidden();
   await page.setViewportSize({ width: 1440, height: 1000 });
+  expect(errors).toEqual([]);
+});
+
+test("캘린더: 공공 API로 받아 둔 공휴일(임시공휴일 포함)을 쓰고 출처를 알린다", async ({ page }) => {
+  // 서버가 매일 00시에 받아 두는 holidays.json을 미리 둔다. 10/30 임시공휴일은 계산에 없는 날이다.
+  writeFileSync(path.join(env.dir, "holidays.json"), JSON.stringify({ schemaVersion: 1, state: {}, years: { "2026": { year: 2026, syncedAt: "2026-11-11T00:00:00.000Z", items: [
+    { date: "2026-10-03", name: "개천절", kind: "holiday" }, { date: "2026-10-05", name: "대체공휴일", kind: "substitute", of: "개천절" },
+    { date: "2026-10-09", name: "한글날", kind: "holiday" }, { date: "2026-10-30", name: "임시공휴일", kind: "temporary" }] } } }));
+  await ready(page);
+  await openApp(page, "캘린더", "calendar");
+  const calendar = win(page, "calendar");
+  const title = calendar.locator(".cal-month-title");
+  for (let step = 0; step < 240 && (await title.textContent()) !== "2026년 10월"; step++) {
+    const [year, month] = ((await title.textContent()) ?? "").match(/\d+/g)!.map(Number) as [number, number];
+    await calendar.getByRole("button", { name: year * 12 + month > 2026 * 12 + 10 ? "이전 달" : "다음 달" }).click();
+  }
+  const day = calendar.locator('.cal-day[data-date="2026-10-30"]');
+  await expect(day.locator(".cal-holiday-full")).toHaveText("임시공휴일");
+  await day.click();
+  const row = calendar.locator(".cal-agenda-holiday");
+  await expect(row).toHaveText("휴일임시공휴일");
+  await expect(row).toHaveAttribute("data-source", "kasi");
+  await expect(row).toHaveAttribute("title", /한국천문연구원 특일 정보/);
+});
+
+test("캘린더: 서버가 옛 판이라 공휴일 응답에 출처가 없거나 형식이 달라도 화면이 멈추지 않는다", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // 원격 서버가 화면보다 늦게 배포되면 sources 없이 답한다(실제 브라우저 모드 시험에서 찾은 문제).
+  let shape: "old" | "broken" = "old";
+  await page.route("**/api/v1/holidays?**", (route) => route.fulfill({ json: shape === "old"
+    ? { schemaVersion: 1, from: "2026-01-01", to: "2026-12-31", items: [{ date: "2026-11-20", name: "옛 서버 공휴일", kind: "holiday" }] }
+    : { unexpected: true } }));
+  await ready(page);
+  await openApp(page, "캘린더", "calendar");
+  const calendar = win(page, "calendar");
+  const title = calendar.locator(".cal-month-title");
+  for (let step = 0; step < 240 && (await title.textContent()) !== "2026년 11월"; step++) {
+    const [year, month] = ((await title.textContent()) ?? "").match(/\d+/g)!.map(Number) as [number, number];
+    await calendar.getByRole("button", { name: year * 12 + month > 2026 * 12 + 11 ? "이전 달" : "다음 달" }).click();
+  }
+  await expect(calendar.locator('.cal-day[data-date="2026-11-20"] .cal-holiday-full')).toHaveText("옛 서버 공휴일");
+  await calendar.locator('.cal-day[data-date="2026-11-20"]').click();
+  await expect(calendar.locator(".cal-agenda-holiday")).toHaveAttribute("data-source", "computed");
+  // 형식이 아예 다르면 계산한 공휴일로 돌아간다(12월 25일 기독탄신일).
+  shape = "broken";
+  await calendar.getByRole("button", { name: "다음 달" }).click();
+  await expect(calendar.locator('.cal-day[data-date="2026-12-25"] .cal-holiday-full')).toHaveText("기독탄신일");
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
   expect(errors).toEqual([]);
 });
 
