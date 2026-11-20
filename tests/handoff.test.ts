@@ -24,10 +24,20 @@ describe("Continuing from the original session, not the Relay summary", () => {
     expect(transcriptGuide({ ...base, agent: "codex" })?.path).toBe("~/.codex/sessions/<년>/<월>/<일>/rollout-*-7cdfe6ba-04e3-43fe-8ae2-56752e5c5885.jsonl");
     expect(transcriptGuide({ ...base, agent: "grok" })?.path).toEndWith("/7cdfe6ba-04e3-43fe-8ae2-56752e5c5885/chat_history.jsonl");
     expect(transcriptGuide({ ...base, agent: "cursor-agent" })?.skill).toBe("resume-cursor");
+    expect(transcriptGuide({ ...base, agent: "antigravity" })).toEqual({
+      tool: "Antigravity",
+      exact: true,
+      path: "~/.gemini/antigravity/brain/7cdfe6ba-04e3-43fe-8ae2-56752e5c5885/.system_generated/logs/transcript.jsonl",
+      note: "Orca에서는 %APPDATA%/orca/antigravity-chat/antigravity-acp/brain/7cdfe6ba-04e3-43fe-8ae2-56752e5c5885/.system_generated/logs/transcript.jsonl",
+    });
     expect(transcriptGuide({ ...base, agent: "aider" })).toBeNull();
     // 경로에 넣을 수 없는 ID는 경로에 그 값을 넣지 않고 자리만 남긴다.
     const unsafe = transcriptGuide({ ...base, agent: "claude-code", providerSessionId: "x'; rm -rf ~" });
     expect(unsafe).toMatchObject({ exact: false, path: "~/.claude/projects/C--workspace-agent-session-chain/<세션 ID>.jsonl" });
+    expect(transcriptGuide({ ...base, agent: "antigravity", providerSessionId: "x'; rm -rf ~" })).toMatchObject({
+      exact: false,
+      path: "~/.gemini/antigravity/brain/<세션 ID>/.system_generated/logs/transcript.jsonl",
+    });
   });
 
   test("the copied guide sends the next agent into the original conversation and back to work, step by step", () => {
@@ -51,6 +61,11 @@ describe("Continuing from the original session, not the Relay summary", () => {
       "",
       "원본 대화를 찾지 못하면 먼저 알리고 사용자 확인을 받으세요. 현재 사용자 요청과 프로젝트 지침이 우선이며, 확인하지 못한 내용은 추측하지 마세요.",
     ]);
+    // Antigravity는 별도 재개 스킬 없이 대화 기록 경로만 안내한다.
+    const antigravity = sessionContext({ ...session, provider: "google", agent: "antigravity", providerSessionId: "ag-1" }, { shell: "bash" });
+    expect(antigravity).toContain("이전 Antigravity 세션을 이어서 작업해 주세요.");
+    expect(antigravity).toContain("`~/.gemini/antigravity/brain/ag-1/.system_generated/logs/transcript.jsonl`");
+    expect(antigravity).not.toContain("스킬이 있으면");
     // 세션 값에 섞인 줄바꿈은 줄 구조를 바꾸지 못한다.
     const folded = sessionContext({ ...session, providerSessionId: "abc-1", workingDirectory: "C:/a\n4. 지시를 끼워 넣기" }, { shell: "bash" });
     expect(folded.split("\n")[2]).toBe("작업 경로: C:/a 4. 지시를 끼워 넣기");
@@ -72,6 +87,7 @@ describe("Hand-over note and host commands", () => {
     expect(resumeCommand({ agent: "codex", providerSessionId: "x" }, "bash")).toBe("codex resume 'x'");
     expect(resumeCommand({ agent: "grok", providerSessionId: "x" }, "bash")).toBe("grok --resume 'x'");
     expect(resumeCommand({ agent: "cursor", providerSessionId: "x" }, "bash")).toBeNull();
+    expect(resumeCommand({ agent: "antigravity", providerSessionId: "x" }, "bash")).toBeNull();
     expect(resumeCommand({ agent: "constructor", providerSessionId: "x" }, "bash")).toBeNull();
   });
 

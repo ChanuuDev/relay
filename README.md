@@ -76,10 +76,10 @@ Agent 연동은 설치 뒤 각 도구를 다시 시작해 확인하세요. Codex
 
 | 도구 | 할 수 있는 일 |
 | --- | --- |
-| **세션** | Claude Code·Codex·Grok·Cursor의 작업 기록을 검색하고, 진행 요약·이력·연결 관계를 확인하고 다음 Agent에게 전달합니다. |
+| **세션** | Claude Code·Codex·Grok·Cursor·Antigravity(Gemini)의 작업 기록을 검색하고, 진행 요약·이력·연결 관계를 확인하고 다음 Agent에게 전달합니다. |
 | **사무실** | 세션마다 도트 캐릭터가 아이소메트릭 사무실의 작업 중·막힘·인계 방과 퇴근 로비에 머물며 Agent들의 상태를 보여 주고, 캐릭터를 누르거나 끌어 상태를 바꿉니다. |
 | **메모** | 생각과 할 일을 GitHub Markdown으로 쓰고(표·수식·알림 상자·각주·접기·Mermaid·지도 등), 그림을 붙여 넣으며, 폴더와 하위 폴더로 정리하고, 검색·내보내기·가져오기를 합니다. |
-| **Tasks** | 할 일을 적고 프로젝트·메모·일을 지시할 에이전트(Claude Code·Codex·Grok·Cursor)·첨부 메모를 남기며, 에이전트에게 붙여 넣을 지시문을 복사합니다. |
+| **Tasks** | 할 일을 적고 프로젝트·메모·일을 지시할 에이전트(Claude Code·Codex·Grok·Cursor·Antigravity)·첨부 메모를 남기며, 에이전트에게 붙여 넣을 지시문을 복사합니다. |
 | **업무** | Task를 할 일·진행 중·검토·완료 칸반 보드에 놓고 끌어 옮깁니다. 오른쪽 인벤토리의 완료가 아닌 Task를 보드로 끌어 옵니다. |
 | **캘린더** | 월 달력에 종일·시간 일정을 만들고 Relay 메모와 Task를 첨부합니다. 법정 공휴일·대체공휴일·선거일을 함께 보입니다. |
 | **잔디** | 날마다 남긴 세션 기록을 GitHub 잔디처럼 1년 칸으로 보고, 칸을 눌러 그날 기록한 세션을 엽니다. |
@@ -263,7 +263,7 @@ YouTube 창의 주소창에 영상·재생목록 주소나 영상 ID를 입력�
 
 ## AI와 작업 이어가기
 
-세션 연결은 Relay가 제공하는 업무 도구 중 하나이자, 처음 출발한 기능입니다. Codex로 하던 일을 Claude Code·Grok·Cursor 또는 새 대화에서 이어갈 때, 어느 프로젝트에서 무엇을 했고 다음에 무엇을 할지 찾을 단서를 남깁니다.
+세션 연결은 Relay가 제공하는 업무 도구 중 하나이자, 처음 출발한 기능입니다. Codex로 하던 일을 Claude Code·Grok·Cursor·Antigravity 또는 새 대화에서 이어갈 때, 어느 프로젝트에서 무엇을 했고 다음에 무엇을 할지 찾을 단서를 남깁니다.
 
 ```mermaid
 flowchart LR
@@ -329,10 +329,10 @@ relay continue '<이전 Agent Session ID>' --parent-provider xai --provider open
 
 | 용어 | 설명 |
 | --- | --- |
-| **Agent Session ID** | Claude Code, Codex, Grok이 각자 발급하는 36자 UUID입니다. Relay는 이 값을 그대로 저장하고 CLI 조회에 씁니다. JSON 필드는 `providerSessionId`입니다. |
+| **Agent Session ID** | Claude Code, Codex, Grok, Cursor, Antigravity가 각자 발급하는 36자 UUID(또는 대화 ID)입니다. Relay는 이 값을 그대로 저장하고 CLI 조회에 씁니다. JSON 필드는 `providerSessionId`입니다. |
 | **Relay 내부 ID** | `ses_`로 시작하는 Relay 저장소 식별자입니다. 웹 API와 부모·자식 연결에만 쓰며, CLI 조회에 넣으면 올바른 `relay show` 명령을 안내합니다. JSON 필드는 `id`입니다. |
-| **provider / agent** | 회사 식별자와 도구 식별자입니다. `openai`/`codex`, `anthropic`/`claude-code`, `xai`/`grok`, `cursor`/`cursor-agent`. |
-| **출처 별칭** | `codex`, `claude`, `grok`, `cursor`. 조회할 **이전 작업의 출처**를 한 단어로 가리키며, 현재 Agent를 바꾸는 옵션이 아닙니다. |
+| **provider / agent** | 회사 식별자와 도구 식별자입니다. `openai`/`codex`, `anthropic`/`claude-code`, `xai`/`grok`, `cursor`/`cursor-agent`, `google`/`antigravity`. |
+| **출처 별칭** | `codex`, `claude`, `grok`, `cursor`, `gemini`. 조회할 **이전 작업의 출처**를 한 단어로 가리키며, 현재 Agent를 바꾸는 옵션이 아닙니다. |
 | **훅 자동 기록** | 시작 훅이 만든 첫 기록입니다. 세션 이름은 작업 폴더명, 요약은 `세션 첫 기록 (훅 자동 기록)`이며 실제 단서는 Agent가 `update`로 채웁니다. |
 | **세션 연결** | `continue`가 남기는 부모·자식 관계입니다. 이전 세션이 부모, 이어받은 세션이 자식입니다. |
 | **종료 기록** | 종료 훅이 남기는 `endedAt`과 `endReason`입니다. 없으면 `진행 중`으로 표시되지만, 강제 종료된 세션도 훅이 돌지 않아 `진행 중`으로 남을 수 있습니다. 브라우저는 종료 기록 없이 6시간 넘게 갱신이 없으면 `응답 없음`으로 표시합니다. |
@@ -375,7 +375,7 @@ CLI 설치 또는 `relay install-hooks`로 스킬·세션 훅·시작 안내를 
 
 ### 스킬 설치
 
-[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를, [skills/relay-memo](skills/relay-memo/SKILL.md)는 메모 앱에서 복사한 ID로 메모를 읽고 메모 API로 쓰는 방법을 담은 스킬입니다. `relay install-skills`가 두 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
+[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를, [skills/relay-memo](skills/relay-memo/SKILL.md)는 메모 앱에서 복사한 ID로 메모를 읽고 메모 API로 쓰는 방법을 담은 스킬입니다. `relay install-skills`가 두 스킬을 네 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
 
 ```powershell
 relay install-skills
@@ -387,6 +387,7 @@ relay install-skills --force
 | Claude Code | `~/.claude/skills/relay-session`, `~/.claude/skills/relay-memo` | `argument-hint` 포함 |
 | Grok | `$GROK_HOME/skills/<스킬>` (기본 `~/.grok/skills/<스킬>`) | `argument-hint` 포함 |
 | Codex | `~/.codex/skills/<스킬>` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `agents/openai.yaml` 포함. `relay-memo`는 Codex가 스스로 불러 쓸 수 있음 |
+| Antigravity (Gemini) | `~/.gemini/skills/relay-session`, `~/.gemini/skills/relay-memo` | `argument-hint` 포함 |
 | Cursor | 별도 사본 없음 | Cursor가 `~/.claude/skills`와 `~/.codex/skills`를 함께 읽으므로 위 사본을 그대로 씁니다 |
 
 스킬 폴더는 심볼릭 링크나 정션으로 연결하지 않습니다. 링크는 가리키던 폴더가 옮겨지거나 지워지면 끊어지고, 그러면 Agent가 "심볼릭 링크 문제로 스킬을 못 쓴다"고 보고합니다. `install-skills`는 설치 위치에 링크가 있으면 링크 항목만 지우고 실제 사본으로 바꾸며, 링크가 가리키던 폴더는 건드리지 않습니다. 기존 사본의 내용이 다르면 덮어쓰지 않고 `건너뜀`으로 알리므로 확인한 뒤 `--force`로 교체합니다. Claude Code는 `~/.agents/skills`를 읽지 않으므로 그 폴더에 복사하거나 연결하는 방식은 쓰지 않습니다.
@@ -397,9 +398,10 @@ relay install-skills --force
 .\scripts\install-skill.ps1 -Agent codex -ProjectDirectory "C:\workspace\my-project"
 .\scripts\install-skill.ps1 -Agent claude -ProjectDirectory "C:\workspace\my-project"
 .\scripts\install-skill.ps1 -Agent grok -ProjectDirectory "C:\workspace\my-project"
+.\scripts\install-skill.ps1 -Agent gemini -ProjectDirectory "C:\workspace\my-project"
 ```
 
-각각 `.agents/skills/`, `.claude/skills/`, `.grok/skills/` 아래 `relay-session`과 `relay-memo`로 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code와 Grok에서는 `/relay-session grok`으로 Grok 기록을 조회하고, `$relay-memo <메모 ID>`·`/relay-memo <메모 ID>`로 메모를 읽힐 수 있습니다.
+각각 `.agents/skills/`, `.claude/skills/`, `.grok/skills/`, `.gemini/skills/` 아래 `relay-session`과 `relay-memo`로 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code·Grok·Antigravity에서는 `/relay-session grok`으로 Grok 기록을 조회하고, `$relay-memo <메모 ID>`·`/relay-memo <메모 ID>`로 메모를 읽힐 수 있습니다.
 
 ### 프로젝트 지침
 
@@ -415,7 +417,7 @@ update를 한 번도 남기지 않은 세션 기록은 종료 시 삭제되므�
 relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 계속한다.
 ```
 
-세션 ID는 각 도구가 환경변수로 제공합니다. Agent는 이 값을 그대로 쓰고 임의로 만들지 않습니다.
+세션 ID는 각 도구가 환경변수나 대화 맥락으로 제공합니다. Agent는 이 값을 그대로 쓰고 임의로 만들지 않습니다.
 
 | 도구 | 환경변수 | `--provider` / `--agent` |
 | --- | --- | --- |
@@ -423,10 +425,11 @@ relay가 없거나 기록에 실패하면 한 줄로 알리고 원래 작업을 
 | Codex | `CODEX_THREAD_ID` | `openai` / `codex` |
 | Grok | `GROK_SESSION_ID` | `xai` / `grok` |
 | Cursor | 없음. `sessionStart` 훅이 맥락에 넣어 주는 `sessionId`(`conversation_id`) 사용 | `cursor` / `cursor-agent` |
+| Antigravity (Gemini) | `ANTIGRAVITY_CONVERSATION_ID` (또는 대화 시작 맥락의 `Conversation ID`) | `google` / `antigravity` |
 
 ### 시작·종료 훅
 
-`relay install-hooks`가 네 도구의 SessionStart·SessionEnd·PreCompact 훅과 Claude Code의 PostModelSwitch 훅, 시작 안내와 `relay-session` 스킬을 함께 설치합니다. `install-cli.ps1`도 이 명령을 호출하므로 CLI 설치 때 자동으로 적용됩니다. `relay.exe`를 실행할 때마다 빠진 훅과 Grok 시작 안내를 다시 채웁니다. 기존의 다른 훅은 유지하고, Relay 항목이 이미 있으면 실행 파일 경로와 제한 시간만 맞춥니다.
+`relay install-hooks`가 Claude Code·Codex·Grok·Cursor 네 도구의 SessionStart·SessionEnd·PreCompact 훅과 Claude Code의 PostModelSwitch 훅, 시작 안내와 `relay-session` 스킬을 함께 설치합니다. Antigravity는 CLI 훅(`~/.gemini/settings.json`)을 사용하지 않으므로 훅을 등록하지 않고 스킬만 설치합니다. `install-cli.ps1`도 이 명령을 호출하므로 CLI 설치 때 자동으로 적용됩니다. `relay.exe`를 실행할 때마다 빠진 훅과 Grok 시작 안내를 다시 채웁니다. 기존의 다른 훅은 유지하고, Relay 항목이 이미 있으면 실행 파일 경로와 제한 시간만 맞춥니다.
 
 | 도구 | 훅 위치 | 시작 명령 | 종료 명령 | 압축 명령 |
 | --- | --- | --- | --- | --- |
@@ -470,7 +473,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 
 | 명령 | 용도 |
 | --- | --- |
-| `relay --codex` / `--claude` / `--grok` / `--cursor` | 해당 출처의 최근 세션 한 건을 상세로 열고 조회 명령 복사 |
+| `relay --codex` / `--claude` / `--grok` / `--cursor` / `--gemini` | 해당 출처의 최근 세션 한 건을 상세로 열고 조회 명령 복사 |
 | `relay latest <별칭> [--cwd <경로>]` | 출처의 최근 갱신 기록 한 건 |
 | `relay list [--query <텍스트>] [--provider] [--agent] [--cwd] [--status] [--pinned]` | 세션 목록과 부분 검색, 작업 상태·고정 필터 |
 | `relay show <Agent Session ID> [--provider] [--history]` | 세션 상세와 요약 이력 |
@@ -487,7 +490,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay notes export <파일>` / `relay notes import <파일>` | 모든 메모·폴더를 JSON 파일로 내보내기, 내보낸 파일을 합치기(없는 항목은 넣고 같은 항목은 더 최근 쪽을 남김, 지우지 않음). 다른 PC·저장소로 메모를 옮길 때 |
 | `relay version` | 실행 파일의 버전·커밋·빌드 시각. `--json`이면 `{ version, revision, builtAt }`(소스 실행은 `null`) |
 | `relay install-hooks [--bin-dir <경로>]` | SessionStart·SessionEnd 훅·시작 안내 등록 및 스킬 설치 |
-| `relay install-skills [--force]` | `relay-session`·`relay-memo` 스킬을 세 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
+| `relay install-skills [--force]` | `relay-session`·`relay-memo` 스킬을 네 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
 | `relay web [--open] [--port <번호>] [--headless] [--close] [--reload] [--free-port]` | 업무 화면의 로컬 서버 실행, 백그라운드 실행, 종료, 다시 시작, 예약된 포트 풀기 |
 | `relay open-url <relay://web?port=번호>` | 브라우저가 연 `relay://` 링크 처리(설치 스크립트가 Windows에 등록). 그 포트에 백그라운드 서버를 켬 |
 
@@ -501,6 +504,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `claude` | `anthropic` | `claude-code` |
 | `grok` | `xai` | `grok` |
 | `cursor` | `cursor` | `cursor-agent` |
+| `gemini` | `google` | `antigravity` |
 
 "최근"의 기준은 Relay의 마지막 갱신 시각 `updatedAt`입니다. `latest`와 단축 조회는 기본적으로 모든 프로젝트를 대상으로 하며, `--cwd`를 주면 정확히 일치하는 경로의 기록만 찾습니다. 범위에 기록이 없으면 `SESSION_NOT_FOUND`를 반환하고 다른 프로젝트나 제공자로 자동 전환하지 않습니다. 같은 Agent Session ID가 여러 제공자에 있으면 `--provider`를 지정합니다.
 

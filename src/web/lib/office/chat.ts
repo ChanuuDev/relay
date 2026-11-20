@@ -231,7 +231,7 @@ export const SCRIPTS: Record<ChatPlace, Record<ChatKind, readonly Script[]>> = {
 };
 
 /** 화면에 띄우는 에이전트 이름 */
-const NAMES: Record<string, string> = { "claude-code": "Claude", codex: "Codex", grok: "Grok", "cursor-agent": "Cursor" };
+const NAMES: Record<string, string> = { "claude-code": "Claude", codex: "Codex", grok: "Grok", "cursor-agent": "Cursor", antigravity: "Antigravity" };
 export const agentName = (agent: string) => NAMES[agent] ?? agent;
 /** 대사에 넣는 세션 이름. 이름이 없으면 빈 글자라 @named 대본을 고르지 않는다. */
 export const taskName = (sessionName: string | null) => (sessionName ? clip(sessionName, 10) : "");

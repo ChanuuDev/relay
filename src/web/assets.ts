@@ -45,6 +45,7 @@ import iconOpenAI from "./public/icons/providers/openai.png" with { type: "file"
 import iconAnthropic from "./public/icons/providers/anthropic.png" with { type: "file" };
 import iconXAI from "./public/icons/providers/xai.png" with { type: "file" };
 import iconCursor from "./public/icons/providers/cursor.png" with { type: "file" };
+import iconGoogle from "./public/icons/providers/google.png" with { type: "file" };
 import pretendard from "./public/fonts/PretendardVariable.woff2" with { type: "file" };
 import monoLatin from "./public/fonts/JetBrainsMono-latin.woff2" with { type: "file" };
 import monoLatinItalic from "./public/fonts/JetBrainsMono-latin-italic.woff2" with { type: "file" };
@@ -114,6 +115,7 @@ export const assets = new Map<string, Asset>([
   ["/icons/providers/anthropic.png", image(iconAnthropic, "image/png")],
   ["/icons/providers/xai.png", image(iconXAI, "image/png")],
   ["/icons/providers/cursor.png", image(iconCursor, "image/png")],
+  ["/icons/providers/google.png", image(iconGoogle, "image/png")],
   ["/fonts/PretendardVariable.woff2", { file: pretendard, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],
   // 코드 글꼴(JetBrains Mono, 가변 굵기). 라틴·라틴 확장, 정체·이탤릭.
   ["/fonts/JetBrainsMono-latin.woff2", { file: monoLatin, type: "font/woff2", cache: "public, max-age=31536000, immutable" }],

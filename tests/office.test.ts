@@ -577,6 +577,7 @@ describe("office chat scripts", () => {
     expect(resolveLines(named, context())[0]!.text).toBe("‘agent-ses…’ 끝났어요?");
     expect(agentName("claude-code")).toBe("Claude");
     expect(agentName("cursor-agent")).toBe("Cursor");
+    expect(agentName("antigravity")).toBe("Antigravity");
     expect(taskName(null)).toBe("");
     expect(taskName("사무실 대기·완료 캐릭터 대화 패턴")).toBe("사무실 대기·완료…");
   });

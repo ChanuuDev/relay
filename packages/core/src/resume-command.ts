@@ -8,6 +8,7 @@ const RESUME: Record<string, (id: string) => string> = {
   grok: id => `grok --resume ${id}`,
   // Cursor's CLI is `agent`; the chat id is the conversation id the session hook recorded.
   "cursor-agent": id => `agent --resume ${id}`,
+  // Antigravity runs as an IDE/ACP host without a CLI --resume command.
 };
 
 /** The command that reopens the original conversation in its own tool, quoted for the shell it will run in. */
@@ -45,6 +46,8 @@ export function transcriptGuide(session: Pick<Session, "agent" | "providerSessio
     case "codex": return guide("Codex", `~/.codex/sessions/<년>/<월>/<일>/rollout-*-${id}.jsonl`, { skill: "resume-codex", note: "CODEX_HOME을 쓰면 그 아래 sessions" });
     case "grok": return guide("Grok", `~/.grok/sessions/<인코딩한 작업 경로>/${id}/chat_history.jsonl`, { note: "GROK_HOME을 쓰면 그 아래 sessions" });
     case "cursor-agent": return guide("Cursor", `~/.cursor/chats/<작업 경로 해시>/${id}/`, { skill: "resume-cursor" });
+    case "antigravity": return guide("Antigravity", `~/.gemini/antigravity/brain/${id}/.system_generated/logs/transcript.jsonl`,
+      { note: `Orca에서는 %APPDATA%/orca/antigravity-chat/antigravity-acp/brain/${id}/.system_generated/logs/transcript.jsonl` });
     default: return null;
   }
 }

@@ -24,6 +24,7 @@ const PROVIDER_ICONS = new Map([
   ["anthropic", "/icons/providers/anthropic.png"],
   ["xai", "/icons/providers/xai.png"],
   ["cursor", "/icons/providers/cursor.png"],
+  ["google", "/icons/providers/google.png"],
 ]);
 
 function ProviderAvatar({ provider, agent }: Pick<Session, "provider" | "agent">) {

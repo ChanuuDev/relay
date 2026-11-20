@@ -11,6 +11,7 @@ import v5Schema from "../src/db/migrations/005_init.sql" with { type: "text" };
 import v6Schema from "../src/db/migrations/006_init.sql" with { type: "text" };
 import v7Schema from "../src/db/migrations/007_init.sql" with { type: "text" };
 import v9Schema from "../src/db/migrations/009_init.sql" with { type: "text" };
+import v10Schema from "../src/db/migrations/010_init.sql" with { type: "text" };
 import { CalculatorStore } from "../src/calculator/calculator.store";
 import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
@@ -154,6 +155,31 @@ describe("Database record migration", () => {
     } finally { db.close(); }
   });
 
+  test("v9 databases gain google as a Task provider in place and keep existing tasks", () => {
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v9Schema);
+    db.exec("PRAGMA user_version = 9");
+    db.query("INSERT INTO tasks (id, title, project, memo, provider, status, board, position, notes_json, created_at, updated_at, completed_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("t1", "기존 작업", "relay", "", "anthropic", "todo", 0, null, "[]", 1, 1, null, 1);
+    const before = db.query("SELECT * FROM tasks").all();
+    db.close();
+    const fresh = new Database(":memory:");
+    fresh.exec(v10Schema);
+    const schemaOf = (target: Database) => (target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string | null }[])
+      .map(row => ({ ...row, sql: row.sql?.replace(/^CREATE TABLE "([^"]+)"/, "CREATE TABLE $1") ?? null }));
+    const writer = openDatabase(loadConfig(dir));
+    try {
+      expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(writer.query("SELECT * FROM tasks").all()).toEqual(before);
+      expect(schemaOf(writer)).toEqual(schemaOf(fresh));
+      writer.query("INSERT INTO tasks (id, title, project, memo, provider, status, board, position, notes_json, created_at, updated_at, completed_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("t2", "제미나이 작업", "relay", "", "google", "todo", 0, null, "[]", 2, 2, null, 2);
+      expect(() => writer.query("INSERT INTO tasks (id, title, project, memo, provider, status, board, position, notes_json, created_at, updated_at, completed_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("t3", "잘못된 작업", "relay", "", "unknown", "todo", 0, null, "[]", 3, 3, null, 3)).toThrow();
+      expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { writer.close(); fresh.close(); }
+  });
+
   test("v7 databases gain the note pictures table in place, keep their notes and match a fresh schema", () => {
     const db = new Database(path.join(dir, "relay.db"));
     db.exec(v7Schema);
@@ -162,8 +188,9 @@ describe("Database record migration", () => {
     const before = db.query("SELECT * FROM notes").all();
     db.close();
     const fresh = new Database(":memory:");
-    fresh.exec(v9Schema);
-    const schemaOf = (target: Database) => target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all();
+    fresh.exec(v10Schema);
+    const schemaOf = (target: Database) => (target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string | null }[])
+      .map(row => ({ ...row, sql: row.sql?.replace(/^CREATE TABLE "([^"]+)"/, "CREATE TABLE $1") ?? null }));
     const writer = openDatabase(loadConfig(dir));
     try {
       expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });

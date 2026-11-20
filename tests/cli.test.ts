@@ -376,6 +376,19 @@ describe("CLI processes", () => {
     expect(handoff).toContain("agent --resume 'chat-1'");
   });
 
+  test("Antigravity (gemini alias) records google/antigravity sessions, resolves shortcuts, and uses ANTIGRAVITY_CONVERSATION_ID in hooks", () => {
+    expect(cli(dir, ["record", "--provider", "google", "--agent", "antigravity", "--session-id", "ag-1", "--session-name", "Gemini 작업", "--summary", "첫 기록", "--cwd", root]).code).toBe(0);
+    expect(cli(dir, ["latest", "gemini"]).data.session).toMatchObject({ provider: "google", agent: "antigravity", providerSessionId: "ag-1" });
+    expect(cli(dir, ["--gemini"]).data.session.agent).toBe("antigravity");
+    const handoff = cli(dir, ["handoff", "ag-1", "--provider", "google", "--shell", "bash"]).data.markdown as string;
+    expect(handoff).toContain("- Agent: google / antigravity");
+    expect(handoff).not.toContain("원본 세션 재개");
+    const hookResult = Bun.spawnSync([process.execPath, path.join(root, "src/index.ts"), "hook", "gemini", "--data-dir", dir],
+      { cwd: root, env: { ...process.env, ANTIGRAVITY_CONVERSATION_ID: "ag-env-1", CLAUDE_CODE_SESSION_ID: "other" }, stdin: Buffer.from(JSON.stringify({ cwd: root })), stdout: "pipe", stderr: "pipe" });
+    expect(hookResult.exitCode).toBe(0);
+    expect(cli(dir, ["show", "ag-env-1", "--provider", "google"]).data.session).toMatchObject({ provider: "google", agent: "antigravity" });
+  });
+
   test("session end hook closes a session with context, removes an untouched automatic record, and stays silent otherwise", () => {
     const hook = (payload: string, alias = "claude", ...flags: string[]) => {
       const env: Record<string, string | undefined> = {

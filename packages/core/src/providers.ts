@@ -9,6 +9,7 @@ export const PROVIDERS = {
   claude: { provider: "anthropic", agent: "claude-code" },
   grok: { provider: "xai", agent: "grok" },
   cursor: { provider: "cursor", agent: "cursor-agent" },
+  gemini: { provider: "google", agent: "antigravity" },
 } as const;
 export type ProviderAlias = keyof typeof PROVIDERS;
 export const ALIASES = Object.keys(PROVIDERS) as ProviderAlias[];

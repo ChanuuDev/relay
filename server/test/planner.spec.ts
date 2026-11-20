@@ -55,21 +55,22 @@ describe("원격 일정 관리 API", () => {
   test("Task: 저장·ETag 304·필터·삭제, 완료 시각은 상태를 따른다", async () => {
     const empty = await t.get("/api/v1/tasks").expect(200);
     expect(empty.body).toEqual({ schemaVersion: 1, revision: 0, items: [] });
-    const saved = (await t.post("/api/v1/tasks", { upserts: [task("a", { notes: ["memo-1", "memo-1"] }), task("b", { provider: null, status: "done" })], deletes: [] }).expect(200)).body;
+    const saved = (await t.post("/api/v1/tasks", { upserts: [task("a", { notes: ["memo-1", "memo-1"] }), task("b", { provider: null, status: "done" }), task("g", { provider: "google" })], deletes: [] }).expect(200)).body;
     expect(saved.revision).toBe(1);
     const list = await t.get("/api/v1/tasks").expect(200);
     expect(list.headers.etag).toBe('"1"');
-    expect(list.body.items.map((item: { id: string }) => item.id)).toEqual(["a", "b"]);
+    expect(list.body.items.map((item: { id: string }) => item.id)).toEqual(["a", "b", "g"]);
     expect(list.body.items[0].notes).toEqual(["memo-1"]);
     expect(list.body.items[1].completedAt).toBe(1000);
     await t.get("/api/v1/tasks").set("If-None-Match", '"1"').expect(304);
     expect((await t.get("/api/v1/tasks?provider=none").expect(200)).body.items.map((item: { id: string }) => item.id)).toEqual(["b"]);
+    expect((await t.get("/api/v1/tasks?provider=google").expect(200)).body.items.map((item: { id: string }) => item.id)).toEqual(["g"]);
     expect((await t.get("/api/v1/tasks?status=todo,doing&provider=anthropic").expect(200)).body.items.map((item: { id: string }) => item.id)).toEqual(["a"]);
     expect((await t.get("/api/v1/tasks?bogus=1")).body.error.code).toBe("INVALID_ARGUMENT");
     expect((await t.post("/api/v1/tasks", { upserts: [task("c", { provider: "someone" })] })).body.error.code).toBe("INVALID_ARGUMENT");
     expect((await t.post("/api/v1/tasks", { upserts: [task("c", { status: "later" })] })).body.error.code).toBe("INVALID_ARGUMENT");
     await t.post("/api/v1/tasks", { upserts: [], deletes: ["a"] }).expect(200);
-    expect((await t.get("/api/v1/tasks").expect(200)).body.items.map((item: { id: string }) => item.id)).toEqual(["b"]);
+    expect((await t.get("/api/v1/tasks").expect(200)).body.items.map((item: { id: string }) => item.id)).toEqual(["b", "g"]);
   });
 
   test("업무 보드: 인벤토리에서 칸으로 놓기, 사이에 끼우기, 내리기, 완료 비우기", async () => {

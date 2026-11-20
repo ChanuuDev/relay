@@ -29,6 +29,13 @@
       "when": 1794355200000,
       "tag": "0003_holiday_years",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795147104431,
+      "tag": "0004_tasks_provider_google",
+      "breakpoints": true
     }
   ]
 }

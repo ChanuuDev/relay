@@ -7,7 +7,7 @@ import sessionOpenai from "../../skills/relay-session/agents/openai.yaml" with {
 import memoSource from "../../skills/relay-memo/SKILL.md" with { type: "text" };
 import memoOpenai from "../../skills/relay-memo/agents/openai.yaml" with { type: "text" };
 
-export type SkillHost = "claude" | "grok" | "codex";
+export type SkillHost = "claude" | "grok" | "codex" | "gemini";
 /** 세션 기록(relay-session)과 메모 읽기·쓰기(relay-memo). 둘 다 같은 규칙으로 설치한다. */
 export const SKILL_NAMES = ["relay-session", "relay-memo"] as const;
 export type SkillName = typeof SKILL_NAMES[number];
@@ -32,12 +32,13 @@ export interface SkillInstallOptions {
   /** Codex home directories to install in; by default `$CODEX_HOME` when set, and `~/.codex`. */
   codexHomes?: string[];
   grokHome?: string;
+  geminiHome?: string;
   /** Replace an existing copy whose content differs; without it the host is reported as skipped. */
   force?: boolean;
 }
 
 /** The aliases a reader may pass to relay-session. Cursor reads the Claude and Codex copies, so it gets no copy of its own. */
-export const ARGUMENT_HINT = "argument-hint: codex|claude|grok|cursor";
+export const ARGUMENT_HINT = "argument-hint: codex|claude|grok|cursor|gemini";
 /** What a reader passes to relay-memo: the ID the notes app copied, or words to search for. ASCII so the PowerShell installer can write it as is. */
 export const MEMO_ARGUMENT_HINT = "argument-hint: <memo-id|folder-id|query>";
 
@@ -47,7 +48,7 @@ const SOURCES: Record<SkillName, { skill: string; openai: string; hint: string }
   "relay-memo": { skill: memoSource as unknown as string, openai: memoOpenai as unknown as string, hint: MEMO_ARGUMENT_HINT },
 };
 
-/** Claude Code and Grok read argument-hint from the frontmatter; Codex reads agents/openai.yaml instead. */
+/** Claude Code, Grok and Gemini read argument-hint from the frontmatter; Codex reads agents/openai.yaml instead. */
 export function skillFiles(host: SkillHost, skill: SkillName = SKILL_NAME): Record<string, string> {
   const source = SOURCES[skill];
   if (host === "codex") return { "SKILL.md": source.skill, "agents/openai.yaml": source.openai };
@@ -61,6 +62,7 @@ export function skillRoots(options: SkillInstallOptions = {}): { host: SkillHost
     { host: "claude", root: path.join(home, ".claude") },
     { host: "grok", root: grokHome(options, home) },
     ...codexHomes(options, home).map(root => ({ host: "codex" as const, root })),
+    { host: "gemini", root: options.geminiHome ?? path.join(home, ".gemini") },
   ];
 }
 

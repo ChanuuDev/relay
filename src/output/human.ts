@@ -4,7 +4,7 @@ import { resumeCommand } from "../web/lib/resume-command";
 import { clip, dim, localTime, pad, paint, shortTime, terminalWidth, width, wrap } from "./terminal";
 
 const GAP = 2;
-const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35", cursor: "97" };
+const PROVIDER_COLORS: Record<string, string> = { openai: "32", anthropic: "33", xai: "35", cursor: "97", google: "96" };
 const providerColor = (s: { provider: string }) => Object.hasOwn(PROVIDER_COLORS, s.provider) ? PROVIDER_COLORS[s.provider]! : "36";
 const STATUS_COLORS: Record<string, string> = { working: "36", blocked: "31", handoff: "33", done: "32" };
 const statusColor = (s: { status: Session["status"] }) => s.status ? STATUS_COLORS[s.status] ?? "" : "2";

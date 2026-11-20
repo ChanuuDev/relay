@@ -39,6 +39,7 @@ const program = new Command().name("relay").description("로컬 AI Agent 세션 
   .option("--claude", "최근 Claude 세션 조회 (latest claude)")
   .option("--grok", "최근 Grok 세션 조회 (latest grok)")
   .option("--cursor", "최근 Cursor 세션 조회 (latest cursor)")
+  .option("--gemini", "최근 Antigravity(Gemini) 세션 조회 (latest gemini)")
   .showSuggestionAfterError(false).exitOverride()
   .configureOutput({ writeErr: () => {} });
 
@@ -99,8 +100,8 @@ function inspect(service: SessionService, session: Session): unknown {
 }
 
 function creation(command: Command) {
-  return command.requiredOption("--provider <provider>", "제공자 회사 식별자: openai/anthropic/xai 등")
-    .requiredOption("--agent <agent>", "도구 식별자: codex/claude-code/grok 등")
+  return command.requiredOption("--provider <provider>", "제공자 회사 식별자: openai/anthropic/xai/cursor/google 등")
+    .requiredOption("--agent <agent>", "도구 식별자: codex/claude-code/grok/cursor-agent/antigravity 등")
     .requiredOption("--session-id <id>", "새 세션의 실제 Agent Session ID")
     .requiredOption("--summary <text>", "첫 기록 요약 (1~4000자)")
     .option("--session-name <name>", "세션 이름 (최대 200자)")
@@ -251,7 +252,7 @@ program.command("hook <agent>").description(`Agent 세션 훅의 JSON을 stdin�
       if (payload.agent_id || payload.subagentType || payload.subagent_type || !Object.hasOwn(PROVIDERS, alias)) return;
       const host = alias as ProviderAlias;
       const environmentId = { claude: process.env.CLAUDE_CODE_SESSION_ID, codex: process.env.CODEX_THREAD_ID,
-        grok: process.env.GROK_SESSION_ID, cursor: undefined }[host];
+        grok: process.env.GROK_SESSION_ID, cursor: undefined, gemini: process.env.ANTIGRAVITY_CONVERSATION_ID }[host];
       // Cursor names the chat by conversation_id; its session_id usually repeats it and its CLI resumes by that id.
       const sessionId = [...(host === "cursor" ? [payload.conversation_id] : []), payload.session_id, payload.sessionId, payload.thread_id, environmentId]
         .find((value): value is string => typeof value === "string" && value.trim().length > 0);
@@ -352,7 +353,7 @@ program.command("install-hooks").description("Claude/Grok/Codex 세션 훅·시�
     process.stdout.write(render(result).map(line => line.text).join("\n") + "\n");
   });
 
-program.command("install-skills").description("relay-session 스킬을 Claude/Grok/Codex 사용자 스킬 폴더에 실제 사본으로 설치 (링크는 사본으로 교체)")
+program.command("install-skills").description("relay-session 스킬을 Claude/Grok/Codex/Gemini(Antigravity) 사용자 스킬 폴더에 실제 사본으로 설치 (링크는 사본으로 교체)")
   .option("--force", "내용이 다른 기존 사본을 덮어씀")
   .action((o: { force?: boolean }, c: Command) => {
     const result = installSkills({ force: o.force });

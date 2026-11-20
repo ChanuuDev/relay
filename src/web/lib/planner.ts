@@ -257,7 +257,7 @@ export const taskLabel = (task: Pick<Task, "title">) => task.title.trim() || "�
 export const eventLabel = (event: Pick<CalendarEvent, "title">) => event.title.trim() || "새 일정";
 export const agentLabel = (provider: TaskProvider | null) => (provider ? TASK_AGENTS[provider].label : "지정 안 함");
 export const providerIcon = (provider: string) => `/icons/providers/${provider}.png`;
-export const PROVIDER_ORDER: TaskProvider[] = ["anthropic", "openai", "xai", "cursor"];
+export const PROVIDER_ORDER: TaskProvider[] = ["anthropic", "openai", "xai", "cursor", "google"];
 
 /** 메모 이름. 지워졌거나 아직 받지 못한 메모면 null이다. */
 export function noteTitle(id: string) {

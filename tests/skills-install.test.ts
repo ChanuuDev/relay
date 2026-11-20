@@ -19,28 +19,31 @@ function run(...args: string[]) {
     { cwd: root, env: { ...process.env, RELAY_USER_HOME: home(), CODEX_HOME: undefined }, stdout: "pipe", stderr: "pipe" });
 }
 
-test("install-skills writes a real copy for Claude, Grok and Codex and is idempotent", () => {
+test("install-skills writes a real copy for Claude, Grok, Codex and Gemini and is idempotent", () => {
   const first = install();
   expect(first.schemaVersion).toBe(1);
   expect(first.skills).toEqual(["relay-session", "relay-memo"]);
   // Skill by skill, so the relay-session rows come first as they always have.
   expect(first.targets.map(t => [t.skill, t.host, t.status])).toEqual([
-    ["relay-session", "claude", "added"], ["relay-session", "grok", "added"], ["relay-session", "codex", "added"],
-    ["relay-memo", "claude", "added"], ["relay-memo", "grok", "added"], ["relay-memo", "codex", "added"]]);
+    ["relay-session", "claude", "added"], ["relay-session", "grok", "added"], ["relay-session", "codex", "added"], ["relay-session", "gemini", "added"],
+    ["relay-memo", "claude", "added"], ["relay-memo", "grok", "added"], ["relay-memo", "codex", "added"], ["relay-memo", "gemini", "added"]]);
   const source = readFileSync(path.join(root, "skills/relay-session/SKILL.md"), "utf8");
   const claude = readFileSync(path.join(skillDir(".claude"), "SKILL.md"), "utf8");
-  expect(claude).toContain("argument-hint: codex|claude|grok|cursor");
-  expect(claude.replace("argument-hint: codex|claude|grok|cursor\n", "")).toBe(source);
+  expect(claude).toContain("argument-hint: codex|claude|grok|cursor|gemini");
+  expect(claude.replace("argument-hint: codex|claude|grok|cursor|gemini\n", "")).toBe(source);
   // The agent must be able to invoke the skill itself; /relay-session stays available either way.
   expect(claude).not.toContain("disable-model-invocation");
   expect(readFileSync(path.join(skillDir(".grok"), "SKILL.md"), "utf8")).toBe(claude);
+  expect(readFileSync(path.join(skillDir(".gemini"), "SKILL.md"), "utf8")).toBe(claude);
   expect(readFileSync(path.join(skillDir(".codex"), "SKILL.md"), "utf8")).toBe(source);
   expect(readFileSync(path.join(skillDir(".codex"), "agents/openai.yaml"), "utf8"))
     .toBe(readFileSync(path.join(root, "skills/relay-session/agents/openai.yaml"), "utf8"));
   // Only Codex needs the interface descriptor; the other hosts read the frontmatter.
   expect(existsSync(path.join(skillDir(".claude"), "agents"))).toBe(false);
   expect(existsSync(path.join(skillDir(".grok"), "agents"))).toBe(false);
+  expect(existsSync(path.join(skillDir(".gemini"), "agents"))).toBe(false);
   expect(lstatSync(skillDir(".claude")).isSymbolicLink()).toBe(false);
+  expect(lstatSync(skillDir(".gemini")).isSymbolicLink()).toBe(false);
   expect(install().targets.every(t => t.status === "unchanged")).toBe(true);
 });
 
@@ -51,6 +54,7 @@ test("install-skills also installs relay-memo, which tells an agent how to read 
   expect(claude).toBe(source.replace(/^---\n/, "---\nargument-hint: <memo-id|folder-id|query>\n"));
   expect(claude).toBe(skillFiles("claude", "relay-memo")["SKILL.md"]);
   expect(readFileSync(path.join(skillDir(".grok", "relay-memo"), "SKILL.md"), "utf8")).toBe(claude);
+  expect(readFileSync(path.join(skillDir(".gemini", "relay-memo"), "SKILL.md"), "utf8")).toBe(claude);
   expect(readFileSync(path.join(skillDir(".codex", "relay-memo"), "SKILL.md"), "utf8")).toBe(source);
   // Codex may pick it up by itself when a pasted line names a Relay memo.
   expect(readFileSync(path.join(skillDir(".codex", "relay-memo"), "agents/openai.yaml"), "utf8")).toContain("allow_implicit_invocation: true");
@@ -163,8 +167,8 @@ test("CLI install-skills writes into RELAY_USER_HOME and reports JSON or a table
   const data = JSON.parse(json.stdout.toString()) as { schemaVersion: number; skills: string[]; targets: { skill: string; host: string; status: string }[] };
   expect(data.schemaVersion).toBe(1);
   expect(data.skills).toEqual(["relay-session", "relay-memo"]);
-  expect(data.targets.map(t => `${t.skill}:${t.host}`)).toEqual(["relay-session:claude", "relay-session:grok", "relay-session:codex",
-    "relay-memo:claude", "relay-memo:grok", "relay-memo:codex"]);
+  expect(data.targets.map(t => `${t.skill}:${t.host}`)).toEqual(["relay-session:claude", "relay-session:grok", "relay-session:codex", "relay-session:gemini",
+    "relay-memo:claude", "relay-memo:grok", "relay-memo:codex", "relay-memo:gemini"]);
   expect(data.targets.every(t => t.status === "added")).toBe(true);
   const table = run();
   expect(table.exitCode).toBe(0);

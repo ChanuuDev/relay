@@ -12,7 +12,7 @@ import { HOOK_SUMMARY } from "../src/session/session.service";
 import { PlannerStore } from "../src/planner/planner.store";
 import { cleanup, fixture, input, temporary } from "./helpers";
 import v8Schema from "../src/db/migrations/008_init.sql" with { type: "text" };
-import v9Schema from "../src/db/migrations/009_init.sql" with { type: "text" };
+import v10Schema from "../src/db/migrations/010_init.sql" with { type: "text" };
 
 const task = (id: string, extra: Partial<Task> = {}): Task => ({ id, title: id, project: "", memo: "", provider: null, status: "todo", board: false, position: null, notes: [],
   createdAt: 1, updatedAt: 1, completedAt: null, ...extra });
@@ -33,7 +33,8 @@ describe("일정 관리 공용 규칙", () => {
     expect(parsed).toEqual({ id: "a", title: "할 일", project: "", memo: "", provider: null, status: "done", board: false, position: null, notes: ["m1", "m2"],
       createdAt: 99, updatedAt: 50, completedAt: 50 });
     expect(parseTask({ id: "a", status: "doing", completedAt: 5 }, "t", 1).completedAt).toBeNull();
-    expect(() => parseTask({ id: "a", provider: "google" }, "t", 1)).toThrow("provider");
+    expect(parseTask({ id: "a", provider: "google" }, "t", 1).provider).toBe("google");
+    expect(() => parseTask({ id: "a", provider: "unknown" }, "t", 1)).toThrow("provider");
     expect(() => parseTask({ id: "a", title: "x".repeat(201) }, "t", 1)).toThrow("너무 깁니다");
     expect(() => parseTask({ id: "bad id" }, "t", 1)).toThrow("올바르지 않습니다");
   });
@@ -240,13 +241,14 @@ describe("일정 관리 로컬 저장소와 HTTP API", () => {
 
   test("Task·일정 저장, ETag 304, 필터, 같은 출처만 쓰기", async () => {
     expect(await (await send("/api/v1/tasks")).json()).toEqual({ schemaVersion: 1, revision: 0, items: [] });
-    const saved = await post("/api/v1/tasks", { upserts: [task("a", { provider: "anthropic" }), task("b", { status: "done", project: "relay" })], deletes: [] });
+    const saved = await post("/api/v1/tasks", { upserts: [task("a", { provider: "anthropic" }), task("b", { status: "done", project: "relay" }), task("g", { provider: "google" })], deletes: [] });
     expect(await saved.json()).toEqual({ schemaVersion: 1, revision: 1 });
     const list = await send("/api/v1/tasks");
     expect(list.headers.get("etag")).toBe('"1"');
-    expect((await list.json()).items.map((item: Task) => item.id)).toEqual(["a", "b"]);
+    expect((await list.json()).items.map((item: Task) => item.id)).toEqual(["a", "b", "g"]);
     expect((await send("/api/v1/tasks", { headers: { "if-none-match": '"1"' } })).status).toBe(304);
     expect((await (await send("/api/v1/tasks?provider=anthropic")).json()).items.map((item: Task) => item.id)).toEqual(["a"]);
+    expect((await (await send("/api/v1/tasks?provider=google")).json()).items.map((item: Task) => item.id)).toEqual(["g"]);
     expect((await (await send("/api/v1/tasks?project=relay&status=done")).json()).items.map((item: Task) => item.id)).toEqual(["b"]);
     expect((await send("/api/v1/tasks?nope=1")).status).toBe(400);
     // 다른 출처나 Origin 없는 쓰기는 거부한다.
@@ -333,8 +335,9 @@ describe("스키마 v8 → v9", () => {
     db.query("INSERT INTO session_updates (id, session_id, sequence, summary, created_at) VALUES (?, ?, ?, ?, ?)").run("u2", "ses_old", 2, "작업", at);
     db.close();
     const fresh = new Database(":memory:");
-    fresh.exec(v9Schema);
-    const schemaOf = (target: Database) => target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all();
+    fresh.exec(v10Schema);
+    const schemaOf = (target: Database) => (target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string | null }[])
+      .map(row => ({ ...row, sql: row.sql?.replace(/^CREATE TABLE "([^"]+)"/, "CREATE TABLE $1") ?? null }));
     const writer = openDatabase(loadConfig(dir));
     try {
       expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });

@@ -9,13 +9,14 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = { todo: "할 일", doing: "진행 중", review: "검토", done: "완료" };
 
 /** 일을 지시할 에이전트. Relay의 Provider 하나가 에이전트 하나다(`relay record --provider`와 같은 값). */
-export const TASK_PROVIDERS = ["anthropic", "openai", "xai", "cursor"] as const;
+export const TASK_PROVIDERS = ["anthropic", "openai", "xai", "cursor", "google"] as const;
 export type TaskProvider = (typeof TASK_PROVIDERS)[number];
 export const TASK_AGENTS: Record<TaskProvider, { agent: string; label: string; company: string }> = {
   anthropic: { agent: "claude-code", label: "Claude Code", company: "Anthropic" },
   openai: { agent: "codex", label: "Codex", company: "OpenAI" },
   xai: { agent: "grok", label: "Grok", company: "xAI" },
   cursor: { agent: "cursor-agent", label: "Cursor", company: "Cursor" },
+  google: { agent: "antigravity", label: "Antigravity", company: "Google" },
 };
 
 /** 할 일 하나. board가 true면 업무 보드의 status 칸에 position 순서로 놓이고, false면(완료가 아니면) 인벤토리에 있다. */

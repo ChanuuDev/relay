@@ -147,7 +147,7 @@ export const tasks = pgTable("tasks", {
 }, (t) => [
   primaryKey({ columns: [t.userId, t.id] }),
   check("tasks_status_check", sql`${t.status} IN ('todo', 'doing', 'review', 'done')`),
-  check("tasks_provider_check", sql`${t.provider} IS NULL OR ${t.provider} IN ('anthropic', 'openai', 'xai', 'cursor')`),
+  check("tasks_provider_check", sql`${t.provider} IS NULL OR ${t.provider} IN ('anthropic', 'openai', 'xai', 'cursor', 'google')`),
 ]);
 
 /** 캘린더 일정. start·end는 종일이면 YYYY-MM-DD, 아니면 시간대 없는 YYYY-MM-DDTHH:MM이라 글자 순서가 시간 순서다. */

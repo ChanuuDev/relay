@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('codex', 'claude', 'grok')]
+    [ValidateSet('codex', 'claude', 'grok', 'gemini')]
     [string]$Agent,
     [Parameter(Mandatory = $true)]
     [string]$ProjectDirectory
@@ -10,11 +10,11 @@ $ErrorActionPreference = 'Stop'
 if (-not [IO.Path]::IsPathRooted($ProjectDirectory)) { throw 'ProjectDirectory must be absolute.' }
 $projectRoot = (Resolve-Path -LiteralPath $ProjectDirectory).Path
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { throw 'ProjectDirectory must be a directory.' }
-$agentFolder = switch ($Agent) { 'codex' { '.agents' } 'claude' { '.claude' } 'grok' { '.grok' } }
-# relay-session records the session; relay-memo reads and writes Relay notes. Claude Code and Grok read
+$agentFolder = switch ($Agent) { 'codex' { '.agents' } 'claude' { '.claude' } 'grok' { '.grok' } 'gemini' { '.gemini' } }
+# relay-session records the session; relay-memo reads and writes Relay notes. Claude Code, Grok and Gemini read
 # argument-hint from the frontmatter, Codex reads agents/openai.yaml instead.
 $skills = [ordered]@{
-    'relay-session' = 'argument-hint: codex|claude|grok|cursor'
+    'relay-session' = 'argument-hint: codex|claude|grok|cursor|gemini'
     'relay-memo' = 'argument-hint: <memo-id|folder-id|query>'
 }
 function Test-Link([string]$ItemPath) {

@@ -2,9 +2,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/009_init.sql" with { type: "text" };
+import schema from "./migrations/010_init.sql" with { type: "text" };
 
-export const DB_VERSION = 9;
+export const DB_VERSION = 10;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -194,9 +194,33 @@ END;
 `);
 }
 
+// v10 adds 'google' to the allowed Task providers.
+function migrateV9(db: Database) {
+  db.exec(`CREATE TABLE tasks_v10 (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  project TEXT NOT NULL DEFAULT '',
+  memo TEXT NOT NULL DEFAULT '',
+  provider TEXT CHECK(provider IS NULL OR provider IN ('anthropic', 'openai', 'xai', 'cursor', 'google')),
+  status TEXT NOT NULL CHECK(status IN ('todo', 'doing', 'review', 'done')),
+  board INTEGER NOT NULL DEFAULT 0 CHECK(board IN (0, 1)),
+  position REAL,
+  notes_json TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  revision INTEGER NOT NULL
+);
+INSERT INTO tasks_v10 (id, title, project, memo, provider, status, board, position, notes_json, created_at, updated_at, completed_at, revision)
+  SELECT id, title, project, memo, provider, status, board, position, notes_json, created_at, updated_at, completed_at, revision FROM tasks;
+DROP TABLE tasks;
+ALTER TABLE tasks_v10 RENAME TO tasks;
+`);
+}
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current < 0 || current > 8) {
+  if (current < 0 || current > 9) {
     checkVersion(db);
     return;
   }
@@ -219,6 +243,7 @@ function initializeOrMigrate(db: Database) {
       migrateV6(db);
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 2) {
       migrateV2(db);
@@ -228,6 +253,7 @@ function initializeOrMigrate(db: Database) {
       migrateV6(db);
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 3) {
       migrateV3(db);
@@ -236,6 +262,7 @@ function initializeOrMigrate(db: Database) {
       migrateV6(db);
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 4) {
       migrateV4(db);
@@ -243,24 +270,32 @@ function initializeOrMigrate(db: Database) {
       migrateV6(db);
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 5) {
       migrateV5(db);
       migrateV6(db);
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 6) {
       migrateV6(db);
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 7) {
       migrateV7(db);
       migrateV8(db);
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else if (observed === 8) {
       migrateV8(db);
+      migrateV9(db);
+      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
+    } else if (observed === 9) {
+      migrateV9(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);
