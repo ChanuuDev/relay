@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload, Waypoints, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -16,6 +16,9 @@ import { useNoteAlert } from "../../lib/note-images";
 import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 import { popoutApp } from "../../lib/popout";
 import { popOut } from "../../lib/popout-open";
+import { reduced } from "../../lib/motion";
+import { useNoteGraph } from "../../lib/note-graph-prefs";
+import { NotesGraph } from "./notes-graph";
 
 const DRAG_TYPE = "application/x-relay-note";
 const UNDO_MS = 8000;
@@ -56,6 +59,11 @@ export function NotesWindow() {
   const [menuLeaving, setMenuLeaving] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 지식 그래프는 내용 자리를 대신한다. 닫을 때는 잠깐 흐려지며 물러나고, 그 뒤 편집기·폴더 보기가 떠오른다(arrive).
+  const graphOpen = useNoteGraph((state) => state.open);
+  const [graphLeaving, setGraphLeaving] = useState(false);
+  const [arrive, setArrive] = useState(false);
+  const graphTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // 닫히는 메뉴의 종료 트윈이 끝나기 전에 새 메뉴를 열면, 늦게 오는 종료 알림은 무시한다.
   const leavingRef = useRef(false);
   const menuNext = useRef<{ focus: string | null | false; then?: Menu }>({ focus: null });
@@ -87,7 +95,30 @@ export function NotesWindow() {
     return () => clearTimeout(timer);
   }, [notice]);
 
+  useEffect(() => {
+    if (!arrive) return;
+    const timer = setTimeout(() => setArrive(false), 520);
+    return () => clearTimeout(timer);
+  }, [arrive]);
+  useEffect(() => () => clearTimeout(graphTimer.current), []);
+  /** 그래프를 닫는다. instant가 아니면 물러나는 움직임이 끝난 뒤 닫는다. */
+  function closeGraph(instant = false) {
+    clearTimeout(graphTimer.current);
+    if (!useNoteGraph.getState().open) return;
+    if (instant || reduced()) { useNoteGraph.getState().setOpen(false); setGraphLeaving(false); setArrive(!reduced()); return; }
+    setGraphLeaving(true);
+    graphTimer.current = setTimeout(() => { useNoteGraph.getState().setOpen(false); setGraphLeaving(false); setArrive(true); }, 230);
+  }
+  function toggleGraph() {
+    if (graphOpen && !graphLeaving) { closeGraph(); return; }
+    clearTimeout(graphTimer.current);
+    setGraphLeaving(false);
+    useNoteGraph.getState().setOpen(true);
+    setPane("content");
+  }
+
   function newNote(parentId = targetFolder(items, selected)) {
+    closeGraph(true);
     createNote(parentId);
     setQuery("");
     setPane("content");
@@ -251,6 +282,8 @@ export function NotesWindow() {
       <Button type="button" variant="ghost" size="icon-sm" aria-label="새 폴더" title="새 폴더" onClick={() => newFolder()}><FolderPlus aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="새 메모" title="새 메모" onClick={() => newNote()}><SquarePen aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="삭제" title="삭제" disabled={!current} onClick={() => removeItem(selected)}><Trash aria-hidden="true" /></Button>
+      <Button type="button" variant="ghost" size="icon-sm" id="notes-graph-toggle" className="notes-graph-toggle" aria-label="그래프 보기" aria-pressed={graphOpen && !graphLeaving}
+        title={graphOpen ? "그래프 닫기: 편집기로 돌아갑니다" : "그래프 보기: 메모 사이의 연결을 지식 그래프로 봅니다"} onClick={toggleGraph}><Waypoints aria-hidden="true" /></Button>
       <Button type="button" variant="ghost" size="icon-sm" id="notes-more" aria-label="내보내기·가져오기" title="내보내기·가져오기" aria-haspopup="menu"
         aria-expanded={menu?.kind === "tools" && !menuLeaving} onClick={(event) => {
           // 창 오른쪽 끝의 단추라 메뉴(최소 폭 200px)의 오른쪽 끝을 단추에 맞춰 창 안쪽으로 연다.
@@ -282,8 +315,11 @@ export function NotesWindow() {
         <div className="notes-footer"><span>메모 {counts.notes}개{counts.folders ? ` · 폴더 ${counts.folders}개` : ""}</span><span className="notes-sync" data-sync={status === "ready" ? sync : status}>{status === "loading" ? "불러오는 중…" : status === "error" ? "서버 연결 대기"
           : sync === "saving" ? "저장 중…" : sync === "offline" ? "저장 대기 · 다시 시도 중" : sync === "rejected" ? "저장 실패" : "Relay DB에 저장됨"}</span></div>
       </aside>} main={
-      <section className="notes-content" aria-label={current?.kind === "note" ? "메모 편집" : "폴더 내용"}>
-        {current?.kind === "note"
+      <section className="notes-content" aria-label={graphOpen ? "메모 그래프" : current?.kind === "note" ? "메모 편집" : "폴더 내용"} data-arrive={arrive ? "" : undefined}>
+        {graphOpen
+          ? <NotesGraph items={items} selected={selected} leaving={graphLeaving} onSelect={select} onBack={() => setPane("tree")}
+              onOpen={(id) => { closeGraph(true); open(id); setArrive(true); }} />
+          : current?.kind === "note"
           ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open}
               onCopyId={() => void copyReference(current.id)} onMenu={(left, top) => openMenu("item", current.id, left, top)} />
           : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")}

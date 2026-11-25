@@ -1235,6 +1235,232 @@ canvas.md-stl:active { cursor: grabbing; }
   .folder-sheet { padding: 8px 16px 24px; }
 }
 
+/* ── 메모 지식 그래프: 캔버스 위에 유리 막대·범례·카드를 띄운다 ─────────────── */
+.notes-tools .notes-graph-toggle[aria-pressed="true"] { background: color-mix(in srgb, var(--notes-accent) 17%, transparent); color: var(--notes-accent); }
+.notes-tools .notes-graph-toggle[aria-pressed="true"]:hover { background: color-mix(in srgb, var(--notes-accent) 25%, transparent); color: var(--notes-accent); }
+.notes-graph { --graph-base: #f6f7f9; --graph-glass: rgba(255, 255, 255, .72); --graph-glass-strong: rgba(255, 255, 255, .86); --graph-edge: rgba(0, 0, 0, .08);
+  --graph-shadow: 0 10px 30px -8px rgba(20, 24, 40, .18), 0 1px 2px rgba(20, 24, 40, .06); --graph-thumb: #ffffff;
+  position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; color: var(--foreground);
+  background: radial-gradient(70% 55% at 12% -5%, color-mix(in srgb, var(--notes-accent) 12%, transparent), transparent 72%),
+    radial-gradient(55% 45% at 102% 104%, rgba(139, 92, 246, .08), transparent 70%), var(--graph-base);
+  animation: graph-in .42s cubic-bezier(.2, .8, .2, 1) both; }
+.dark .notes-graph { --graph-base: #131315; --graph-glass: rgba(36, 36, 40, .66); --graph-glass-strong: rgba(44, 44, 48, .82); --graph-edge: rgba(255, 255, 255, .1);
+  --graph-shadow: 0 14px 34px -10px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .04) inset; --graph-thumb: rgba(255, 255, 255, .13);
+  background: radial-gradient(70% 55% at 12% -5%, color-mix(in srgb, var(--notes-accent) 13%, transparent), transparent 72%),
+    radial-gradient(55% 45% at 102% 104%, rgba(139, 92, 246, .13), transparent 70%), var(--graph-base); }
+.graph-stage { position: absolute; inset: 0; outline: none; cursor: grab; touch-action: none; }
+.notes-graph[data-hover] .graph-stage { cursor: pointer; }
+.notes-graph[data-dragging] .graph-stage { cursor: grabbing; }
+.graph-stage:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ring) 55%, transparent); }
+.graph-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.graph-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* 띄운 조각들은 같은 유리 재질을 쓴다. */
+.graph-views, .graph-search, .graph-filter-button, .graph-zoom, .graph-chip, .graph-stats, .graph-tip {
+  background: var(--graph-glass); border: .5px solid var(--graph-edge); box-shadow: var(--graph-shadow), var(--glass-highlight);
+  backdrop-filter: blur(22px) saturate(180%); -webkit-backdrop-filter: blur(22px) saturate(180%); }
+
+.graph-bar { position: absolute; z-index: 3; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; gap: 10px; pointer-events: none;
+  animation: graph-drop .5s .06s cubic-bezier(.2, .8, .2, 1) both; }
+.graph-bar > * { pointer-events: auto; }
+.graph-back { display: none; }
+.graph-bar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+.graph-views { position: relative; display: inline-flex; padding: 3px; border-radius: 999px; }
+.graph-views button { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px 0 10px; border-radius: 999px;
+  font-size: var(--fs-12); font-weight: 560; letter-spacing: -.01em; color: var(--glass-text-muted); white-space: nowrap; transition: color .2s ease-out; }
+.graph-views button:hover { color: var(--foreground); }
+.graph-views button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: -2px; }
+.graph-views button svg { width: 14px; height: 14px; flex-shrink: 0; transition: color .2s ease-out; }
+.graph-views button[aria-checked="true"] { color: var(--foreground); }
+.graph-views button[aria-checked="true"] svg { color: var(--notes-accent); animation: graph-icon-pop .5s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-views-thumb { position: absolute; top: 3px; bottom: 3px; left: 0; width: var(--thumb-w, 0); border-radius: 999px; background: var(--graph-thumb); opacity: 0;
+  transform: translateX(var(--thumb-x, 0)); box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px var(--graph-edge); }
+.graph-views[data-ready] .graph-views-thumb { opacity: 1; transition: transform .46s cubic-bezier(.32, 1.32, .5, 1), width .46s cubic-bezier(.32, 1.32, .5, 1), opacity .2s; }
+
+.graph-search { display: flex; align-items: center; gap: 6px; height: 34px; width: 188px; padding: 0 10px 0 11px; border-radius: 999px; cursor: text;
+  transition: width .32s cubic-bezier(.2, .8, .2, 1), background-color .2s; }
+.graph-search:focus-within, .graph-search[data-filled] { width: 248px; background: var(--graph-glass-strong); }
+.graph-search:focus-within { box-shadow: var(--graph-shadow), 0 0 0 3px color-mix(in srgb, var(--notes-accent) 22%, transparent); }
+.graph-search > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--glass-text-muted); }
+.graph-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: var(--fs-12); }
+.graph-search input::placeholder { color: var(--glass-text-muted); }
+.graph-search-count { min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; display: inline-grid; place-items: center; font-size: 10.5px; font-weight: 650;
+  font-variant-numeric: tabular-nums; color: var(--notes-accent); background: color-mix(in srgb, var(--notes-accent) 15%, transparent); animation: graph-icon-pop .35s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-search-clear { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--glass-text-muted); }
+.graph-search-clear:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.graph-search-clear svg { width: 12px; height: 12px; }
+
+.graph-filter-button[data-slot="button"] { position: relative; width: 34px; height: 34px; border-radius: 50%; color: var(--foreground); }
+.graph-filter-button[data-slot="button"]:hover { background: var(--graph-glass-strong); }
+.graph-filter-button svg { width: 15px; height: 15px; transition: transform .35s cubic-bezier(.34, 1.4, .64, 1); }
+.graph-filter-button[data-state="open"] svg { transform: rotate(90deg); }
+.graph-filter-button[data-changed]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--notes-accent); box-shadow: 0 0 0 2px var(--graph-base); }
+
+.graph-filters { z-index: 60; width: 296px; padding: 6px; border-radius: 16px; color: var(--popover-foreground); box-shadow: var(--glass-menu-shadow);
+  transform-origin: var(--radix-popover-content-transform-origin); animation: graph-pop .26s cubic-bezier(.2, .9, .3, 1.15); }
+.graph-filters section { padding: 4px 0 6px; }
+.graph-filters section + section { border-top: .5px solid var(--border); }
+.graph-filters h4 { margin: 6px 10px 4px; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; color: var(--glass-text-muted); }
+.graph-filters footer { display: flex; justify-content: flex-end; padding: 4px 4px 2px; border-top: .5px solid var(--border); }
+.graph-filters footer svg { width: 12px; height: 12px; }
+.graph-toggle { display: grid; grid-template-columns: 30px 1fr 32px; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 10px; text-align: left;
+  transition: background-color .15s ease-out; }
+.graph-toggle:not(:has(.graph-toggle-sample)) { grid-template-columns: 1fr 32px; }
+.graph-toggle:hover { background: var(--glass-control-fill); }
+.graph-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: -2px; }
+.graph-toggle-sample { display: grid; place-items: center; height: 18px; color: var(--foreground); transition: opacity .2s; }
+.graph-toggle-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.graph-toggle-text > span { font-size: 12.5px; font-weight: 560; }
+.graph-toggle-text > small { font-size: 11px; color: var(--glass-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-switch { position: relative; width: 32px; height: 19px; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 16%, transparent);
+  transition: background-color .25s ease-out; }
+.graph-switch > span { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  transition: transform .34s cubic-bezier(.34, 1.5, .55, 1); }
+.graph-toggle[aria-checked="true"] .graph-switch { background: var(--notes-accent); }
+.graph-toggle[aria-checked="true"] .graph-switch > span { transform: translateX(13px); }
+.graph-toggle[aria-checked="false"] .graph-toggle-sample { opacity: .35; }
+.graph-sample { width: 28px; height: 10px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.graph-sample[data-kind="mention"] { opacity: .55; }
+.graph-sample[data-kind="similar"] { color: var(--notes-accent); stroke-dasharray: 3 3; }
+.graph-sample[data-kind="folder"] { opacity: .45; }
+.graph-sample[data-kind="tag"] { stroke-dasharray: 1 3; opacity: .7; }
+.graph-sample-head { stroke-width: 1.4; }
+.graph-sample-folder { width: 11px; height: 11px; border-radius: 3.5px; border: 1.6px solid currentColor; background: color-mix(in srgb, currentColor 18%, transparent); }
+.graph-sample-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; opacity: .7; }
+.graph-sample-icon { width: 13px; height: 13px; }
+
+/* 아래: 묶음 색 범례와 개수. 고르면 그 묶음으로 날아가고, 올리면 그 묶음만 밝힌다. */
+.graph-legend { position: absolute; z-index: 2; left: 12px; right: 140px; bottom: 12px; display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 2px;
+  scrollbar-width: none; mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); pointer-events: none; }
+.graph-legend::-webkit-scrollbar { display: none; }
+.graph-legend > * { pointer-events: auto; flex-shrink: 0; animation: graph-rise .48s cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(140ms + var(--i, 0) * 35ms); }
+.graph-stats { height: 28px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 999px; font-size: var(--fs-11); font-weight: 600;
+  font-variant-numeric: tabular-nums; color: var(--glass-text-muted); }
+.graph-chip { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 10px; border-radius: 999px; font-size: var(--fs-11); font-weight: 560;
+  transition: transform .25s cubic-bezier(.34, 1.4, .64, 1), background-color .2s; }
+.graph-chip:hover, .graph-chip:focus-visible { transform: translateY(-2px); background: var(--graph-glass-strong); outline: none; }
+.graph-chip:focus-visible { box-shadow: var(--graph-shadow), 0 0 0 2px color-mix(in srgb, var(--ring) 60%, transparent); }
+.graph-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot) 22%, transparent); }
+.graph-chip[data-kind="folder"] .graph-chip-dot { border-radius: 2.5px; }
+.graph-chip[data-kind="tag"] .graph-chip-dot { border-radius: 1px; transform: rotate(45deg) scale(.9); }
+.graph-chip-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-chip-count { color: var(--glass-text-muted); font-variant-numeric: tabular-nums; }
+
+.graph-zoom { position: absolute; z-index: 2; right: 12px; bottom: 14px; display: inline-flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px;
+  animation: graph-rise .48s .2s cubic-bezier(.2, .8, .2, 1) both; }
+.graph-zoom [data-slot="button"] { width: 30px; height: 30px; border-radius: 50%; color: var(--foreground); }
+.graph-zoom [data-slot="button"]:hover { background: var(--glass-control-hover); }
+.graph-zoom [data-slot="button"]:active svg { transform: scale(.82); }
+.graph-zoom svg { width: 15px; height: 15px; transition: transform .2s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-zoom-sep { width: .5px; height: 16px; margin: 0 2px; background: var(--graph-edge); }
+
+/* 마우스를 올린 점 위의 이름표. */
+.graph-tip { position: absolute; z-index: 4; left: var(--tip-x, -999px); top: var(--tip-y, -999px); display: inline-flex; align-items: center; gap: 7px; max-width: 260px;
+  padding: 5px 10px 5px 9px; border-radius: 10px; pointer-events: none; font-size: var(--fs-12); white-space: nowrap; transform: translate(-50%, -100%);
+  animation: graph-tip .2s cubic-bezier(.2, .9, .3, 1.2) both; }
+.graph-tip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--dot); }
+.graph-tip-dot[data-kind="folder"] { border-radius: 2.5px; }
+.graph-tip-dot[data-kind="tag"] { border-radius: 1px; transform: rotate(45deg) scale(.9); }
+.graph-tip-label { font-weight: 620; overflow: hidden; text-overflow: ellipsis; }
+.graph-tip-meta { color: var(--glass-text-muted); font-size: var(--fs-11); }
+
+/* 고른 점의 카드: 오른쪽에서 미끄러져 들어오고, 안의 내용은 차례로 떠오른다. */
+.graph-card { position: absolute; z-index: 3; top: 60px; right: 12px; width: 282px; max-height: calc(100% - 128px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 12px 14px 12px; border-radius: 18px; border: .5px solid var(--graph-edge); box-shadow: var(--glass-menu-shadow), var(--glass-highlight);
+  scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .35) transparent; animation: graph-card-in .44s cubic-bezier(.2, .9, .25, 1.1) both; }
+.graph-card > * { animation: graph-rise .42s cubic-bezier(.2, .8, .2, 1) both; }
+.graph-card > :nth-child(2) { animation-delay: 40ms; } .graph-card > :nth-child(3) { animation-delay: 70ms; } .graph-card > :nth-child(4) { animation-delay: 100ms; }
+.graph-card > :nth-child(5) { animation-delay: 130ms; } .graph-card > :nth-child(6) { animation-delay: 160ms; } .graph-card > :nth-child(7) { animation-delay: 190ms; }
+.graph-card header { display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
+.graph-card header [data-slot="button"] { margin-right: -6px; color: var(--glass-text-muted); }
+.graph-card header [data-slot="button"] svg { width: 13px; height: 13px; }
+.graph-card-kind { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px 2px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 650; letter-spacing: .02em;
+  color: var(--dot); background: color-mix(in srgb, var(--dot) 15%, transparent); }
+.graph-card-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--dot); }
+.graph-card-kind[data-kind="folder"] .graph-card-dot, .graph-card-dot[data-kind="folder"] { border-radius: 2.5px; }
+.graph-card-kind[data-kind="tag"] .graph-card-dot, .graph-card-dot[data-kind="tag"] { border-radius: 1px; transform: rotate(45deg) scale(.88); }
+.graph-card-title { margin: 10px 0 2px; font-size: calc(17px * var(--font-scale)); line-height: 1.3; font-weight: 700; letter-spacing: -.015em; overflow-wrap: anywhere; }
+.graph-card-meta { margin: 0; font-size: var(--fs-11); line-height: var(--lh-16); color: var(--glass-text-muted); }
+.graph-card-preview { margin: 10px 0 0; font-size: var(--fs-12); line-height: 1.6; color: color-mix(in srgb, var(--foreground) 80%, transparent);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.graph-card-words { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 10px 0 0; padding: 0; }
+.graph-card-words li { padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 560; color: color-mix(in srgb, var(--foreground) 78%, transparent);
+  background: color-mix(in srgb, var(--foreground) 7%, transparent); }
+.graph-card-actions { display: flex; gap: 6px; margin-top: 12px; }
+.graph-card-actions [data-slot="button"] svg { width: 13px; height: 13px; }
+.graph-card-links { margin-top: 12px; padding-top: 10px; border-top: .5px solid var(--border); }
+.graph-card-links h4 { margin: 0 0 4px; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; color: var(--glass-text-muted); }
+.graph-card-links section { margin-top: 6px; }
+.graph-card-links h5 { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; padding: 0 2px; font-size: var(--fs-11); font-weight: 600; color: var(--glass-text-muted); }
+.graph-card-links h5 .graph-sample { width: 18px; color: var(--foreground); }
+.graph-card-links h5 > span { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 500; }
+.graph-card-links ul { list-style: none; margin: 0; padding: 0; }
+.graph-card-links li { animation: graph-rise .36s cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(200ms + var(--stagger, 0) * 40ms + var(--i, 0) * 22ms); }
+.graph-card-links li button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 6px; border-radius: 8px; text-align: left;
+  font-size: var(--fs-12); transition: background-color .15s ease-out, transform .2s cubic-bezier(.34, 1.4, .64, 1); }
+.graph-card-links li button:hover { background: var(--glass-control-fill); transform: translateX(2px); }
+.graph-card-links li button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: -2px; }
+.graph-card-link-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-card-dir { flex-shrink: 0; font-size: 10.5px; color: var(--glass-text-muted); }
+.graph-card-more, .graph-card-none { padding: 4px 6px; font-size: var(--fs-11); line-height: 1.6; color: var(--glass-text-muted); }
+.graph-card-none { margin: 4px 0 0; }
+.graph-card code, .graph-empty code { padding: 1px 5px; border-radius: 5px; font-size: .92em; background: color-mix(in srgb, var(--foreground) 8%, transparent); }
+
+/* 메모가 없을 때: 가운데 점 둘레를 작은 점들이 돈다. */
+.graph-empty { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px;
+  text-align: center; pointer-events: none; }
+.graph-empty strong { font-size: var(--fs-14); font-weight: 650; }
+.graph-empty p { max-width: 380px; margin: 0; font-size: var(--fs-12); line-height: 1.7; color: var(--glass-text-muted); word-break: keep-all; }
+.graph-empty-orbit { position: relative; width: 84px; height: 84px; margin-bottom: 10px; }
+.graph-empty-orbit::before { content: ""; position: absolute; inset: 33px; border-radius: 50%; background: var(--notes-accent); box-shadow: 0 0 24px color-mix(in srgb, var(--notes-accent) 60%, transparent); }
+.graph-empty-orbit span { position: absolute; inset: 0; border-radius: 50%; border: 1px dashed color-mix(in srgb, var(--foreground) 16%, transparent); animation: graph-orbit 9s linear infinite; }
+.graph-empty-orbit span:nth-child(2) { inset: 12px; animation-duration: 6s; animation-direction: reverse; }
+.graph-empty-orbit span:nth-child(3) { inset: 22px; animation-duration: 4s; border: 0; }
+.graph-empty-orbit span::after { content: ""; position: absolute; top: -4px; left: calc(50% - 4px); width: 8px; height: 8px; border-radius: 50%; background: #8b5cf6; }
+.graph-empty-orbit span:nth-child(2)::after { background: #3b82f6; width: 6px; height: 6px; top: -3px; }
+.graph-empty-orbit span:nth-child(3)::after { background: #f472b6; width: 5px; height: 5px; top: -2.5px; }
+
+/* 닫기: 살짝 줄며 흐려진다. 메모를 열 때는 점 속으로 파고든 뒤 사라진다. */
+.notes-graph[data-leaving] { animation: graph-out .23s cubic-bezier(.4, 0, 1, 1) forwards; }
+.notes-graph[data-diving] :is(.graph-bar, .graph-legend, .graph-zoom, .graph-card, .graph-tip) { opacity: 0; transform: scale(.98); transition: opacity .18s ease-in, transform .18s ease-in; }
+.notes-graph[data-diving] { animation: graph-dive .38s ease-in forwards; }
+.notes-content[data-arrive] > :is(.note-editor, .folder-view, .notes-empty) { animation: graph-arrive .46s cubic-bezier(.2, .8, .2, 1) both; }
+
+@keyframes graph-in { from { opacity: 0; } }
+@keyframes graph-out { to { opacity: 0; transform: scale(.985); filter: blur(3px); } }
+@keyframes graph-dive { 0%, 45% { opacity: 1; } 100% { opacity: 0; filter: blur(4px); } }
+@keyframes graph-arrive { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+@keyframes graph-drop { from { opacity: 0; transform: translateY(-10px); } }
+@keyframes graph-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes graph-pop { from { opacity: 0; transform: translateY(-4px) scale(.96); } }
+@keyframes graph-tip { from { opacity: 0; transform: translate(-50%, calc(-100% + 6px)) scale(.92); } }
+@keyframes graph-card-in { from { opacity: 0; transform: translateX(18px) scale(.97); } }
+@keyframes graph-sheet-in { from { opacity: 0; transform: translateY(22px); } }
+@keyframes graph-icon-pop { 0% { transform: scale(.55) rotate(-14deg); } 60% { transform: scale(1.12) rotate(4deg); } 100% { transform: none; } }
+@keyframes graph-orbit { to { transform: rotate(360deg); } }
+
+@container notes (max-width: 40em) {
+  .graph-back { display: inline-flex; }
+  .graph-back[data-slot="button"] { width: 34px; height: 34px; border-radius: 50%; background: var(--graph-glass); border: .5px solid var(--graph-edge); box-shadow: var(--graph-shadow); }
+  .graph-views button { padding: 0 9px; }
+  .graph-views button span { display: none; }
+  .graph-search { width: 132px; }
+  .graph-search:focus-within, .graph-search[data-filled] { width: 168px; }
+  .graph-card { top: auto; left: 10px; right: 10px; bottom: 56px; width: auto; max-height: 48%; animation-name: graph-sheet-in; }
+  .graph-legend > .graph-chip { display: none; }
+}
+@container notes (max-width: 30em) {
+  .graph-search { width: 34px; padding: 0 9px; }
+  .graph-search input, .graph-search-count { display: none; }
+  .graph-search:focus-within, .graph-search[data-filled] { width: 150px; }
+  .graph-search:focus-within input, .graph-search[data-filled] input { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notes-graph, .notes-graph *, .notes-content[data-arrive] > *, .graph-filters { animation: none !important; transition: none !important; }
+}
+
 /* ── 파일 탐색기 창: 유리 사이드바 · 목록/아이콘 보기 · 미리 보기 ─────────────── */
 .window[data-window="files"] { --files-folder: #2f95ee;
   --tone-image: #d9468f; --tone-video: #8b5cf6; --tone-audio: #ef5a3a; --tone-archive: #b07d2b; --tone-sheet: #16a34a; --tone-slide: #ea580c; --tone-doc: #2563eb; --tone-code: #64748b; }
