@@ -1258,8 +1258,8 @@ canvas.md-stl:active { cursor: grabbing; }
 .files-segment svg { width: 14px; height: 14px; }
 
 /* 위치 경로: 알약 안에 단추가 이어지고, 빈 곳을 누르면 경로 입력으로 바뀐다. */
-nav.files-path { flex: 1; min-width: 140px; display: flex; align-items: center; height: calc(1em + 15px); padding: 0 4px; overflow: hidden; border: 1px solid var(--glass-control-border); cursor: text; }
-form.files-path { flex: 1; min-width: 140px; }
+nav.files-path { flex: 1; min-width: 0; display: flex; align-items: center; height: calc(1em + 15px); padding: 0 4px; overflow: hidden; border: 1px solid var(--glass-control-border); cursor: text; }
+form.files-path { flex: 1; min-width: 0; }
 /* 경로는 줄지 않고 넘치면 앞쪽부터 …로 접힌다(PathBar가 잰다). 다 접어도 넘치면 마지막 폴더가 말줄임으로 줄어든다. */
 .files-crumb-wrap { display: inline-flex; align-items: center; min-width: 0; flex-shrink: 0; }
 .files-path[data-tight] .files-crumb-wrap:last-of-type { flex-shrink: 1; }
@@ -1635,11 +1635,14 @@ form.files-path { flex: 1; min-width: 140px; }
 @keyframes confirm-pop { from { opacity: 0; transform: scale(.94); } }
 @keyframes confirm-drop { to { opacity: 0; transform: scale(.97); } }
 
-/* 창 너비: 46em(13px에서 598px) 이하면 경로 줄이 제목 아래로 내려가고 탐색 창을 숨긴다. 34em 이하면 찾기 칸도 숨긴다. */
-@container files (max-width: 46em) {
+/* 창 너비: 64em(13px에서 832px) 이하면 경로 줄이 제목 아래로 내려가 겹치지 않고, 46em(598px) 이하면 탐색 창을 숨긴다. 34em 이하면 찾기 칸도 숨긴다. */
+@container files (max-width: 64em) {
   .window[data-window="files"] .titlebar { flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
   .window[data-window="files"] .window-toolbar { order: 3; flex-basis: 100%; }
+}
+@container files (max-width: 46em) {
   #files-side, .files-layout > .split-handle { display: none !important; }
+  #files-main { flex: 1 1 auto !important; max-width: none !important; }
   .files-filter { width: 132px; }
   .files-home { padding: 18px 16px 24px; }
 }
@@ -1647,11 +1650,12 @@ form.files-path { flex: 1; min-width: 140px; }
   .files-filter { display: none; }
 }
 /* 탐색 창 폭을 끌어 바꾸므로 미리 보기와 열은 창이 아니라 남은 자리를 잰다.
-   내용 자리가 54em보다 좁으면 미리 보기를, 목록이 40em보다 좁으면 종류 열을, 29em보다 좁으면 날짜 열을 걷어 이름 열이 늘 남는다. */
+   내용 자리가 54em보다 좁으면 미리 보기 패널(#files-preview-side)과 경계를 함께 감춰 본문이 폭을 다 쓰고, 목록이 40em보다 좁으면 종류 열을, 29em보다 좁으면 날짜 열을 걷어 이름 열이 늘 남는다. */
 .files-content { container: files-content / inline-size; }
 .files-main { container: files-main / inline-size; }
 @container files-content (max-width: 54em) {
-  .files-preview { display: none; }
+  #files-preview-side, .files-preview-split > .split-handle { display: none !important; }
+  #files-preview-main { flex: 1 1 auto !important; max-width: none !important; }
 }
 @container files-main (max-width: 40em) {
   .files-columns, .files-list { --files-grid: minmax(0, 1fr) var(--files-modified, 148px) var(--files-size, 68px); }

@@ -1001,3 +1001,83 @@ test("뷰어: Markdown의 상대 경로 그림은 그 파일 옆에서 읽고, �
   expect(missing).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test("파일 탐색기: 창 크기를 줄이면 미리 보기 패널·경계가 함께 감춰져 빈 틈이 생기지 않고, 상단바도 겹치지 않는다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await openFolder(page);
+  const files = page.locator(win("files"));
+  const handle = files.locator('[data-window-resize-handle="e"]');
+  const previewPanel = files.locator("#files-preview-side");
+  const previewHandle = files.locator(".files-preview-split > .split-handle");
+  const sidePanel = files.locator("#files-side");
+  await expect(previewPanel).toBeVisible();
+
+  const resizeBy = async (dx: number) => {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 6 });
+    await page.mouse.up();
+  };
+  const checkLayout = () => files.evaluate((el) => {
+    const rect = (sel: string) => {
+      const node = el.querySelector<HTMLElement>(sel);
+      if (!node) return null;
+      const r = node.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width };
+    };
+    const frame = rect(".window-frame")!;
+    const content = rect(".files-content")!;
+    const main = rect(".files-main")!;
+    const preview = rect("#files-preview-side");
+    const pathBar = rect(".files-path");
+    const filter = rect(".files-filter");
+    const close = rect('[data-window-action="close"]')!;
+    const overlap = Boolean(pathBar && filter && filter.width > 0 && pathBar.left < filter.right && filter.left < pathBar.right && pathBar.top < filter.bottom && filter.top < pathBar.bottom);
+    const previewVisible = Boolean(preview && preview.width > 0);
+    return {
+      frameWidth: Math.round(frame.width),
+      gapRight: Math.round(previewVisible ? preview!.left - 1 - main.right : content.right - main.right),
+      overlap,
+      closeClipped: close.right > frame.right + 1,
+    };
+  });
+
+  // 미리 보기 기준(54em) 아래로 줄이면 패널과 경계가 함께 사라지고 본문이 내용 폭을 끝까지 채운다.
+  await resizeBy(-140);
+  await expect(previewPanel).toBeHidden();
+  await expect(previewHandle).toBeHidden();
+  await expect(sidePanel).toBeVisible();
+  expect(await checkLayout()).toMatchObject({ gapRight: 0, overlap: false, closeClipped: false });
+
+  // 상단바 줄바꿈 구간(64em 이하)·중간 폭에서도 경로 줄과 찾기 칸이 겹치지 않고 빈 틈이 없다.
+  await resizeBy(-200);
+  await expect(previewPanel).toBeHidden();
+  await expect(sidePanel).toBeVisible();
+  expect(await checkLayout()).toMatchObject({ gapRight: 0, overlap: false, closeClipped: false });
+
+  // 탐색 창 기준(46em) 아래(최소 너비)까지 줄이면 탐색 창도 숨고 본문이 창 전체 폭을 채운다.
+  await resizeBy(-240);
+  await expect(sidePanel).toBeHidden();
+  await expect(previewPanel).toBeHidden();
+  expect(await checkLayout()).toMatchObject({ gapRight: 0, overlap: false, closeClipped: false });
+
+  // 창을 다시 넓히면 탐색 창과 미리 보기가 빈 틈 없이 되돌아온다.
+  await resizeBy(580);
+  await expect(sidePanel).toBeVisible();
+  await expect(previewPanel).toBeVisible();
+  await expect(previewHandle).toBeVisible();
+  expect(await checkLayout()).toMatchObject({ gapRight: 0, overlap: false, closeClipped: false });
+
+  // 탐색 창 경계를 넓혀 내용 자리가 54em 아래가 되어도 미리 보기 패널이 빈 틈을 남기지 않는다.
+  const treeHandle = (await files.locator(".files-layout > .split-handle").boundingBox())!;
+  await page.mouse.move(treeHandle.x + treeHandle.width / 2, treeHandle.y + treeHandle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(treeHandle.x + 160, treeHandle.y + treeHandle.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(previewPanel).toBeHidden();
+  await expect(previewHandle).toBeHidden();
+  expect(await checkLayout()).toMatchObject({ gapRight: 0, overlap: false, closeClipped: false });
+  expect(errors).toEqual([]);
+});
+

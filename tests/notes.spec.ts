@@ -773,6 +773,7 @@ test("메모 창: 새 창으로 열면 메모만 담은 별도 창이 뜨고, �
   // 바탕화면 창에서 새로 만든 메모도 별도 창 트리에 곧 보인다.
   await item(page, "업무").click();
   await notes.getByRole("button", { name: "새 메모" }).first().click();
+  await expect(notes.getByLabel("제목", { exact: true })).toBeFocused();
   await page.keyboard.type("바탕화면에서 만든 메모");
   await expect(item(popup, "바탕화면에서 만든 메모")).toBeVisible({ timeout: 2500 });
 
