@@ -20,10 +20,14 @@ export function popoutAppOf(url: string, base: string): PopoutApp | null {
 
 export const popoutUrl = (app: PopoutApp, base: string) => `${base}/?window=${app}`;
 
-/** 별도 창 모양. 본 창처럼 제목 표시줄을 숨기고, 화면의 상단바가 제목 표시줄을 대신한다(색은 화면이 알려 준다). 크기와 자리는 화면이 window.open에 넘긴 값을 쓴다. */
+/** 작업 표시줄에서 Relay 본 창과 따로 묶이도록 앱마다 다른 Windows 앱 ID를 쓴다(그래서 앱 아이콘과 이름으로 따로 보인다). */
+export const popoutAppId = (app: PopoutApp) => `dev.relay.desktop.${app}`;
+
+/** 별도 창 모양. 본 창처럼 제목 표시줄을 숨기고, 화면의 상단바가 제목 표시줄을 대신한다(색은 화면이 알려 준다). 크기와 자리는 화면이 window.open에 넘긴 값을 쓴다.
+ *  icon은 그 앱의 아이콘(작업 표시줄·Alt+Tab에 보인다)이다. */
 export function popoutOptions(app: PopoutApp, icon: string, preload: string): BrowserWindowConstructorOptions {
   return {
-    title: `Relay ${TITLES[app]}`, icon, minWidth: MIN_SIZE.width, minHeight: MIN_SIZE.height, backgroundColor: "#111318", autoHideMenuBar: true, show: true,
+    title: TITLES[app], icon, minWidth: MIN_SIZE.width, minHeight: MIN_SIZE.height, backgroundColor: "#111318", autoHideMenuBar: true, show: true,
     titleBarStyle: "hidden", titleBarOverlay: { color: "#1e1e20", symbolColor: "#f5f5f7", height: POPOUT_TITLEBAR_HEIGHT },
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload },
   };

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray, type WindowOpenHandlerResponse } from "electron";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ConnectionReport, DesktopConfig, MigrateResult, Mode, RelayConfig, RelayStatus, RemoteConfig } from "../shared/types";
 import { dataDirectory, defaultDeviceName, normalizeUrl, readConfig, writeConfig } from "./config";
@@ -6,7 +7,7 @@ import { log, logFile } from "./log";
 import { probe, RelayProcess } from "./relay";
 import { testConnection } from "./remote";
 import { ensureInstalled } from "./setup";
-import { popoutAppOf, popoutOptions, popoutUrl, visibleBounds, type PopoutApp } from "./popout";
+import { popoutAppId, popoutAppOf, popoutOptions, popoutUrl, visibleBounds, type PopoutApp } from "./popout";
 
 /**
  * Relay Windows 앱.
@@ -30,7 +31,10 @@ else {
   app.whenReady().then(boot).catch((error) => { log("error", `시작 실패: ${(error as Error).stack ?? error}`); dialog.showErrorBox("Relay", (error as Error).message); app.quit(); });
 }
 
-const iconPath = () => (app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.resolve(app.getAppPath(), "resources", "icon.png"));
+const resourcePath = (name: string) => (app.isPackaged ? path.join(process.resourcesPath, name) : path.resolve(app.getAppPath(), "resources", name));
+const iconPath = () => resourcePath("icon.png");
+/** 별도 창 앱의 아이콘(예: 메모). 동봉하지 못했으면 Relay 아이콘을 쓴다. */
+const popoutIconPath = (popout: PopoutApp) => { const file = resourcePath(`${popout}.png`); return existsSync(file) ? file : iconPath(); };
 
 async function boot() {
   app.setAppUserModelId("dev.relay.desktop");
@@ -112,13 +116,15 @@ function openFromMain(url: string): WindowOpenHandlerResponse {
     existing.show(); existing.focus();
     return { action: "deny" };
   }
-  return { action: "allow", overrideBrowserWindowOptions: popoutOptions(popout, iconPath(), shellPreload()) };
+  return { action: "allow", overrideBrowserWindowOptions: popoutOptions(popout, popoutIconPath(popout), shellPreload()) };
 }
 /** 새로 만든 별도 창을 맡는다. 마지막에 둔 모니터가 빠졌으면 본 창이 있는 모니터 가운데로 옮기고, 그 창의 바깥 링크도 기본 브라우저로 연다. */
 function adoptPopout(child: BrowserWindow, url: string) {
   const popout = relay ? popoutAppOf(url, relay.url) : null;
   if (!popout) { child.destroy(); return; }
   popouts.set(popout, child);
+  // 작업 표시줄에서 Relay 본 창 묶음과 떨어져 그 앱(메모) 아이콘·이름으로 따로 보인다.
+  if (process.platform === "win32") child.setAppDetails({ appId: popoutAppId(popout) });
   const fallback = screen.getDisplayMatching(mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : child.getBounds()).workArea;
   const moved = visibleBounds(child.getBounds(), screen.getAllDisplays().map((display) => display.workArea), fallback);
   if (moved) child.setBounds(moved);

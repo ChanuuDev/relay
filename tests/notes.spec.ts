@@ -747,7 +747,8 @@ test("메모 창: 새 창으로 열면 메모만 담은 별도 창이 뜨고, �
   await expect(popped).toHaveAttribute("data-popout", "");
   await expect(popped).toHaveAttribute("data-focused", "");
   await expect(popped.locator("#note-title")).toHaveValue("분기 계획");
-  await expect(popup).toHaveTitle("분기 계획 · Relay 메모");
+  // 작업 표시줄·창 제목은 메모 제목이 아니라 앱 이름이다.
+  await expect(popup).toHaveTitle("메모");
   await expect(item(popup, "분기 계획")).toHaveAttribute("aria-selected", "true");
 
   // 별도 창에는 메모 하나만 있다: 메뉴바·Dock·창 안 조작 버튼(닫기 등)이 없고, 창 전체를 채운다.
@@ -803,6 +804,81 @@ test("메모 창: 새 창으로 열면 메모만 담은 별도 창이 뜨고, �
   await popup.close({ runBeforeUnload: true });
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("relay-popout-notes-v1") ?? "null")?.width)).toBe(1000);
   expect(errors).toEqual([]);
+});
+
+test("Dock: 메모 아이콘을 우클릭하면 Relay 안에서 열기·새 창으로 열기를 고르고, 메뉴 키로도 연다", async ({ page, context }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await ready(page);
+  const notes = page.locator(win("notes"));
+  const icon = page.locator(dock("메모"));
+  const menu = page.getByRole("menu");
+  await expect(notes).toBeHidden();
+  await expect(icon).toHaveAttribute("aria-haspopup", "menu");
+
+  // 우클릭하면 아이콘 바로 위에 메뉴가 열린다.
+  await icon.click({ button: "right" });
+  await expect(menu.getByRole("menuitem")).toHaveText(["Relay 안에서 열기", "새 창으로 열기"]);
+  const [menuBox, iconBox] = [await menu.boundingBox(), await icon.boundingBox()];
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(iconBox!.y);
+  expect(Math.abs(menuBox!.x + menuBox!.width / 2 - (iconBox!.x + iconBox!.width / 2))).toBeLessThan(menuBox!.width / 2);
+  await page.screenshot({ path: test.info().outputPath("dock-menu.png"), clip: { x: iconBox!.x - 240, y: menuBox!.y - 40, width: 560, height: iconBox!.y + iconBox!.height - menuBox!.y + 60 } });
+  await menu.getByRole("menuitem", { name: "Relay 안에서 열기" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(notes).toBeVisible();
+  await expect(notes).toHaveAttribute("data-focused", "");
+
+  // 새 창으로 열면 별도 창이 뜨고 바탕화면 안의 메모 창은 닫힌다.
+  await icon.click({ button: "right" });
+  const opening = page.waitForEvent("popup");
+  await menu.getByRole("menuitem", { name: "새 창으로 열기" }).click();
+  const popup = await opening;
+  expect(new URL(popup.url()).search).toBe("?window=notes");
+  await expect(popup.locator(win("notes"))).toHaveAttribute("data-popout", "");
+  await expect(notes).toBeHidden();
+  // 이미 떠 있으면 새로 열지 않고 그 창을 쓴다.
+  await icon.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "새 창으로 열기" }).click();
+  await expect(menu).toHaveCount(0);
+  expect(context.pages()).toHaveLength(2);
+
+  // 별도 창으로 띄울 수 없는 앱은 Dock 메뉴가 없다.
+  await expect(page.locator(dock("계산기"))).not.toHaveAttribute("aria-haspopup", "menu");
+  await page.locator(dock("계산기")).click({ button: "right" });
+  await expect(menu).toHaveCount(0);
+
+  // 키보드: 메뉴 키로 열면 첫 항목에 초점이 가고, Esc로 닫으면 아이콘으로 돌아온다.
+  await icon.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem", { name: "Relay 안에서 열기" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(icon).toBeFocused();
+  expect(errors).toEqual([]);
+});
+
+test("메모 창: 서버에 저장하지 못하면 내용 아래쪽 띠로 알리고, 다시 닿으면 저장하고 띠를 걷는다", async ({ page }) => {
+  await seed(page, SAMPLE, { expanded: ["f-work"], selected: "n-plan" });
+  const notes = page.locator(win("notes"));
+  await page.route("**/api/v1/notes", (route) => (route.request().method() === "POST" ? route.abort() : route.continue()));
+  await notes.locator("#note-body").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type(" 끊긴 동안 씀");
+  const status = notes.locator(".notes-status");
+  await expect(status).toContainText("서버에 저장하지 못했습니다. 변경은 이 브라우저에 남겨 두었다가 연결되면 다시 저장합니다.");
+  await expect(notes.locator(".notes-sync")).toHaveText("저장 대기 · 다시 시도 중");
+  // 위가 아니라 내용 맨 아래에 붙고, 왼쪽 목록 아래 상태 줄과 같은 줄에 놓인다.
+  const [band, content, footer, bar] = await Promise.all([status.boundingBox(), notes.locator(".notes-content").boundingBox(),
+    notes.locator(".notes-footer").boundingBox(), notes.locator(".notes-content-bar").boundingBox()]);
+  expect(Math.abs(band!.y + band!.height - (content!.y + content!.height))).toBeLessThanOrEqual(1);
+  expect(band!.y).toBeGreaterThan(bar!.y + bar!.height);
+  expect(Math.abs(band!.y - footer!.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(band!.height - footer!.height)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: test.info().outputPath("notes-status-bottom.png") });
+
+  await page.unroute("**/api/v1/notes");
+  await expect(status).toHaveCount(0, { timeout: 15000 });
+  await expect(notes.locator(".notes-sync")).toHaveText("Relay DB에 저장됨");
+  expect((await saved(page)).items.find((entry: { id: string }) => entry.id === "n-plan")?.body).toContain("끊긴 동안 씀");
 });
 
 test("감사용 스크린샷: 별도 메모 창 다크·라이트", async ({ page }) => {

@@ -265,10 +265,12 @@ test("메뉴바가 제목 표시줄을 대신하고 창 조작·테마·바탕�
 test("메모를 별도 앱 창으로 띄우고, 다시 누르면 그 창을 앞으로 가져오며, 그 창의 바깥 링크는 기본 브라우저로 연다", async () => {
   type Overlay = { color?: string; symbolColor?: string; height?: number };
   await app!.evaluate(({ BrowserWindow, shell }) => {
-    const scope = globalThis as unknown as { relayOverlays: Record<number, Overlay>; relayExternal: string[] };
-    scope.relayOverlays = {}; scope.relayExternal = [];
+    const scope = globalThis as unknown as { relayOverlays: Record<number, Overlay>; relayExternal: string[]; relayAppIds: Record<number, string | undefined> };
+    scope.relayOverlays = {}; scope.relayExternal = []; scope.relayAppIds = {};
     const original = BrowserWindow.prototype.setTitleBarOverlay;
     BrowserWindow.prototype.setTitleBarOverlay = function (options) { scope.relayOverlays[this.id] = options; return original.call(this, options); };
+    const details = BrowserWindow.prototype.setAppDetails;
+    BrowserWindow.prototype.setAppDetails = function (options) { scope.relayAppIds[this.id] = options.appId; return details.call(this, options); };
     // 테스트가 실제 브라우저를 띄우지 않게 바깥 링크 열기를 가로챈다.
     shell.openExternal = async (url: string) => { scope.relayExternal.push(url); };
   });
@@ -289,13 +291,16 @@ test("메모를 별도 앱 창으로 띄우고, 다시 누르면 그 창을 앞�
   await expect(notes).toBeHidden();
   const popped = popout.locator('.window[data-window="notes"]');
   await expect(popped).toHaveAttribute("data-popout", "");
-  await expect(popout).toHaveTitle("Relay 메모");
+  // 작업 표시줄에는 Relay 본 창과 따로 「메모」로 보인다(다른 앱 ID·메모 아이콘).
+  await expect(popout).toHaveTitle("메모");
   expect(await popout.evaluate(() => "relayDesktop" in window)).toBe(false);
   const windows = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed())
     .map((window) => ({ id: window.id, url: window.webContents.getURL(), minimized: window.isMinimized(), visible: window.isVisible() })));
   const before = await windows();
   const child = before.find((window) => window.url.includes("window=notes"))!;
   expect(child).toBeTruthy();
+  expect(await app!.evaluate((_electron, id) => (globalThis as unknown as { relayAppIds: Record<number, string | undefined> }).relayAppIds[id], child.id)).toBe("dev.relay.desktop.notes");
+  expect(await app!.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.getTitle(), child.id)).toBe("메모");
 
   // 제목 표시줄을 숨긴 창: 메모 상단바가 제목 표시줄이 되고, 창 조작 버튼은 상단바 도구 오른쪽에 놓이며 상단바 아래 경계선은 덮지 않는다.
   await expect(popout.locator("html")).toHaveAttribute("data-titlebar", "overlay");

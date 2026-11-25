@@ -9,13 +9,13 @@ import { DesktopMenu, type MenuEntry } from "../desktop/menu";
 import { NoteDocument } from "./note-editor";
 import { SplitView } from "../desktop/split-view";
 import {
-  childMap, exportNotes, handOff, importNotes, isWithin, labelOf, memoReference, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
-  type Folder, type Item, type Items, type Note, type Row,
+  childMap, exportNotes, importNotes, isWithin, labelOf, memoReference, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
+  type Folder, type Item, type Items, type Note, type NotesStatus, type NotesSync, type Row,
 } from "../../lib/notes";
 import { useNoteAlert } from "../../lib/note-images";
 import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
-import { openPopout, popoutApp } from "../../lib/popout";
-import { useDesktop } from "../../lib/desktop-store";
+import { popoutApp } from "../../lib/popout";
+import { popOut } from "../../lib/popout-open";
 
 const DRAG_TYPE = "application/x-relay-note";
 const UNDO_MS = 8000;
@@ -158,17 +158,6 @@ export function NotesWindow() {
     });
   }
 
-  /** 메모를 바탕화면 밖 별도 창으로 옮긴다. 보던 메모와 보내지 못한 변경을 먼저 넘기고, 열리면 이 창은 닫는다(두 곳에서 같은 메모를 고치지 않게). */
-  function popOut() {
-    void handOff();
-    const result = openPopout("notes");
-    if (result === "blocked") {
-      setNotice((current) => (current?.tone === "progress" ? current : { tone: "error", text: "브라우저가 새 창을 막았습니다. 주소창의 팝업 차단 표시에서 이 사이트의 팝업을 허용한 뒤 다시 눌러 주세요." }));
-      return;
-    }
-    useDesktop.getState().close("notes");
-  }
-
   /** AI 에이전트에 붙여 넣을 한 줄(참조해 달라는 문구와 ID)을 복사한다. 에이전트는 relay memo --find <ID>로 읽는다. */
   async function copyReference(id: string) {
     const item = useNotes.getState().items[id];
@@ -269,7 +258,7 @@ export function NotesWindow() {
           openMenu("tools", null, rect.right - 200, rect.bottom + 4);
         }}><Ellipsis aria-hidden="true" /></Button>
       {popoutApp ? null : <Button type="button" variant="ghost" size="icon-sm" id="notes-popout" aria-label="새 창으로 열기" title="새 창으로 열기: 다른 모니터로 옮길 수 있는 별도 창에 메모를 엽니다"
-        onClick={popOut}><SquareArrowOutUpRight aria-hidden="true" /></Button>}
+        onClick={() => popOut("notes")}><SquareArrowOutUpRight aria-hidden="true" /></Button>}
       <input ref={fileRef} id="notes-import-file" type="file" accept=".json,application/json" hidden onChange={importFile} />
     </div>} />}>
     <SplitView name="notes" label="메모 목록" className="notes-layout" data-pane={pane} defaultWidth={256} minWidth={200} maxWidth={480} minMain={320} side={
@@ -294,9 +283,6 @@ export function NotesWindow() {
           : sync === "saving" ? "저장 중…" : sync === "offline" ? "저장 대기 · 다시 시도 중" : sync === "rejected" ? "저장 실패" : "Relay DB에 저장됨"}</span></div>
       </aside>} main={
       <section className="notes-content" aria-label={current?.kind === "note" ? "메모 편집" : "폴더 내용"}>
-        {status === "error" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>메모를 불러오지 못했습니다. Relay 서버에 다시 연결하는 중입니다.</span></div>}
-        {status === "ready" && sync === "offline" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버에 저장하지 못했습니다. 변경은 이 브라우저에 남겨 두었다가 연결되면 다시 저장합니다.</span></div>}
-        {status === "ready" && sync === "rejected" && <div className="browser-notice" role="alert"><TriangleAlert aria-hidden="true" /><span>서버가 마지막 변경을 받지 않았습니다. 다시 고치면 다시 저장을 시도합니다.</span></div>}
         {current?.kind === "note"
           ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open}
               onCopyId={() => void copyReference(current.id)} onMenu={(left, top) => openMenu("item", current.id, left, top)} />
@@ -304,6 +290,7 @@ export function NotesWindow() {
               onCopyId={(id) => void copyReference(id)} onMenu={(id, left, top) => openMenu("item", id, left, top)}
               onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} onImport={() => fileRef.current?.click()}
               empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
+        <SyncStatus status={status} sync={sync} />
       </section>} />
     {trash ? <div className="notes-undo material-toast" role="status">
       <span>{trash.kind === "folder" ? `‘${trash.label}’ 폴더${trash.notes ? `와 메모 ${trash.notes}개` : ""}를 삭제했습니다.` : `‘${trash.label}’ 메모를 삭제했습니다.`}</span>
@@ -317,6 +304,16 @@ export function NotesWindow() {
     {menu && entries.length > 0 && <DesktopMenu items={entries} position={{ left: menu.left, top: menuTop(menu.top, entries) }} leaving={menuLeaving}
       onClose={closeMenu} onExited={menuExited} className={menu.kind === "move" ? "notes-move-menu" : undefined} />}
   </Window>;
+}
+
+/** 불러오기·저장이 막힌 상태. 내용 아래쪽 띠로 보여 쓰는 자리를 가리지 않고, 왼쪽 목록 아래 상태 줄과 같은 높이에 놓인다. */
+function SyncStatus({ status, sync }: { status: NotesStatus; sync: NotesSync }) {
+  const text = status === "error" ? "메모를 불러오지 못했습니다. Relay 서버에 다시 연결하는 중입니다."
+    : status !== "ready" ? null
+    : sync === "offline" ? "서버에 저장하지 못했습니다. 변경은 이 브라우저에 남겨 두었다가 연결되면 다시 저장합니다."
+    : sync === "rejected" ? "서버가 마지막 변경을 받지 않았습니다. 다시 고치면 다시 저장을 시도합니다." : null;
+  if (!text) return null;
+  return <div className="notes-status" role="alert" title={text}><TriangleAlert aria-hidden="true" /><span>{text}</span></div>;
 }
 
 /** 끌어 놓을 자리. zone은 행의 위쪽(before)·아래쪽(after) 가장자리 또는 폴더 가운데(inside)이고, parentId·index가 실제로 들어갈 곳이다. */

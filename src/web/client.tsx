@@ -34,7 +34,7 @@ import { applyFontSize, FONT_SIZE_KEY, readFontSize } from "./lib/font-size";
 import { listCustomImages, readWallpaper, WALLPAPER_KEY } from "./lib/wallpaper";
 import { setupPwa, syncTitlebarColor, useInstall } from "./lib/pwa";
 import { popoutApp, rememberBounds, type PopoutApp } from "./lib/popout";
-import { labelOf, useNotes } from "./lib/notes";
+import { APPS } from "./lib/app-config";
 import { loadCredentials, saveCredentials } from "./lib/credentials";
 import { BrowserLogin } from "./components/browser-login";
 
@@ -107,11 +107,8 @@ function PopoutShell({ app }: { app: PopoutApp }) {
   const dark = useDark();
   const health = useQuery(resource<HealthData>("/api/v1/health"));
   const [updateReady, setUpdateReady] = useBuildReload(health.data?.build);
-  const title = useNotes((state) => {
-    const item = state.selected ? state.items[state.selected] : undefined;
-    return item ? labelOf(item) : null;
-  });
-  useEffect(() => { document.title = title ? `${title} · Relay 메모` : "Relay 메모"; }, [title]);
+  // 창 제목(작업 표시줄 이름)은 앱 이름이다. 고른 메모 제목을 붙이면 작업 표시줄에서 무슨 창인지 알아보기 어렵다.
+  useEffect(() => { document.title = APPS[app].title; }, [app]);
   useEffect(() => {
     let cancelled = false;
     loadCustomImages(() => cancelled);

@@ -1202,6 +1202,14 @@ canvas.md-stl:active { cursor: grabbing; }
 .notes-empty-actions { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
 .notes-empty-actions svg { width: 14px; height: 14px; }
 
+/* 불러오기·저장이 막힌 상태: 내용 아래쪽 띠. 높이는 왼쪽 목록 아래 상태 줄(.notes-footer)과 같아 창 아래에 한 줄로 이어진다. */
+.notes-status { display: flex; align-items: center; gap: 8px; min-height: calc(1em + 17px); padding: 0 14px; flex-shrink: 0; font-size: var(--fs-11); line-height: var(--lh-14);
+  border-top: 1px solid var(--border); background: color-mix(in srgb, var(--system-yellow) 14%, var(--background)); }
+.notes-status > svg { width: 13px; height: 13px; color: var(--system-yellow); flex-shrink: 0; }
+.notes-status > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 상태 띠가 보이면 아래 안내(되살리기 등)는 그 띠 위로 뜬다. */
+.notes-body:has(.notes-status) .notes-undo { bottom: calc(1em + 17px + 14px); }
+
 /* 삭제 되살리기 안내 */
 .notes-undo { position: absolute; left: 50%; bottom: 16px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px);
   padding: 6px 6px 6px 14px; border-radius: 12px; font-size: var(--fs-12); white-space: nowrap; animation: notes-rise .22s cubic-bezier(.2, .8, .2, 1); }
