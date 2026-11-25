@@ -43,11 +43,12 @@ relay graph context "<질의>" --from <ID> --from <ID>
 ## 일에 맞는 맥락 고르기
 
 ```text
-relay graph context "<하려는 일>" [--from <ID>]… [--budget <토큰>] [--brief] [--sessions linked|all|none]
+relay graph context "<하려는 일>" [--from <ID>]… [--project [<경로>]] [--budget <토큰>] [--brief] [--sessions linked|all|none]
 ```
 
 - **질의**: 메모에 적혀 있을 법한 낱말 3~6개로 쓴다(예: `"서버 배포 순서 설치 파일"`). 긴 문장보다 명사가 잘 맞는다. 한국어 조사는 떼고 찾는다.
 - **`--from`**: 중심으로 삼을 점. 메모·폴더 ID(앞 6자 이상), 세션 ID, `#태그`, 하나뿐인 메모 제목을 받는다. 폴더나 태그를 주면 그 아래(그 태그를 쓴) 메모들이 중심이 된다.
+- **`--project`**: 작업 폴더(생략하면 지금 폴더)에서 돈 세션과 이어진 메모를 중심으로 삼는다. 질의를 정하기 어려운 작업 시작 때 `relay graph context --project --brief`로 이 프로젝트와 이어진 메모가 있는지 본다.
 - **`--budget`**: 토큰 한도 어림(600~24000, 기본 4000). 한도가 남아도 관련이 낮은 메모는 싣지 않는다.
 - **`--brief`**: 본문 없이 제목·한 줄·이유만 낸다(수백 토큰). 무엇이 있는지 먼저 훑을 때 쓴다.
 
@@ -79,7 +80,7 @@ relay graph context "<하려는 일>" [--from <ID>]… [--budget <토큰>] [--br
 
 | 명령 | 용도 |
 |---|---|
-| `relay graph map` | 전체 지도: 주제 묶음과 중심 메모, 다리 메모(주제를 잇는 메모), 주제 사이의 틈, 제안 연결, 연결 없는 메모 |
+| `relay graph map` | 전체 지도: 상태 지표(이웃 수·직접 링크 비율·가장 큰 덩어리·모듈성·군집 계수)와 먼저 손볼 곳, 주제 묶음과 중심 메모, 다리 메모(주제를 잇는 메모), 주제 사이의 틈, 제안 연결, 연결 없는 메모 |
 | `relay graph neighbors <ID> [--depth 1~3]` | 어떤 점에 이어진 점들 (가까운 단계부터, 강한 관계부터) |
 | `relay graph path <ID> <ID>` | 두 점이 어떤 메모를 거쳐 이어지는지 |
 | `relay graph suggest [--for <ID>] [--limit N]` | 아직 링크로 잇지 않았지만 이으면 좋을 메모 쌍과 이유 |
@@ -107,13 +108,14 @@ relay graph link <from 메모> <to 메모·폴더·세션> [--why "<이유 한 �
 - **옮겨 적지 않고 가리킨다.** 읽은 메모 내용을 Relay 세션 요약(`relay update`)이나 다른 문서에 통째로 옮기지 않는다. 메모 ID를 적는다.
 - **참고한 메모 ID를 세션 요약에 남긴다.** `relay update --summary`에 참고한 메모 ID를 적어 두면 그 세션이 그래프에서 그 메모와 이어져, 다음 에이전트가 같은 메모에서 이 작업 기록을 찾는다.
 - **새로 알게 된 것은 사용자가 요청하면 메모로 남기고 잇는다.** 메모 쓰기는 relay-memo 스킬, 잇기는 `relay graph link`다.
+- **허브 메모를 중심으로 쓴다.** 제목이 `맥락: …`인 메모는 사용자가 그래프에서 고른 묶음을 링크 목록으로 남긴 허브 메모다. 그 메모 ID를 `--from`으로 주면 사용자가 고른 묶음이 그대로 따라온다.
 
 ## JSON
 
 모든 명령에 `--json`을 붙이면 JSON(`schemaVersion: 1`)을 낸다. 한글은 `\uXXXX`로 적혀 있어 Windows PowerShell 5.1에서 읽어도 깨지지 않는다.
 
 - `context --json`: `query`, `seeds`, `budget`, `tokens`, `core`(`{ id, ref, label, path, updatedAt, score, why, tags, text, clipped }`), `related`, `sessions`(`{ ref, provider, agent, label, status, summary, command, continuedBy }`), `relations`, `topics`, `redacted`, `empty`, 그리고 위와 같은 글 전체인 `text`.
-- `map --json`: `counts`, `islands`, `topics`, `hubs`, `bridges`, `gaps`(`question` 포함), `suggestions`, `orphans`.
+- `map --json`: `counts`, `islands`, `health`(`degree`, `density`, `clustering`, `modularity`, `connected`, `linked`, `orphaned`, `notes`), `topics`, `hubs`, `bridges`, `gaps`(`question` 포함), `suggestions`, `orphans`.
 - `neighbors --json`: `node`, `items`(`{ id, short, label, kind, depth, edge, weight, direction, via }`). `path --json`: `connected`, `steps`. `suggest --json`: `items`(`{ from, to, score, reasons, command }`).
 
 저장소를 따로 쓰면 `--data-dir <절대경로>`를 붙인다. 원격 모드로 설정된 PC에서는 원격 서버의 메모와 세션을 읽는다.

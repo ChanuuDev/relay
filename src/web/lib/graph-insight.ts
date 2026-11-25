@@ -211,6 +211,25 @@ export type Gap = {
   /** 함께 쓰는 낱말 */ shared: string[];
   /** 이으면 좋을 메모 쌍 */ pair: { from: string; to: string; score: number } | null;
 };
+/** 그래프가 얼마나 잘 이어져 있는지 보는 지표. 비율은 0..1이다. */
+export type Health = {
+  /** 글이 있는 점(메모·세션)의 수와, 그 사이의 내용 선(링크·언급·비슷함·이어받음) 수. */
+  docs: number; links: number;
+  /** 글 하나에 닿은 글의 평균 수. */
+  degree: number;
+  /** 가능한 쌍 가운데 실제로 이어진 비율. */
+  density: number;
+  /** 군집 계수: 이웃끼리도 서로 이어진 정도(이웃이 둘 이상인 글의 평균). */
+  clustering: number;
+  /** 모듈성: 주제 묶음 안의 선이 우연보다 얼마나 많은가(0.3을 넘으면 주제가 뚜렷이 나뉜 것이다). */
+  modularity: number;
+  /** 가장 큰 덩어리에 든 글의 비율. */
+  connected: number;
+  /** `[[링크]]`나 ID로 직접 이어진 메모의 비율. */
+  linked: number;
+  /** 어디에도 닿지 않은 메모의 비율. */
+  orphaned: number;
+};
 export type Insight = {
   /** 중요도(합 1). 링크를 받는 쪽이 조금 더 높다. */
   rank: Map<string, number>;
@@ -228,6 +247,7 @@ export type Insight = {
   orphans: string[];
   /** 내용으로 이어진 덩어리 수(홀로인 메모 제외). */
   islands: number;
+  health: Health;
 };
 
 /** 그래프 한 번 훑기. */
@@ -303,15 +323,64 @@ export function analyze(graph: NoteGraph): Insight {
   const orphans = docs.filter((node) => node.kind === "note" && !degree.get(node.id)).map((node) => node.id);
   // 덩어리 세기.
   const seen = new Set<string>();
-  let islands = 0;
+  let islands = 0, largest = 0;
   for (const node of docs) {
     if (seen.has(node.id) || !degree.get(node.id)) continue;
     islands++;
     const stack = [node.id];
     seen.add(node.id);
-    while (stack.length) for (const arc of around.get(stack.pop()!) ?? []) if (!seen.has(arc.to)) { seen.add(arc.to); stack.push(arc.to); }
+    let size = 0;
+    while (stack.length) { const at = stack.pop()!; if (byId.get(at) && isDoc(byId.get(at)!)) size++; for (const arc of around.get(at) ?? []) if (!seen.has(arc.to)) { seen.add(arc.to); stack.push(arc.to); } }
+    largest = Math.max(largest, size);
   }
-  return { rank, glow, between, clusterOf, degree, hubs, bridges: bridges.slice(0, 12), gaps: gaps.slice(0, 8), orphans, islands };
+
+  // 상태 지표: 글과 글 사이의 선만 본다(태그·폴더를 거친 것은 뺀다).
+  const near = new Map<string, Map<string, number>>();
+  const explicit = new Set<string>();
+  let links = 0;
+  for (const edge of graph.edges) {
+    if (edge.kind === "link") { explicit.add(edge.source); explicit.add(edge.target); }
+    if (edge.kind === "folder" || edge.kind === "tag") continue;
+    const a = byId.get(edge.source), b = byId.get(edge.target);
+    if (!a || !b || !isDoc(a) || !isDoc(b) || a.id === b.id) continue;
+    links++;
+    for (const [x, y] of [[a.id, b.id], [b.id, a.id]] as const) { const row = near.get(x) ?? new Map<string, number>(); row.set(y, (row.get(y) ?? 0) + strengthOf(edge)); near.set(x, row); }
+  }
+  let triads = 0, closed = 0, weight = 0;
+  const inside = new Map<string, number>(), mass = new Map<string, number>();
+  for (const node of docs) {
+    const row = near.get(node.id);
+    if (!row) continue;
+    const own = clusterOf.get(node.id) ?? node.id;
+    for (const [other, value] of row) { weight += value; mass.set(own, (mass.get(own) ?? 0) + value); if ((clusterOf.get(other) ?? other) === own) inside.set(own, (inside.get(own) ?? 0) + value); }
+    const list = [...row.keys()];
+    if (list.length < 2) continue;
+    let pairs = 0;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) if (near.get(list[i]!)?.has(list[j]!)) pairs++;
+    triads++;
+    closed += pairs / ((list.length * (list.length - 1)) / 2);
+  }
+  let modularity = 0;
+  if (weight > 0) for (const [cluster, value] of mass) modularity += (inside.get(cluster) ?? 0) / weight - (value / weight) ** 2;
+  const notes = docs.filter((node) => node.kind === "note");
+  const n = docs.length;
+  const health: Health = {
+    docs: n, links, degree: n ? (2 * links) / n : 0, density: n > 1 ? (2 * links) / (n * (n - 1)) : 0, clustering: triads ? closed / triads : 0, modularity,
+    connected: n ? largest / n : 0, linked: notes.length ? notes.filter((node) => explicit.has(node.id)).length / notes.length : 0, orphaned: notes.length ? orphans.length / notes.length : 0,
+  };
+  return { rank, glow, between, clusterOf, degree, hubs, bridges: bridges.slice(0, 12), gaps: gaps.slice(0, 8), orphans, islands, health };
+}
+
+/** 상태 지표를 읽고 먼저 손볼 곳을 한두 줄로 알린다(화면의 발견 패널과 `relay graph map`이 함께 쓴다). */
+export function healthNotes(health: Health): string[] {
+  if (health.docs < 4) return [];
+  const percent = (value: number) => `${Math.round(value * 100)}%`;
+  const notes: string[] = [];
+  if (health.orphaned > 0.3) notes.push(`메모의 ${percent(health.orphaned)}가 어디에도 닿지 않습니다. 본문에 [[제목]]이나 #태그를 적어 이어 보세요.`);
+  if (health.linked < 0.3) notes.push(`직접 링크로 이어진 메모가 ${percent(health.linked)}뿐입니다. 제안 연결부터 이으면 그래프가 또렷해집니다.`);
+  if (health.connected < 0.5 && health.docs >= 8) notes.push(`가장 큰 덩어리에 든 글이 ${percent(health.connected)}입니다. 주제 사이의 틈에 다리를 놓으면 덩어리가 이어집니다.`);
+  if (health.modularity < 0.15 && health.docs >= 12 && health.links >= 12) notes.push("주제가 뚜렷이 나뉘지 않고 한데 뭉쳐 있습니다. 태그나 폴더로 갈래를 잡아 보세요.");
+  return notes.length ? notes.slice(0, 2) : ["메모가 고르게 이어져 있습니다."];
 }
 
 export type SuggestReason = { kind: "mention" | "similar" | "neighbors" | "gap"; text: string };

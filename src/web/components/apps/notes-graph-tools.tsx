@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ArrowLeftRight, Check, Copy, FileText, History, Lightbulb, Link2, Plus, Route, Sparkles, Terminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, BookmarkPlus, Check, Copy, FileText, History, Lightbulb, Link2, Plus, Route, Sparkles, Terminal, X, type LucideIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { GraphEdge, GraphNode, NoteGraph } from "../../lib/note-graph";
-import type { GraphPath, Insight, Suggestion } from "../../lib/graph-insight";
+import { healthNotes, type GraphPath, type Insight, type Suggestion } from "../../lib/graph-insight";
 import { contextText, graphCommand, graphReference, type ContextResult } from "../../lib/graph-context";
 
 /** 메모 그래프의 도구: 왼쪽 레일에서 고르는 세 패널.
@@ -62,6 +62,15 @@ function Row({ ids, onSpot, onClick, children, index = 0, className }: {
   </li>;
 }
 
+/** 0..1 값을 고리로 보인다(열릴 때 0에서 차오른다). text를 주면 가운데에 백분율 대신 적는다. */
+function Gauge({ value, label, text, hint }: { value: number; label: string; text?: string; hint: string }) {
+  const share = Math.max(0, Math.min(1, value));
+  return <div className="graph-gauge" title={hint}>
+    <span className="graph-gauge-ring" style={{ "--v": share } as CSSProperties} aria-hidden="true"><span>{text ?? `${Math.round(share * 100)}`}</span></span>
+    <span className="graph-gauge-label">{label}</span>
+  </div>;
+}
+
 type Common = { graph: NoteGraph; colorOf: (node: GraphNode) => string; onPick: (id: string) => void; onSpot: (ids: string[] | null) => void; onClose: () => void };
 
 export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onSpot, onClose, onLink, visible }: Common & {
@@ -79,8 +88,20 @@ export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onS
   const orphans = insight.orphans.filter((id) => visible.has(id));
   const shown = suggestions.filter((entry) => visible.has(entry.from) && visible.has(entry.to)).slice(0, 8);
   const nothing = !hubs.length && !shown.length && !orphans.length;
+  const { health } = insight;
+  const hints = healthNotes(health);
   return <Panel tool="insight" title="발견" hint="그래프를 읽어 낸 것. 줄에 마우스를 올리면 그 점이 밝아집니다." onClose={onClose}>
     {nothing && <p className="graph-panel-empty">아직 읽어 낼 연결이 없습니다. 메모를 더 쓰고 <code>[[제목]]</code>으로 이어 보세요.</p>}
+    {health.docs >= 4 && <section className="graph-health" aria-label="그래프 상태">
+      <h4>그래프 상태</h4>
+      <div className="graph-gauges" role="img" aria-label={`직접 링크로 이어진 메모 ${Math.round(health.linked * 100)}%, 가장 큰 덩어리 ${Math.round(health.connected * 100)}%, 모듈성 ${health.modularity.toFixed(2)}, 글 하나에 이웃 ${health.degree.toFixed(1)}개`}>
+        <Gauge value={health.linked} label="직접 링크" hint="[[제목]]이나 ID로 직접 이어진 메모의 비율" />
+        <Gauge value={health.connected} label="큰 덩어리" hint="가장 큰 이어진 덩어리에 든 글의 비율" />
+        <Gauge value={Math.max(0, health.modularity) / 0.6} text={health.modularity.toFixed(2)} label="주제 나뉨" hint="모듈성: 주제 묶음 안의 선이 우연보다 얼마나 많은가. 0.3을 넘으면 주제가 뚜렷이 나뉜 것입니다" />
+        <Gauge value={health.degree / 6} text={health.degree.toFixed(1)} label="이웃 수" hint="글 하나에 닿은 글의 평균 수" />
+      </div>
+      {hints.map((hint) => <p key={hint} className="graph-panel-note">{hint}</p>)}
+    </section>}
     {shown.length > 0 && <section>
       <h4>제안 연결<span>{shown.length}</span></h4>
       <p className="graph-panel-note">아직 링크로 잇지 않았지만 이으면 좋을 메모입니다. 「잇기」를 누르면 앞 메모 본문 끝에 링크 한 줄을 적습니다.</p>
@@ -135,9 +156,11 @@ export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onS
 
 type Copied = "reference" | "command" | "text" | "failed" | null;
 
-export function ContextPanel({ graph, colorOf, onPick, onSpot, onClose, active, query, onQuery, seeds, onSeeds, budget, onBudget, result }: Common & {
+export function ContextPanel({ graph, colorOf, onPick, onSpot, onClose, active, query, onQuery, seeds, onSeeds, budget, onBudget, result, onSaveHub }: Common & {
   active: GraphNode | null; query: string; onQuery: (query: string) => void; seeds: string[]; onSeeds: (seeds: string[]) => void;
   budget: number; onBudget: (budget: number) => void; result: ContextResult | null;
+  /** 고른 묶음을 링크 목록으로 담은 메모(허브 메모)를 만든다. */
+  onSaveHub: () => void;
 }) {
   const [copied, setCopied] = useState<Copied>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -167,6 +190,9 @@ export function ContextPanel({ graph, colorOf, onPick, onSpot, onClose, active, 
         <Button type="button" size="xs" variant="outline" disabled={!ready} onClick={() => void copy("text")} title="묶음 내용 전체(Markdown). CLI가 없는 대화창에 그대로 붙여 넣을 수 있습니다">
           {copied === "text" ? <Check aria-hidden="true" /> : <FileText aria-hidden="true" />}내용</Button>
       </div>
+      <button type="button" className="graph-context-hub" disabled={!ready} onClick={onSaveHub}
+        title="고른 메모와 세션으로 가는 링크를 모은 메모를 만듭니다. 그 메모를 중심으로 주면 같은 묶음이 다시 따라옵니다">
+        <BookmarkPlus aria-hidden="true" />허브 메모로 저장</button>
       <p className="graph-context-status" role="status" aria-live="polite">
         {copied === "failed" ? "복사하지 못했습니다. 브라우저의 클립보드 권한을 확인하세요."
           : copied === "reference" ? "참조 줄을 복사했습니다. AI 에이전트에 붙여 넣으세요."

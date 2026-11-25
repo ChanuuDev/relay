@@ -1571,6 +1571,29 @@ canvas.md-stl:active { cursor: grabbing; }
 .graph-path-edge { display: block; margin: 0 0 0 9px; padding: 3px 0 3px 14px; border-left: 1.5px solid color-mix(in srgb, var(--notes-accent) 60%, transparent);
   font-size: 10.5px; color: var(--glass-text-muted); }
 
+/* 그래프 상태: 고리 게이지가 열릴 때 차오른다. */
+@property --v { syntax: "<number>"; inherits: false; initial-value: 0; }
+.graph-gauges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 2px 8px; }
+.graph-gauge { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+.graph-gauge-ring { position: relative; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%;
+  background: conic-gradient(from -90deg, var(--notes-accent) calc(var(--v) * 1turn), color-mix(in srgb, var(--foreground) 10%, transparent) 0);
+  animation: graph-gauge 1s .12s cubic-bezier(.2, .8, .2, 1) both; }
+.graph-gauge:nth-child(2) .graph-gauge-ring { animation-delay: .2s; background: conic-gradient(from -90deg, #8b5cf6 calc(var(--v) * 1turn), color-mix(in srgb, var(--foreground) 10%, transparent) 0); }
+.graph-gauge:nth-child(3) .graph-gauge-ring { animation-delay: .28s; background: conic-gradient(from -90deg, #3b82f6 calc(var(--v) * 1turn), color-mix(in srgb, var(--foreground) 10%, transparent) 0); }
+.graph-gauge:nth-child(4) .graph-gauge-ring { animation-delay: .36s; background: conic-gradient(from -90deg, #f59e0b calc(var(--v) * 1turn), color-mix(in srgb, var(--foreground) 10%, transparent) 0); }
+.graph-gauge-ring::before { content: ""; position: absolute; inset: 4.5px; border-radius: 50%; background: var(--graph-glass-strong); box-shadow: 0 0 0 .5px var(--graph-edge); }
+.graph-gauge-ring > span { position: relative; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.graph-gauge-label { max-width: 100%; font-size: 10.5px; color: var(--glass-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.graph-health .graph-panel-note { margin-top: 2px; }
+.graph-context-hub { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; height: 24px; padding: 0 9px 0 7px; border-radius: 999px; font-size: 11px; font-weight: 560;
+  color: color-mix(in srgb, var(--foreground) 78%, transparent); background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  transition: background-color .15s ease-out, color .15s ease-out, transform .2s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-context-hub:hover:not(:disabled) { background: color-mix(in srgb, var(--notes-accent) 15%, transparent); color: var(--notes-accent); transform: translateY(-1px); }
+.graph-context-hub:disabled { opacity: .45; }
+.graph-context-hub:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: 1px; }
+.graph-context-hub svg { width: 12px; height: 12px; }
+@keyframes graph-gauge { from { --v: 0; } }
+
 /* 카드의 도구 줄, 안내 띠. */
 .graph-card-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .graph-card-tools button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 7px; border-radius: 999px; font-size: 11px; font-weight: 560;

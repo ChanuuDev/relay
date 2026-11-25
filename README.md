@@ -205,12 +205,12 @@ Dock에서 메모와 파일 탐색기, 계산기 등을 함께 열어 두고 창
 
   | 도구 | 하는 일 |
   | --- | --- |
-  | **발견** (`I`) | 그래프를 읽어 낸 것을 보입니다. **제안 연결**(제목이 본문에 나오는데 링크가 아닌 쌍, 드문 낱말을 함께 쓰는 쌍, 같은 점에 함께 이어진 쌍)은 「잇기」 한 번으로 앞 메모 본문 끝에 `- [[제목]]` 한 줄을 적습니다. **주제 사이의 틈**은 내용은 가까운데 선이 없는 주제 쌍과 「다리 놓기」, **중심 메모**는 선이 모이는 메모(PageRank), **다리 메모**는 서로 다른 주제를 잇는 메모(매개 중심성)입니다. 줄에 마우스를 올리면 그래프에서 그 점들만 밝아집니다 |
-  | **에이전트 맥락** (`C`) | 하려는 일을 낱말로 적거나 점을 중심에 더하면, 그래프를 따라 관련 메모와 작업 세션을 골라 AI 에이전트에 건넬 묶음을 미리 보입니다. 씨앗에서 이웃으로 빛이 번져 가고, 관련이 큰 점일수록 밝게 빛납니다. **참조 줄 복사**는 Agent 대화창에 붙여 넣을 한 줄(`Relay 그래프 맥락을 참조해 주세요. …`)을, **명령**은 같은 묶음을 내는 `relay graph context …`를, **내용**은 묶음 전체(Markdown)를 복사합니다 |
+  | **발견** (`I`) | 그래프를 읽어 낸 것을 보입니다. **제안 연결**(제목이 본문에 나오는데 링크가 아닌 쌍, 드문 낱말을 함께 쓰는 쌍, 같은 점에 함께 이어진 쌍)은 「잇기」 한 번으로 앞 메모 본문 끝에 `- [[제목]]` 한 줄을 적습니다. **주제 사이의 틈**은 내용은 가까운데 선이 없는 주제 쌍과 「다리 놓기」, **중심 메모**는 선이 모이는 메모(PageRank), **다리 메모**는 서로 다른 주제를 잇는 메모(매개 중심성)입니다. 맨 위의 **그래프 상태**는 직접 링크로 이어진 메모의 비율·가장 큰 덩어리·주제 나뉨(모듈성)·이웃 수를 고리로 보이고 먼저 손볼 곳을 알립니다. 줄에 마우스를 올리면 그래프에서 그 점들만 밝아집니다 |
+  | **에이전트 맥락** (`C`) | 하려는 일을 낱말로 적거나 점을 중심에 더하면, 그래프를 따라 관련 메모와 작업 세션을 골라 AI 에이전트에 건넬 묶음을 미리 보입니다. 씨앗에서 이웃으로 빛이 번져 가고, 관련이 큰 점일수록 밝게 빛납니다. **참조 줄 복사**는 Agent 대화창에 붙여 넣을 한 줄(`Relay 그래프 맥락을 참조해 주세요. …`)을, **명령**은 같은 묶음을 내는 `relay graph context …`를, **내용**은 묶음 전체(Markdown)를 복사합니다. **허브 메모로 저장**은 고른 메모와 세션으로 가는 링크를 이유와 함께 모은 메모(`맥락: …`)를 만들어, 다음부터 그 메모 하나를 중심으로 주면 같은 묶음이 따라오게 합니다 |
   | **경로** (`P`) | 두 점을 고르면 어떤 메모를 거쳐 이어지는지 가장 가까운 길이 한 구간씩 그어지고, 그 위로 빛이 달립니다 |
   | **시간 흐름 재생** (`R`) | 만든 순서대로 점이 하나씩 다시 나타나 메모가 쌓여 온 과정을 보입니다 |
 
-  점의 카드에는 **맥락에 담기**·**경로 찾기**·**연결 만들기**(`L`, 누른 메모·세션으로 가는 링크를 본문에 적음)가 있습니다. 중요한 메모일수록 둘레의 빛무리가 짙고, 「보일 연결과 점」의 **주제로 색 나누기**를 켜면 폴더 대신 내용으로 묶은 주제가 색이 됩니다.
+  점의 카드에는 **맥락에 담기**·**경로 찾기**·**연결 만들기**(`L`, 누른 메모·세션으로 가는 링크를 본문에 적음)가 있습니다. 중요한 메모일수록 둘레의 빛무리가 짙고, 「보일 연결과 점」의 **주제로 색 나누기**를 켜면 폴더 대신 내용으로 묶은 주제가 색이 됩니다. 주제는 선의 무게를 따라 모듈성이 커지도록 나눕니다(Louvain). 확대해서 점들이 화면 밖으로 나가면 오른쪽 아래에 **미니맵**이 떠오르고, 누르거나 끌면 그 자리로 갑니다.
 - **파일로 보관**: 개별 메모는 `.md`로 내려받고, 전체 메모·폴더는 메모가 쓰는 그림과 함께 JSON으로 내보내 다른 PC나 저장소에 가져옵니다.
 - **AI 에이전트에 넘기기**: 왼쪽 트리에서 메모나 폴더를 우클릭해 **메모 ID 복사**·**폴더 ID 복사**를 누르거나, 오른쪽 내용 막대 끝의 **ID 복사**를 누릅니다(막대를 우클릭해도 같은 메뉴가 열립니다). 클립보드에는 `Relay 메모를 참조해 주세요. 메모 ID: <ID>` 한 줄이 들어가므로, Agent 대화창에 붙여 넣기만 하면 Agent가 아래 [메모를 AI 맥락으로 쓰기](#메모를-ai-맥락으로-쓰기)의 방법으로 읽습니다.
 
@@ -246,7 +246,8 @@ relay memo --search "배포 일정"          # 폴더 이름·제목·본문 검
 relay graph context "서버 배포 순서"            # 질의에 맞는 메모와 그래프로 이어진 메모·작업 세션 묶음
 relay graph context --from <메모 ID> --brief    # 중심 메모에서 시작, 본문 없이 제목·한 줄·이유만
 relay graph context "배포" --budget 8000        # 토큰 한도(600~24000, 기본 4000)
-relay graph map                                 # 주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결
+relay graph context --project --brief           # 지금 작업 폴더에서 돈 세션과 이어진 메모(질의 없이)
+relay graph map                                 # 상태 지표·주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결
 relay graph neighbors <ID> --depth 2            # 어떤 점에 이어진 점들
 relay graph path <ID> <ID>                      # 두 점이 어떤 메모를 거쳐 이어지는지
 relay graph suggest                             # 이으면 좋을 메모 쌍과 이유
@@ -266,13 +267,15 @@ relay graph export --format graphml             # Gephi용 GraphML (json·mermai
 
 - 왜 따라왔는지가 메모마다 적힙니다(`질의와 맞음(낱말…)`, `‘출시 계획’ →링크`). ID는 겹치지 않는 앞 8자로 적어 토큰을 아낍니다.
 - Agent가 `relay update` 요약에 참고한 메모 ID를 적어 두면 그 세션이 그래프에서 그 메모와 이어져, 다음 Agent가 같은 메모에서 그 작업 기록을 찾습니다.
+- `--project [경로]`는 그 작업 폴더에서 돈 세션 가운데 메모와 이어진 것을 중심으로 삼습니다. Agent가 작업을 시작하며 질의를 정하기 전에 이 프로젝트와 이어진 메모가 있는지 훑을 때 씁니다(relay-session 스킬에도 적혀 있습니다).
+- `relay graph map`의 상태 줄은 글 하나의 이웃 수, 직접 링크로 이어진 메모의 비율, 가장 큰 덩어리의 비율, 모듈성, 군집 계수와 먼저 손볼 곳을 알립니다.
 - 모든 명령은 `--json`을 받고, `--sessions linked|all|none`으로 함께 볼 작업 세션을 고릅니다(기본은 메모와 이어진 세션).
 
 설계에 참고한 자료입니다.
 
 - 그래프 검색: [GraphRAG](https://arxiv.org/abs/2404.16130)(지역 검색의 본문·주제 요약 배분, 주제 묶음), [HippoRAG](https://arxiv.org/abs/2405.14831)·[HippoRAG 2](https://arxiv.org/abs/2502.14802)(씨앗에서 퍼뜨리는 Personalized PageRank), [Zep/Graphiti](https://arxiv.org/abs/2501.13956)(낡은 사실을 지우지 않고 더 새로운 것을 표시), [A-MEM](https://arxiv.org/abs/2502.12110)(메모끼리 잇는 기억)
 - 맥락 설계: Anthropic의 [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)·[Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)·[Writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents), [Lost in the Middle](https://arxiv.org/abs/2307.03172), Chroma의 [Context Rot](https://www.trychroma.com/research/context-rot)
-- 그래프 읽기: Brandes의 매개 중심성, Adamic–Adar 공통 이웃 점수([Liben-Nowell & Kleinberg](https://www.cs.cornell.edu/home/kleinber/link-pred.pdf)), [InfraNodus](https://infranodus.com/docs/structural-gaps)의 주제 사이의 틈, [Obsidian 그래프](https://obsidian.md/help/plugins/graph)의 시간 흐름 재생
+- 그래프 읽기: [Louvain](https://arxiv.org/abs/0803.0476) 묶음 나누기와 모듈성, Brandes의 매개 중심성, Adamic–Adar 공통 이웃 점수([Liben-Nowell & Kleinberg](https://www.cs.cornell.edu/home/kleinber/link-pred.pdf)), [InfraNodus](https://infranodus.com/docs/structural-gaps)의 주제 사이의 틈, [Obsidian 그래프](https://obsidian.md/help/plugins/graph)의 시간 흐름 재생
 
 ### 파일을 찾고 내용 확인하기
 
@@ -548,7 +551,7 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay memo --list [--folder <폴더 ID>]` | 메모 폴더 트리와 메모·폴더 ID(본문 없음). AI 에이전트가 메모를 찾을 때 |
 | `relay memo --find <ID>` | 메모의 제목·위치·본문, 폴더면 그 아래 모든 메모. ID 앞 6자 이상도 받음 |
 | `relay memo --search <낱말>` | 폴더 이름·메모 제목·본문 검색(띄어 쓴 낱말이 모두 든 항목과 맞은 줄) |
-| `relay graph context [질의] [--from <ID>]… [--budget <토큰>] [--brief] [--raw]` | 질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음(핵심 메모 본문·주변 메모·관계·이어진 작업 세션) |
+| `relay graph context [질의] [--from <ID>]… [--project [경로]] [--budget <토큰>] [--brief] [--raw]` | 질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음(핵심 메모 본문·주변 메모·관계·이어진 작업 세션) |
 | `relay graph map [--limit <수>]` | 그래프 지도: 주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결·연결 없는 메모 |
 | `relay graph neighbors <ID> [--depth <1~3>]` / `relay graph path <ID> <ID>` | 어떤 점의 이웃, 두 점을 잇는 가장 가까운 길 |
 | `relay graph suggest [--for <ID>] [--limit <수>]` / `relay graph link <from> <to> [--why <글>]` | 이으면 좋을 메모 쌍, 메모 본문 끝에 링크 한 줄 적기 |

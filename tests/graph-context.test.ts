@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { appendLink, appendSessionLink, buildGraph, linkTarget, projectNodeId, sessionNodeId, SESSION_GROUP, type GraphSession } from "../src/web/lib/note-graph";
-import { analyze, betweenness, hood, pageRank, shortestPath, suggestLinks, tally } from "../src/web/lib/graph-insight";
+import { appendLink, appendSessionLink, buildGraph, linkTarget, louvain, projectNodeId, sessionNodeId, SESSION_GROUP, type GraphSession } from "../src/web/lib/note-graph";
+import { analyze, betweenness, healthNotes, hood, pageRank, shortestPath, suggestLinks, tally } from "../src/web/lib/graph-insight";
 import { buildContext, contextText, estimateTokens, excerpt, graphCommand, graphReference, lexicalSearch, redactSecrets } from "../src/web/lib/graph-context";
 import type { Items } from "../src/web/lib/notes";
 
@@ -144,6 +144,41 @@ describe("그래프 읽어 내기", () => {
     expect(JSON.stringify(analyze(buildGraph(SAMPLE)).hubs)).toBe(JSON.stringify(insight.hubs));
   });
 
+  test("Louvain: 촘촘히 이어진 두 무리를 약한 다리 하나가 이어도 둘로 나눈다", () => {
+    const weights = new Map<string, Map<string, number>>();
+    const tie = (a: string, b: string, weight: number) => { for (const [x, y] of [[a, b], [b, a]] as const) weights.set(x, new Map([...(weights.get(x) ?? []), [y, weight]])); };
+    for (const group of [["a1", "a2", "a3", "a4"], ["b1", "b2", "b3", "b4"]]) for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) tie(group[i]!, group[j]!, 1);
+    tie("a4", "b1", 0.3);
+    const parts = louvain(["a1", "a2", "a3", "a4", "b1", "b2", "b3", "b4", "solo"], weights);
+    expect(new Set(["a1", "a2", "a3", "a4"].map((id) => parts.get(id))).size).toBe(1);
+    expect(new Set(["b1", "b2", "b3", "b4"].map((id) => parts.get(id))).size).toBe(1);
+    expect(parts.get("a1")).not.toBe(parts.get("b1"));
+    // 묶음의 이름은 그 안에서 ID가 가장 앞선 점이고, 선이 없는 점은 홀로 남는다.
+    expect(parts.get("a3")).toBe("a1");
+    expect(parts.get("solo")).toBe("solo");
+    expect([...louvain(["x", "y"], new Map()).entries()]).toEqual([["x", "x"], ["y", "y"]]);
+  });
+
+  test("상태 지표: 이웃 수·직접 링크 비율·가장 큰 덩어리·모듈성을 재고 먼저 손볼 곳을 알린다", () => {
+    const { health } = analyze(graph);
+    expect(health.docs).toBe(8);
+    expect(health.links).toBeGreaterThan(0);
+    expect(health.degree).toBeCloseTo((2 * health.links) / health.docs, 6);
+    expect(health.density).toBeGreaterThan(0);
+    expect(health.density).toBeLessThanOrEqual(1);
+    // 출시 계획 ↔ 주간 회의만 직접 링크다.
+    expect(health.linked).toBeCloseTo(2 / 8, 6);
+    expect(health.orphaned).toBeCloseTo(analyze(graph).orphans.length / 8, 6);
+    expect(health.connected).toBeGreaterThan(0);
+    expect(health.connected).toBeLessThan(1);
+    expect(health.modularity).toBeGreaterThan(0.2);
+    expect(health.clustering).toBeGreaterThanOrEqual(0);
+    expect(healthNotes(health).some((note) => note.includes("직접 링크"))).toBe(true);
+    expect(healthNotes({ ...health, docs: 2 })).toEqual([]);
+    expect(healthNotes({ ...health, linked: 0.8, orphaned: 0, connected: 0.9, modularity: 0.4 })).toEqual(["메모가 고르게 이어져 있습니다."]);
+    expect(analyze(buildGraph({})).health).toMatchObject({ docs: 0, links: 0, degree: 0, density: 0, modularity: 0 });
+  });
+
   test("제안 연결: 링크 아닌 제목 언급이 가장 앞에 오고, 이미 링크한 쌍은 빠진다", () => {
     const list = suggestLinks(graph);
     expect(list[0]).toMatchObject({ from: "n-retro", to: "n-weekly" });
@@ -206,6 +241,10 @@ describe("맥락 묶음", () => {
     expect(pack.seeds).toEqual([{ id: "n-ts", ref: "n-ts", label: "타입스크립트", kind: "note" }]);
     expect(pack.relations.some((relation) => relation.text.includes("비슷함"))).toBe(true);
     expect(pack.topics[0]!.included).toBeGreaterThan(0);
+    // 중심이 여럿이면 하나하나 적는 대신 한마디로 적을 수 있다(작업 폴더 기준).
+    const based = buildContext(graph, SAMPLE, { seeds: ["n-ts", "n-test"], basis: "작업 폴더 ‘relay’에서 돈 세션 2개" }).pack;
+    expect(contextText(based)).toContain("- 기준: 작업 폴더 ‘relay’에서 돈 세션 2개\n");
+    expect(contextText(based)).not.toContain("중심 ‘타입스크립트’");
     // 폴더를 중심으로 주면 그 아래 메모들이 씨앗이 된다.
     const folder = buildContext(graph, SAMPLE, { seeds: ["f-meet"] }).pack;
     expect([...folder.core, ...folder.related].map((note) => note.id)).toEqual(expect.arrayContaining(["n-weekly", "n-retro"]));

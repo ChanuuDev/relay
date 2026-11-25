@@ -208,6 +208,22 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
     if (body === source.body) { setNotice(`‘${graph.byId.get(from)?.label}’은(는) 이미 ‘${target.label}’을(를) 가리킵니다.`); return; }
     useNotes.getState().update(from, { body });
     setNotice(`‘${graph.byId.get(from)?.label}’에서 ‘${target.label}’(으)로 이었습니다.`);
+    scene?.pulse([from, to]);
+  }
+
+  /** 지금 고른 맥락 묶음을 허브 메모로 남긴다: 실은 메모와 세션으로 가는 링크를 이유와 함께 적은 새 메모. 그래프에서는 그 메모가 묶음의 중심이 된다. */
+  function saveHub() {
+    if (!context || context.pack.empty) return;
+    const { pack } = context;
+    const name = contextQuery.replace(/\s+/g, " ").trim() || seedsInGraph.map((id) => graph.byId.get(id)?.label).filter(Boolean).join(", ") || "묶음";
+    const title = `맥락: ${name}`.slice(0, 80);
+    let body = "";
+    for (const note of [...pack.core, ...pack.related]) body = appendLink(body, linkTarget(items, note.id), note.why);
+    for (const entry of pack.sessions) { const session = graph.sessions.get(entry.id); if (session) body = appendSessionLink(body, session); }
+    const id = useNotes.getState().createNote(null, { title, body });
+    setContextSeeds([id]);
+    setContextQuery("");
+    setNotice(`허브 메모 ‘${title}’을(를) 만들었습니다. 이제 이 메모가 묶음의 중심입니다.`);
   }
 
   function choose(id: string | null, from: Origin) {
@@ -373,7 +389,7 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
       onClose={() => openTool(null)} onLink={link} />}
     {tool === "context" && <ContextPanel graph={graph} colorOf={colorOf} onPick={pick} onSpot={spot} onClose={() => openTool(null)}
       active={active ? visible.get(active) ?? null : null} query={contextQuery} onQuery={setContextQuery} seeds={seedsInGraph} onSeeds={setContextSeeds}
-      budget={budget} onBudget={setBudget} result={context} />}
+      budget={budget} onBudget={setBudget} result={context} onSaveHub={saveHub} />}
     {tool === "path" && <PathPanel graph={graph} colorOf={colorOf} onPick={pick} onSpot={spot} onClose={() => openTool(null)} from={pathFrom} to={pathTo}
       picking={picking} onPicking={setPicking} path={route}
       onSwap={() => { setPathFrom(pathTo); setPathTo(pathFrom); }} onClear={(slot) => { if (slot === "from") setPathFrom(null); else setPathTo(null); setPicking(slot); }} />}

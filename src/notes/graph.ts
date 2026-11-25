@@ -4,7 +4,7 @@ import { MemoIndex } from "./memo";
 import {
   appendLink, appendSessionLink, buildGraph, isDoc, linkTarget, sessionNodeId, tagId, toGraphSession, type EdgeKind, type GraphNode, type NoteGraph,
 } from "../web/lib/note-graph";
-import { CONTENT_KINDS, analyze, hood, shortestPath, suggestLinks, tally, type Insight } from "../web/lib/graph-insight";
+import { CONTENT_KINDS, analyze, healthNotes, hood, shortestPath, suggestLinks, tally, type Health, type Insight } from "../web/lib/graph-insight";
 import { buildContext, contextText, pathText, shortRefs, type ContextOptions, type ContextPack } from "../web/lib/graph-context";
 import type { Items } from "../web/lib/notes";
 
@@ -20,6 +20,8 @@ type Head = { schemaVersion: 1; revision: number; api: string };
 export type GraphMap = Head & {
   counts: { notes: number; folders: number; tags: number; sessions: number; projects: number; edges: Record<EdgeKind, number> };
   islands: number;
+  /** 얼마나 잘 이어져 있는지(비율은 0..1)와, 먼저 손볼 곳. */
+  health: Health & { notes: string[] };
   topics: Array<{ id: string; label: string; keywords: string[]; size: number; hubs: Ref[] }>;
   hubs: Array<Ref & { degree: number; score: number }>;
   bridges: Array<Ref & { topics: string[]; score: number }>;
@@ -97,6 +99,7 @@ export class GraphTool {
       ...this.head,
       counts: { notes: count.nodes.note, folders: count.nodes.folder, tags: count.nodes.tag, sessions: count.nodes.session, projects: count.nodes.project, edges: count.edges },
       islands: insight.islands,
+      health: { ...insight.health, notes: healthNotes(insight.health) },
       topics: graph.clusters.filter((cluster) => cluster.id !== "cluster:lonely").slice(0, limit).map((cluster) => ({
         id: cluster.id, label: cluster.label, keywords: cluster.keywords, size: cluster.members.length, hubs: [...cluster.members].sort(byRank).slice(0, 3).map((id) => this.ref(id)) })),
       hubs: insight.hubs.slice(0, limit).map((hub) => ({ ...this.ref(hub.id), degree: hub.degree, score: hub.score })),
@@ -111,9 +114,21 @@ export class GraphTool {
     };
   }
 
-  context(options: ContextOptions): GraphContext {
+  /** project를 주면 그 작업 폴더에서 돈 세션 가운데 메모와 이어진 것들이 중심이 된다(질의 없이도 「이 프로젝트와 이어진 메모」를 고른다). */
+  context(options: ContextOptions & { project?: string }): GraphContext {
     const seeds = (options.seeds ?? []).map((raw) => this.resolve(raw).id);
-    const { pack } = buildContext(this.graph, this.items, { ...options, seeds, insight: this.insight });
+    let basis: string | undefined;
+    let query = options.query;
+    if (options.project !== undefined) {
+      const wanted = options.project.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase("en-US");
+      const name = wanted.split("/").pop() || wanted;
+      const sessions = [...this.graph.sessions].filter(([, session]) => session.cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase("en-US") === wanted).map(([id]) => id);
+      seeds.push(...sessions);
+      basis = `작업 폴더 ‘${name}’${sessions.length ? `에서 돈 세션 ${sessions.length}개` : "(메모와 이어진 세션 없음)"}`;
+      // 이어진 세션이 없으면 폴더 이름으로 찾는다.
+      if (!sessions.length && !(query ?? "").trim() && !seeds.length) query = name;
+    }
+    const { pack } = buildContext(this.graph, this.items, { ...options, query, seeds, basis, insight: this.insight });
     return { ...this.head, ...pack, text: contextText(pack) };
   }
 
@@ -182,7 +197,9 @@ export function mapText(map: GraphMap): string {
   const lines = ["# Relay 메모 그래프 지도", "",
     `- 점: 메모 ${counts.notes}개 · 폴더 ${counts.folders}개 · 태그 ${counts.tags}개${counts.sessions ? ` · 메모와 이어진 작업 세션 ${counts.sessions}개` : ""}`,
     `- 내용으로 이어진 선: ${content.length ? content.join(" · ") : "없음"}`,
-    `- 이어진 덩어리 ${map.islands}개 · 어디에도 닿지 않은 메모 ${map.orphans.total}개`];
+    `- 이어진 덩어리 ${map.islands}개 · 어디에도 닿지 않은 메모 ${map.orphans.total}개`,
+    `- 상태: 글 하나에 이웃 ${map.health.degree.toFixed(1)}개 · 직접 링크로 이어진 메모 ${Math.round(map.health.linked * 100)}% · 가장 큰 덩어리 ${Math.round(map.health.connected * 100)}% · 주제 나뉨(모듈성) ${map.health.modularity.toFixed(2)} · 이웃끼리 이어짐(군집 계수) ${map.health.clustering.toFixed(2)}`,
+    ...map.health.notes.map((note) => `- 손볼 곳: ${note}`)];
   if (!counts.notes) return `${[...lines, "", "메모가 없습니다."].join("\n")}\n`;
   if (map.topics.length) {
     lines.push("", "## 주제 묶음 (내용으로 이어진 메모끼리)", "");

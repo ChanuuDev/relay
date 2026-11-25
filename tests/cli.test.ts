@@ -570,8 +570,13 @@ describe("CLI processes", () => {
     expect(map.hubs.map((hub: { id: string }) => hub.id)).toContain("note-weekly");
     expect(map.suggestions[0]).toMatchObject({ from: { id: "note-retro" }, to: { id: "note-weekly" } });
     expect(cli(dir, ["graph", "map", "--sessions", "none"]).data.counts.sessions).toBe(0);
+    // 상태 지표: 직접 링크로 이어진 메모는 출시 계획과 주간 회의 둘이다.
+    expect(map.health.docs).toBe(7);
+    expect(map.health.linked).toBeCloseTo(2 / 6, 6);
+    expect(map.health.modularity).toBeGreaterThan(0);
+    expect(map.health.notes.length).toBeGreaterThan(0);
     const mapText = plain(["graph", "map"]).stdout.toString();
-    for (const text of ["# Relay 메모 그래프 지도", "## 주제 묶음", "## 중심 메모", "## 제안 연결", "## 연결 없는 메모", "relay graph context"]) expect(mapText).toContain(text);
+    for (const text of ["# Relay 메모 그래프 지도", "- 상태: 글 하나에 이웃", "주제 나뉨(모듈성)", "- 손볼 곳:", "## 주제 묶음", "## 중심 메모", "## 제안 연결", "## 연결 없는 메모", "relay graph context"]) expect(mapText).toContain(text);
 
     // 맥락 묶음: 질의에 맞은 메모가 핵심, 그래프로 이어진 메모와 세션이 따라온다. 관련 없는 메모는 싣지 않고 비밀로 보이는 값은 가린다.
     const context = cli(dir, ["graph", "context", "서버", "배포", "순서"]).data;
@@ -599,6 +604,13 @@ describe("CLI processes", () => {
     expect(brief.related.length).toBeGreaterThan(0);
     expect(cli(dir, ["graph", "context", "양자역학"]).data).toMatchObject({ empty: true, core: [], related: [] });
     expect(plain(["graph", "context", "양자역학"]).stdout.toString()).toContain("맞는 메모를 찾지 못했습니다");
+    // 작업 폴더 기준: 그 폴더에서 돈 세션과 이어진 메모가 질의 없이 따라온다. 세션이 없는 폴더는 폴더 이름으로 찾는다.
+    const project = cli(dir, ["graph", "context", "--project", root, "--brief"]).data;
+    expect(project.basis).toBe(`작업 폴더 ‘${path.basename(root).toLowerCase()}’에서 돈 세션 1개`);
+    expect(project.related.map((entry: { id: string }) => entry.id)).toContain(PLAN);
+    expect(project.text).toContain("- 기준: 작업 폴더 ‘");
+    expect(cli(dir, ["graph", "context", "--project", dir]).data).toMatchObject({ empty: true });
+    expect(cli(dir, ["graph", "context", "--project", "relative/path"]).data.error.code).toBe("INVALID_ARGUMENT");
     expect(cli(dir, ["graph", "context"]).data.error.code).toBe("INVALID_ARGUMENT");
     expect(cli(dir, ["graph", "context", "배포", "--budget", "10"]).data.error.code).toBe("INVALID_ARGUMENT");
     expect(cli(dir, ["graph", "map", "--sessions", "some"]).data.error.code).toBe("INVALID_ARGUMENT");

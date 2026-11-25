@@ -149,6 +149,10 @@ export class GraphScene {
   /** 연결을 만드는 중: 여기서 커서(또는 올린 점)까지 줄을 그린다. */
   private linkFrom: string | null = null;
   private cursor: Vec | null = null;
+  /** 미니맵: 점들이 화면 밖으로 나가 있을 때만 떠오른다. 누르거나 끌면 그 자리로 간다. */
+  private mini: { x: number; y: number; w: number; h: number; ox: number; oy: number; scale: number } | null = null;
+  private miniAlpha = 0;
+  private miniDrag: number | null = null;
   /** 만든 순서대로 다시 보이는 중. */
   private replaying: { start: number; span: number; steps: Array<{ at: number; time: number; doc: boolean }>; docs: number } | null = null;
   get insets(): Insets {
@@ -465,6 +469,13 @@ export class GraphScene {
     this.kick();
   }
   setLinkFrom(id: string | null) { this.linkFrom = id; this.kick(); }
+  /** 점에서 파문을 일으킨다(새 연결이 생긴 두 끝 등). */
+  pulse(ids: string[]) {
+    if (this.reduced) return;
+    const now = performance.now();
+    for (const id of ids) if (this.nodes.has(id)) this.ripples.push({ id, start: now });
+    this.kick();
+  }
   /** 만든 순서대로 점이 하나씩 다시 나타난다(시간 흐름 재생). 태그·폴더는 처음 닿은 글과 함께 나온다. */
   replay() {
     if (!this.layout || !this.data || this.transition) return;
@@ -497,6 +508,8 @@ export class GraphScene {
     this.kick();
   }
   get isReplaying() { return this.replaying !== null; }
+  /** 미니맵이 떠 있는가(테스트가 본다). */
+  get miniShown() { return this.miniAlpha > 0.5; }
   /** 도구가 가리킨 점이 있는가(테스트가 본다). */
   get spotted() { return this.spot !== null; }
 
@@ -549,6 +562,7 @@ export class GraphScene {
     }
     if (event.button !== 0 && event.pointerType === "mouse") return;
     const [x, y] = this.local(event);
+    if (this.miniAt(x, y)) { this.miniDrag = event.pointerId; this.pointer = null; this.miniMove(x, y); return; }
     const node = this.hit(x, y);
     this.fly = null;
     this.camTarget = { ...this.cam };
@@ -572,9 +586,10 @@ export class GraphScene {
     const [x, y] = this.local(event);
     const pointer = this.pointer;
     this.cursor = { x, y };
+    if (this.miniDrag === event.pointerId) { this.miniMove(x, y); return; }
     if (this.linkFrom) this.kick();
     if (!pointer || pointer.id !== event.pointerId) {
-      if (event.pointerType === "mouse") this.setHover(this.hit(x, y));
+      if (event.pointerType === "mouse") this.setHover(this.miniAt(x, y) ? null : this.hit(x, y));
       return;
     }
     if (!pointer.moved && Math.hypot(x - pointer.downX, y - pointer.downY) < 4) return;
@@ -604,6 +619,7 @@ export class GraphScene {
   pointerUp(event: PointerEvent) {
     this.touches.delete(event.pointerId);
     if (this.pinch) { if (this.touches.size < 2) this.pinch = null; return; }
+    if (this.miniDrag === event.pointerId) { this.miniDrag = null; return; }
     const pointer = this.pointer;
     if (!pointer || pointer.id !== event.pointerId) return;
     this.pointer = null;
@@ -856,6 +872,17 @@ export class GraphScene {
     if (this.ripples.length) busy = true;
     // 고른 점의 선 위로 흐르는 입자와 검색에 걸린 점의 깜빡임은 그동안 계속 움직인다.
     if (!reduced && !document.hidden && ((focus && lit && lit.size) || this.matches?.size || this.route || this.heat || this.linkFrom)) this.ambient = true;
+    // 미니맵은 보이는 점 가운데 화면 밖으로 나간 것이 있을 때만 떠오른다.
+    let outside = false;
+    if (this.w > 640 && this.nodes.size >= 8 && !this.replaying) {
+      for (const state of this.nodes.values()) {
+        if (state.visTo === 0) continue;
+        const [x, y] = this.project(state.x, state.y);
+        if (x < -4 || y < -4 || x > this.w + 4 || y > this.h + 4) { outside = true; break; }
+      }
+    }
+    const miniTarget = outside || this.miniDrag !== null ? 1 : 0;
+    if (Math.abs(miniTarget - this.miniAlpha) > 0.01) { this.miniAlpha = reduced ? miniTarget : lerp(this.miniAlpha, miniTarget, 1 - Math.exp(-dt / 140)); busy = true; } else this.miniAlpha = miniTarget;
     if (this.replaying && now - this.replaying.start > this.replaying.span + 1400) { this.replaying = null; delete this.host.dataset.replaying; this.events.replayed?.(); }
     if (this.replaying) busy = true;
     if (this.hovered) {
@@ -900,6 +927,60 @@ export class GraphScene {
     this.drawRipples(now);
     this.drawLinking(now);
     this.drawReplay(now);
+    this.drawMinimap();
+  }
+
+  private miniAt(x: number, y: number) {
+    const mini = this.mini;
+    return Boolean(mini && this.miniAlpha > 0.5 && x >= mini.x && x <= mini.x + mini.w && y >= mini.y && y <= mini.y + mini.h);
+  }
+  /** 미니맵에서 누른 자리가 화면 가운데에 오게 한다. */
+  private miniMove(x: number, y: number) {
+    const mini = this.mini;
+    if (!mini) return;
+    this.fly = null;
+    this.camTarget = { ...this.camTarget, x: mini.ox + (x - mini.x) / mini.scale, y: mini.oy + (y - mini.y) / mini.scale };
+    this.kick();
+  }
+
+  /** 전체 모양과 지금 보는 자리를 작은 창에 그린다. */
+  private drawMinimap() {
+    if (this.miniAlpha < 0.02 || !this.layout) { if (this.miniAlpha < 0.02) this.mini = null; return; }
+    const ctx = this.ctx, { fg, bg, accent, dark } = this.theme;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const state of this.nodes.values()) { if (state.visTo === 0) continue; x0 = Math.min(x0, state.x); y0 = Math.min(y0, state.y); x1 = Math.max(x1, state.x); y1 = Math.max(y1, state.y); }
+    if (!Number.isFinite(x0)) return;
+    const w = 148, h = 100, pad = 10;
+    const { right } = this.insets;
+    // 카드가 열려 있으면 그 왼쪽에, 아니면 오른쪽 가장자리에 붙인다(아래의 확대 단추 위).
+    const x = this.w - right - w + (right > 24 ? 0 : 12), y = this.h - 62 - h;
+    const scale = Math.min((w - pad * 2) / Math.max(1, x1 - x0), (h - pad * 2) / Math.max(1, y1 - y0));
+    // 세계 좌표 (ox, oy)가 미니맵의 왼쪽 위 모서리에 온다.
+    const ox = (x0 + x1) / 2 - w / 2 / scale, oy = (y0 + y1) / 2 - h / 2 / scale;
+    this.mini = { x, y, w, h, ox, oy, scale };
+    const alpha = this.miniAlpha;
+    ctx.save();
+    ctx.shadowColor = `rgba(0,0,0,${(dark ? 0.45 : 0.16) * alpha})`; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+    ctx.fillStyle = rgba(bg, (dark ? 0.82 : 0.9) * alpha);
+    this.roundRect(x, y + (1 - alpha) * 8, w, h, 14);
+    ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.lineWidth = 1; ctx.strokeStyle = rgba(fg, 0.12 * alpha); ctx.stroke();
+    ctx.clip();
+    const top = y + (1 - alpha) * 8;
+    for (const state of this.nodes.values()) {
+      if (state.vis < 0.05) continue;
+      ctx.fillStyle = rgba(state.color, 0.9 * alpha * state.vis);
+      ctx.beginPath(); ctx.arc(x + (state.x - ox) * scale, top + (state.y - oy) * scale, isContainer(state.node) ? 2.1 : 1.7, 0, Math.PI * 2); ctx.fill();
+    }
+    // 지금 화면이 덮는 자리.
+    const a = this.unproject(0, 0), b = this.unproject(this.w, this.h);
+    const vx = x + (a.x - ox) * scale, vy = top + (a.y - oy) * scale, vw = (b.x - a.x) * scale, vh = (b.y - a.y) * scale;
+    ctx.fillStyle = rgba(accent, 0.12 * alpha);
+    ctx.strokeStyle = rgba(accent, 0.9 * alpha); ctx.lineWidth = 1.5;
+    this.roundRect(vx, vy, vw, vh, Math.min(4, vw / 2, vh / 2));
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
   }
 
   /** 점 둘레의 빛무리: 중요한 메모는 늘 옅게, 맥락에 든 메모는 점수만큼 밝게. 점보다 먼저 그려 선과 점 아래에 깔린다. */

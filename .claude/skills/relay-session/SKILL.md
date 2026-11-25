@@ -95,6 +95,13 @@ relay continue <이전 Provider Session ID> --parent-provider <이전 회사 식
 
 입력 문자열은 인자 배열로 전달하거나 해당 셸에 맞게 인용한다. 저장 결과를 받지 못한 `continue`도 자동 재전송하지 말고 `relay show <ID> --provider <provider> --history --json`으로 먼저 확인한다.
 
+## 메모에서 작업 맥락 찾기
+
+사용자의 Relay 메모에 이 작업과 관련된 내용이 있을 수 있다. 사용자가 메모를 참고하라고 했거나, 작업 폴더와 이어진 메모가 있는지 확인이 필요하면 relay-graph 스킬을 따른다.
+
+- `relay graph context --project --brief`: 지금 작업 폴더에서 돈 세션과 이어진 메모를 제목과 한 줄로 훑는다. 맞는 것이 없으면 그대로 원래 작업을 계속한다.
+- 요약(`relay update --summary`)에 참고한 메모 ID를 적어 두면 그 세션이 메모 그래프에서 그 메모와 이어져, 다음 세션이 같은 메모에서 이 기록을 찾는다. 메모 내용은 요약에 옮기지 않는다.
+
 ## 스킬 설치
 
 `relay install-skills`가 이 스킬을 Claude Code(`~/.claude/skills`), Grok(`$GROK_HOME/skills`, 기본 `~/.grok/skills`), Codex(`~/.codex/skills`, `CODEX_HOME`이 있으면 그 폴더의 `skills`), Antigravity/Gemini(`~/.gemini/skills`)의 사용자 스킬 폴더에 실제 사본으로 둔다. Cursor는 `~/.claude/skills`와 `~/.codex/skills`를 함께 읽으므로 별도 사본을 두지 않는다. `relay install-hooks`도 시작 안내와 함께 스킬을 설치한다. `install-cli.ps1`은 설치 끝에 훅·안내·스킬을 구성하며, 특정 프로젝트에만 두려면 `scripts/install-skill.ps1`을 쓴다.

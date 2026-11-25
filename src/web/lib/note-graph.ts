@@ -539,7 +539,57 @@ export function neighbors(graph: Pick<NoteGraph, "edges">, kinds?: ReadonlySet<E
   return map;
 }
 
-/** 주제 묶음: 메모끼리의 선(링크·언급·비슷함, 같은 태그)에 무게를 주어 이웃의 묶음을 따라가는 방식(label propagation)으로 나눈다.
+/** 무게 있는 그래프를 모듈성(묶음 안의 선이 우연보다 얼마나 많은가)이 커지도록 나눈다(Louvain: Blondel 외 2008).
+ *  점을 하나씩 이웃 묶음으로 옮겨 보다가 더 나아지지 않으면 묶음을 한 점으로 접어 같은 일을 되풀이한다. 정렬된 순서로만 돌아 결과가 항상 같다.
+ *  weights는 양쪽 방향이 모두 든 이웃 무게다. 돌려주는 것은 점 → 묶음 대표(그 묶음에서 ID가 가장 앞선 점). */
+export function louvain(ids: string[], weights: Map<string, Map<string, number>>, resolution = 1): Map<string, string> {
+  let nodes = [...ids].sort();
+  let adjacency = new Map(nodes.map((id) => [id, new Map(weights.get(id) ?? [])]));
+  let members = new Map(nodes.map((id) => [id, [id]]));
+  let total = 0;
+  for (const row of adjacency.values()) for (const weight of row.values()) total += weight;
+  if (total > 0) for (let level = 0; level < 12; level++) {
+    const community = new Map(nodes.map((id) => [id, id]));
+    const degree = new Map(nodes.map((id) => [id, [...adjacency.get(id)!.values()].reduce((sum, weight) => sum + weight, 0)]));
+    const mass = new Map(degree);
+    let movedAny = false;
+    for (let pass = 0; pass < 24; pass++) {
+      let moved = false;
+      for (const id of nodes) {
+        const own = community.get(id)!, k = degree.get(id)!;
+        if (!k) continue;
+        const toward = new Map<string, number>();
+        for (const [other, weight] of adjacency.get(id)!) if (other !== id) toward.set(community.get(other)!, (toward.get(community.get(other)!) ?? 0) + weight);
+        mass.set(own, mass.get(own)! - k);
+        let best = own, gain = (toward.get(own) ?? 0) - (resolution * mass.get(own)! * k) / total;
+        for (const [candidate, weight] of [...toward].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+          const value = weight - (resolution * mass.get(candidate)! * k) / total;
+          if (value > gain + 1e-10) { gain = value; best = candidate; }
+        }
+        mass.set(best, mass.get(best)! + k);
+        if (best !== own) { community.set(id, best); moved = true; }
+      }
+      if (!moved) break;
+      movedAny = true;
+    }
+    if (!movedAny) break;
+    // 묶음을 한 점으로 접는다. 묶음 안의 선은 제 자신으로 가는 선이 되어 다음 단계에서도 무게에 남는다.
+    const folded = new Map<string, Map<string, number>>(), merged = new Map<string, string[]>();
+    for (const id of nodes) {
+      const to = community.get(id)!;
+      merged.set(to, [...(merged.get(to) ?? []), ...members.get(id)!]);
+      const row = folded.get(to) ?? new Map<string, number>();
+      for (const [other, weight] of adjacency.get(id)!) row.set(community.get(other)!, (row.get(community.get(other)!) ?? 0) + weight);
+      folded.set(to, row);
+    }
+    nodes = [...folded.keys()].sort(); adjacency = folded; members = merged;
+  }
+  const out = new Map<string, string>();
+  for (const list of members.values()) { const lead = [...list].sort()[0]!; for (const id of list) out.set(id, lead); }
+  return out;
+}
+
+/** 주제 묶음: 메모끼리의 선(링크·언급·비슷함, 같은 태그)에 무게를 주어 모듈성이 커지도록 나눈다(louvain).
  *  홀로 남은 메모는 「연결 없는 메모」 한 묶음이 된다. 결과는 항상 같다(정렬된 순서로만 돈다). */
 export function clustersOf(graph: Pick<NoteGraph, "nodes" | "edges">, keywords: Map<string, string[]>): GraphCluster[] {
   const notes = graph.nodes.filter(isDoc).map((node) => node.id).sort();
@@ -562,22 +612,7 @@ export function clustersOf(graph: Pick<NoteGraph, "nodes" | "edges">, keywords: 
   }
   for (const members of tagMembers.values()) if (members.length <= 12) for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) link(members[i]!, members[j]!, 0.6);
 
-  const label = new Map(notes.map((id) => [id, id]));
-  for (let round = 0; round < 20; round++) {
-    let changed = false;
-    for (const id of notes) {
-      const around = weights.get(id);
-      if (!around) continue;
-      const score = new Map<string, number>();
-      for (const [other, weight] of around) score.set(label.get(other)!, (score.get(label.get(other)!) ?? 0) + weight);
-      // 자기 묶음에도 조금 머무르려는 힘을 주어 두 묶음 사이를 오가지 않게 한다.
-      score.set(label.get(id)!, (score.get(label.get(id)!) ?? 0) + 0.05);
-      let pick = label.get(id)!, top = -1;
-      for (const [candidate, value] of [...score].sort((a, b) => (a[0] < b[0] ? -1 : 1))) if (value > top + 1e-9) { top = value; pick = candidate; }
-      if (pick !== label.get(id)) { label.set(id, pick); changed = true; }
-    }
-    if (!changed) break;
-  }
+  const label = louvain(notes, weights);
 
   const groups = new Map<string, string[]>();
   for (const id of notes) groups.set(label.get(id)!, [...(groups.get(label.get(id)!) ?? []), id]);

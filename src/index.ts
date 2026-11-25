@@ -232,14 +232,16 @@ withSessions(graph.command("map").description("그래프 전체 지도: 주제 �
   .action((o: { sessions?: string; limit?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.map(whole(o.limit, "--limit", 1, 30, 8)), mapText)));
 withSessions(graph.command("context [query...]").description("질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음: 핵심 메모 본문·주변 메모·관계·이어진 작업 세션을 토큰 한도 안에"))
   .option("--from <id>", "중심으로 삼을 메모·폴더·세션 ID, #태그, 하나뿐인 제목 (여러 번 줄 수 있음)", collect, [])
+  .option("--project [path]", "작업 폴더에서 돈 세션과 이어진 메모를 중심으로 삼음 (경로를 생략하면 지금 폴더)")
   .option("--budget <tokens>", `토큰 한도 어림 (${MIN_BUDGET}~${MAX_BUDGET}, 기본 ${DEFAULT_BUDGET})`)
   .option("--brief", "본문 없이 제목·한 줄·이유만 (먼저 훑어볼 때)")
   .option("--raw", "비밀번호·토큰처럼 보이는 값을 가리지 않음")
-  .action((words: string[], o: { sessions?: string; from: string[]; budget?: string; brief?: boolean; raw?: boolean }, c: Command) => {
+  .action((words: string[], o: { sessions?: string; from: string[]; project?: string | boolean; budget?: string; brief?: boolean; raw?: boolean }, c: Command) => {
     const query = words.join(" ").trim();
-    if (!query && !o.from.length) invalid("질의나 --from <ID>를 주세요. 예: relay graph context \"배포 순서\" 또는 relay graph context --from <메모 ID>");
+    if (!query && !o.from.length && o.project === undefined) invalid("질의나 --from <ID>, --project를 주세요. 예: relay graph context \"배포 순서\" 또는 relay graph context --from <메모 ID>");
+    const project = o.project === undefined ? undefined : directory(typeof o.project === "string" ? o.project : process.cwd(), false);
     return graphRead(c, o.sessions, (tool) => {
-      const result = tool.context({ query, seeds: o.from, budget: whole(o.budget, "--budget", MIN_BUDGET, MAX_BUDGET, DEFAULT_BUDGET), brief: o.brief === true, redact: o.raw !== true });
+      const result = tool.context({ query, seeds: o.from, project, budget: whole(o.budget, "--budget", MIN_BUDGET, MAX_BUDGET, DEFAULT_BUDGET), brief: o.brief === true, redact: o.raw !== true });
       return [result, result.text];
     });
   });

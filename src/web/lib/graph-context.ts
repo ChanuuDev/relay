@@ -34,6 +34,8 @@ export type ContextOptions = {
   /** 비밀로 보이는 값을 가린다(기본 true). */
   redact?: boolean;
   insight?: Insight;
+  /** 중심을 하나하나 적는 대신 보일 한마디(작업 폴더 기준처럼 중심이 여럿일 때). */
+  basis?: string;
 };
 export type ContextNote = {
   id: string; ref: string; label: string; path: string; updatedAt: number; score: number; why: string; tags: string[];
@@ -51,6 +53,8 @@ export type ContextTopic = { id: string; label: string; size: number; included: 
 export type ContextPack = {
   schemaVersion: 1; query: string; seeds: Array<{ id: string; ref: string; label: string; kind: GraphNode["kind"] }>;
   budget: number; tokens: number; brief: boolean;
+  /** 중심 목록 대신 적을 한마디. */
+  basis?: string;
   core: ContextNote[]; related: ContextBrief[]; sessions: ContextSession[]; relations: ContextRelation[]; topics: ContextTopic[];
   /** 가린 값의 수 */ redacted: number;
   /** 맞는 것이 없어 아무것도 싣지 못했다 */ empty: boolean;
@@ -331,7 +335,8 @@ export function buildContext(graph: NoteGraph, items: Items, options: ContextOpt
   const refOf = (id: string) => refs.get(id) ?? id;
   const seedList = (options.seeds ?? []).map((id) => graph.byId.get(id)).filter((node): node is GraphNode => Boolean(node))
     .map((node) => ({ id: node.id, ref: node.kind === "session" ? graph.sessions.get(node.id)?.providerSessionId ?? node.id : refOf(node.id), label: node.label, kind: node.kind }));
-  const empty = (): ContextResult => ({ pack: { schemaVersion: 1, query, seeds: seedList, budget, tokens: 0, brief, core: [], related: [], sessions: [], relations: [], topics: [], redacted: 0, empty: true }, scores: new Map() });
+  const basis = options.basis ? { basis: options.basis } : {};
+  const empty = (): ContextResult => ({ pack: { schemaVersion: 1, query, seeds: seedList, budget, tokens: 0, brief, ...basis, core: [], related: [], sessions: [], relations: [], topics: [], redacted: 0, empty: true }, scores: new Map() });
 
   // 씨앗: 지정한 점은 1, 질의에 가장 잘 맞은 여섯은 그 점수, 나머지 맞은 글은 0.05배.
   const seeds = new Map(explicit);
@@ -448,7 +453,7 @@ export function buildContext(graph: NoteGraph, items: Items, options: ContextOpt
   }
   topics.sort((a, b) => b.included - a.included || b.size - a.size || (a.id < b.id ? -1 : 1));
 
-  const pack: ContextPack = { schemaVersion: 1, query, seeds: seedList, budget, tokens: 0, brief, core, related, sessions, relations, topics: topics.slice(0, 5), redacted, empty: false };
+  const pack: ContextPack = { schemaVersion: 1, query, seeds: seedList, budget, tokens: 0, brief, ...basis, core, related, sessions, relations, topics: topics.slice(0, 5), redacted, empty: false };
   // 한도를 넘으면 뒤(덜 관련 있는 것)부터 덜어 낸다.
   const measure = () => (pack.tokens = estimateTokens(contextText(pack)));
   for (let guard = 0; guard < 200 && measure() > budget; guard++) {
@@ -474,7 +479,7 @@ const STATUS_WORD: Record<string, string> = { working: "작업 중", blocked: "�
 /** 에이전트가 읽는 글(Markdown). 같은 묶음은 언제 만들어도 같은 글이다. */
 export function contextText(pack: ContextPack): string {
   const lines: string[] = ["# Relay 그래프 맥락", ""];
-  const basis = [pack.query ? `질의 “${pack.query}”` : "", pack.seeds.length ? `중심 ${pack.seeds.map((seed) => `‘${seed.label}’`).join(", ")}` : ""].filter(Boolean).join(" · ");
+  const basis = [pack.query ? `질의 “${pack.query}”` : "", pack.basis ?? (pack.seeds.length ? `중심 ${pack.seeds.map((seed) => `‘${seed.label}’`).join(", ")}` : "")].filter(Boolean).join(" · ");
   lines.push(`- 기준: ${basis || "없음"}`);
   if (pack.empty) {
     lines.push("- 맞는 메모를 찾지 못했습니다.", "", "## 다음", "", "- 낱말을 바꾸거나 줄여 다시 찾는다: relay graph context \"<다른 낱말>\"",
