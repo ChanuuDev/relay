@@ -14,9 +14,13 @@ export type GraphPrefs = {
   orphans: boolean;
   /** 확대와 상관없이 이름표를 늘 보인다. */
   labels: boolean;
+  /** 메모와 이어진 작업 세션(에이전트가 Relay에 남긴 기록)을 함께 놓는다. */
+  sessions: boolean;
+  /** 점의 색을 가르는 기준: 최상위 폴더 또는 내용으로 묶은 주제. */
+  colorBy: "folder" | "topic";
 };
 const KEY = "relay-notes-graph-v1";
-const DEFAULTS: GraphPrefs = { view: "network", links: { link: true, mention: true, similar: true }, folders: true, tags: true, orphans: true, labels: false };
+const DEFAULTS: GraphPrefs = { view: "network", links: { link: true, mention: true, similar: true }, folders: true, tags: true, orphans: true, labels: false, sessions: true, colorBy: "folder" };
 
 function load(): GraphPrefs {
   try {
@@ -28,6 +32,7 @@ function load(): GraphPrefs {
       view: GRAPH_VIEWS.includes(raw.view as GraphView) ? raw.view as GraphView : DEFAULTS.view,
       links: { link: bool(links.link, true), mention: bool(links.mention, true), similar: bool(links.similar, true) },
       folders: bool(raw.folders, DEFAULTS.folders), tags: bool(raw.tags, DEFAULTS.tags), orphans: bool(raw.orphans, DEFAULTS.orphans), labels: bool(raw.labels, DEFAULTS.labels),
+      sessions: bool(raw.sessions, DEFAULTS.sessions), colorBy: raw.colorBy === "topic" ? "topic" : "folder",
     };
   } catch { return DEFAULTS; }
 }
@@ -51,6 +56,6 @@ export const useNoteGraph = create<GraphState>((set) => ({
 }));
 
 useNoteGraph.subscribe((state) => {
-  const { view, links, folders, tags, orphans, labels } = state;
-  try { localStorage.setItem(KEY, JSON.stringify({ view, links, folders, tags, orphans, labels })); } catch { /* 저장하지 못해도 지금 창에서는 바뀐다. */ }
+  const { view, links, folders, tags, orphans, labels, sessions, colorBy } = state;
+  try { localStorage.setItem(KEY, JSON.stringify({ view, links, folders, tags, orphans, labels, sessions, colorBy })); } catch { /* 저장하지 못해도 지금 창에서는 바뀐다. */ }
 });

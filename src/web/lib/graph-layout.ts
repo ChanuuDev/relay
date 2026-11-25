@@ -1,4 +1,4 @@
-import type { EdgeKind, GraphCluster, GraphEdge, GraphNode } from "./note-graph";
+import { isContainer, isDoc, type EdgeKind, type GraphCluster, type GraphEdge, type GraphNode } from "./note-graph";
 
 /** 그래프를 늘어놓는 방법. 화면과 무관한 계산만 한다(단위 테스트 대상). 좌표는 (0,0)을 가운데로 하는 세계 좌표이고, 배율 1에서 1px이다.
  *  - network(관계망): 힘으로 당기고 미는 배치. 연결이 많은 메모가 가운데로 모이고 같은 폴더끼리 가깝다.
@@ -35,7 +35,7 @@ export function edgeStyle(view: GraphView, kind: EdgeKind): EdgeStyle {
 
 /** 점의 반지름. 연결이 많을수록, 폴더는 담은 메모가 많을수록 조금 크다. */
 export function radiusOf(node: GraphNode, degree: number) {
-  if (node.kind === "folder") return 6.5 + Math.min(7, Math.sqrt(node.count) * 1.5);
+  if (isContainer(node)) return 6.5 + Math.min(7, Math.sqrt(node.count) * 1.5);
   if (node.kind === "tag") return 4 + Math.min(5, Math.sqrt(node.count) * 1.4);
   return 4.2 + Math.min(8, Math.sqrt(degree) * 2) + Math.min(1.6, Math.log10(1 + node.size / 800));
 }
@@ -54,7 +54,7 @@ export type SimLink = { source: SimNode; target: SimNode; distance: number; stre
 
 const LINK: Record<EdgeKind, { distance: number; strength: number }> = {
   folder: { distance: 46, strength: 0.55 }, link: { distance: 64, strength: 0.8 }, mention: { distance: 74, strength: 0.6 },
-  similar: { distance: 92, strength: 0.32 }, tag: { distance: 52, strength: 0.5 },
+  similar: { distance: 92, strength: 0.32 }, tag: { distance: 52, strength: 0.5 }, chain: { distance: 58, strength: 0.7 },
 };
 
 type Quad = { x0: number; y0: number; size: number; cx: number; cy: number; charge: number; node: SimNode | null; kids: Array<Quad | undefined> | null };
@@ -76,7 +76,7 @@ export class Simulation {
       const at = start.get(node.id) ?? seedPosition(index);
       const r = radiusOf(node, degree.get(node.id) ?? 0);
       return { id: node.id, x: at.x, y: at.y, vx: 0, vy: 0, fx: null, fy: null, r, group: node.group,
-        charge: node.kind === "folder" ? -210 : node.kind === "tag" ? -110 : -150 - Math.min(120, (degree.get(node.id) ?? 0) * 12) };
+        charge: isContainer(node) ? -210 : node.kind === "tag" ? -110 : -150 - Math.min(120, (degree.get(node.id) ?? 0) * 12) };
     });
     const byId = new Map(sim.map((node) => [node.id, node]));
     const count = new Map<string, number>();
@@ -255,7 +255,7 @@ const polar = (angle: number, r: number): Vec => ({ x: Math.cos(angle) * r, y: M
 const collator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
 const byLabel = (byId: Map<string, GraphNode>) => (a: string, b: string) => {
   const x = byId.get(a)!, y = byId.get(b)!;
-  const kind = (node: GraphNode) => (node.kind === "folder" ? 0 : node.kind === "note" ? 1 : 2);
+  const kind = (node: GraphNode) => (isContainer(node) ? 0 : node.kind === "note" ? 1 : node.kind === "session" ? 2 : 3);
   return kind(x) - kind(y) || collator.compare(x.label, y.label) || (a < b ? -1 : 1);
 };
 
@@ -288,7 +288,7 @@ export function focusLayout(input: LayoutInput): Layout {
   const positions = new Map<string, Vec>(), hidden = new Set<string>(), labelAngle = new Map<string, number>();
   if (!center) return { view: "focus", positions, hidden, decor: { kind: "none" }, labelAngle, center };
   // 링크 → 언급 → 태그 → 폴더 → 비슷함 순서로 먼저 찾은 쪽을 부모로 삼는다.
-  const order: Record<EdgeKind, number> = { link: 0, mention: 1, tag: 2, folder: 3, similar: 4 };
+  const order: Record<EdgeKind, number> = { link: 0, mention: 1, chain: 2, tag: 3, folder: 4, similar: 5 };
   const around = new Map<string, Array<{ id: string; rank: number }>>();
   for (const edge of edges) for (const [a, b] of [[edge.source, edge.target], [edge.target, edge.source]] as const) {
     if (!byId.has(a) || !byId.has(b)) continue;
@@ -336,7 +336,8 @@ export function structureLayout(input: LayoutInput): Layout {
   const kids = new Map<string, string[]>();
   for (const node of nodes) {
     if (node.kind === "tag") { hidden.add(node.id); continue; }
-    const parent = node.parentId && byId.get(node.parentId)?.kind === "folder" ? node.parentId : ROOT;
+    const holder = node.parentId ? byId.get(node.parentId) : undefined;
+    const parent = holder && isContainer(holder) ? holder.id : ROOT;
     kids.set(parent, [...(kids.get(parent) ?? []), node.id]);
   }
   const groupOrder = new Map(input.groups.map((group, index) => [group.id, index]));
@@ -347,7 +348,7 @@ export function structureLayout(input: LayoutInput): Layout {
   const tree = radialTree(ROOT, (id) => kids.get(id) ?? []);
   const leaves = nodes.filter((node) => node.kind !== "tag" && !(kids.get(node.id)?.length)).length;
   let folderDepth = 0;
-  for (const node of nodes) if (node.kind === "folder") folderDepth = Math.max(folderDepth, tree.get(node.id)?.depth ?? 0);
+  for (const node of nodes) if (isContainer(node)) folderDepth = Math.max(folderDepth, tree.get(node.id)?.depth ?? 0);
   const outer = Math.max((folderDepth + 1) * 110, (leaves * 26) / (Math.PI * 2), 140);
   const ringOf = (d: number) => (outer * d) / (folderDepth + 1);
   for (const node of nodes) {
@@ -356,9 +357,9 @@ export function structureLayout(input: LayoutInput): Layout {
     if (!spot) { hidden.add(node.id); continue; }
     // 메모와 빈 폴더(잎)는 바깥 고리, 하위가 있는 폴더는 깊이에 맞는 안쪽 고리.
     const leaf = !(kids.get(node.id)?.length);
-    const r = node.kind === "note" || leaf ? outer : ringOf(spot.depth);
+    const r = isDoc(node) || leaf ? outer : ringOf(spot.depth);
     positions.set(node.id, polar(spot.angle, r));
-    if (node.kind === "note" || leaf) labelAngle.set(node.id, spot.angle);
+    if (isDoc(node) || leaf) labelAngle.set(node.id, spot.angle);
   }
   const sectors: Sector[] = [];
   for (const id of kids.get(ROOT) ?? []) {
@@ -374,9 +375,9 @@ export function structureLayout(input: LayoutInput): Layout {
 
 /** 주제: 묶음마다 원(거품)을 나선을 따라 겹치지 않게 놓고, 그 안에 메모를 연결이 많은 것부터 가운데에 놓는다. 폴더·태그는 보이지 않는다. */
 export function topicsLayout(input: LayoutInput): Layout {
-  const visible = new Set(input.nodes.filter((node) => node.kind === "note").map((node) => node.id));
+  const visible = new Set(input.nodes.filter(isDoc).map((node) => node.id));
   const positions = new Map<string, Vec>(), hidden = new Set<string>(), labelAngle = new Map<string, number>();
-  for (const node of input.nodes) if (node.kind !== "note") hidden.add(node.id);
+  for (const node of input.nodes) if (!isDoc(node)) hidden.add(node.id);
   const clusters = input.clusters.map((cluster) => ({ ...cluster, members: cluster.members.filter((id) => visible.has(id)) })).filter((cluster) => cluster.members.length);
   // 묶음에 없는 메모(필터로 생긴 경우)는 홀로 둔다.
   const placed = new Set(clusters.flatMap((cluster) => cluster.members));
@@ -420,9 +421,9 @@ export function topicsLayout(input: LayoutInput): Layout {
 
 /** 시간: 가로는 고친 시각(시각의 실제 간격과 순서를 반씩 섞어 몰린 날도 펼친다), 세로는 최상위 폴더 줄. 한 줄에서 겹치면 위아래로 비켜 놓는다. */
 export function timelineLayout(input: LayoutInput): Layout {
-  const notes = input.nodes.filter((node) => node.kind === "note").sort((a, b) => a.updatedAt - b.updatedAt || (a.id < b.id ? -1 : 1));
+  const notes = input.nodes.filter(isDoc).sort((a, b) => a.updatedAt - b.updatedAt || (a.id < b.id ? -1 : 1));
   const positions = new Map<string, Vec>(), hidden = new Set<string>(), labelAngle = new Map<string, number>();
-  for (const node of input.nodes) if (node.kind !== "note") hidden.add(node.id);
+  for (const node of input.nodes) if (!isDoc(node)) hidden.add(node.id);
   if (!notes.length) return { view: "timeline", positions, hidden, decor: { kind: "lanes", lanes: [], x0: 0, x1: 0, ticks: [] }, labelAngle, center: null };
   const width = Math.max(720, notes.length * 30);
   const times = [...new Set(notes.map((note) => note.updatedAt))].sort((a, b) => a - b);

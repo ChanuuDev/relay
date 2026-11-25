@@ -2,7 +2,7 @@ import {
   Simulation, boundsOf, edgeStyle, focusLayout, networkLayout, radiusOf, seedPosition, structureLayout, timelineLayout, topicsLayout,
   type Decor, type EdgeStyle, type GraphView, type Layout, type Vec,
 } from "../../lib/graph-layout";
-import { ROOT_GROUP, TAG_GROUP, type EdgeKind, type GraphCluster, type GraphEdge, type GraphGroup, type GraphNode } from "../../lib/note-graph";
+import { ROOT_GROUP, SESSION_GROUP, TAG_GROUP, isContainer, isDoc, type EdgeKind, type GraphCluster, type GraphEdge, type GraphGroup, type GraphNode } from "../../lib/note-graph";
 
 /** 메모 지식 그래프를 캔버스에 그린다. React는 데이터·보기·고른 점만 넘기고, 움직임(배치 전환·카메라·강조·입자)은 모두 여기서 requestAnimationFrame으로 돈다.
  *  움직일 것이 없으면 프레임을 멈추고 host에 data-settled를 단다(테스트와 전력 절약). */
@@ -15,9 +15,11 @@ export type SceneEvents = {
   select: (id: string | null) => void;
   /** 점을 두 번 누름·Enter. */
   open: (id: string) => void;
+  /** 시간 흐름 재생이 끝남. */
+  replayed?: () => void;
 };
 
-type Theme = { dark: boolean; fg: string; bg: string; accent: string; palette: string[]; root: string; tag: string; scale: number; font: string };
+type Theme = { dark: boolean; fg: string; bg: string; accent: string; palette: string[]; root: string; tag: string; session: string; scale: number; font: string };
 const PALETTE_DARK = ["#64A8FF", "#B98CFF", "#FF7EB6", "#FFA45C", "#3DD6B5", "#8FD96B", "#F5CB5C", "#8E9BFF", "#5CD0F0", "#FF7A70", "#D9A877", "#C3E66B"];
 const PALETTE_LIGHT = ["#2F7CF6", "#8B55E0", "#E0458B", "#E07A1F", "#0E9E80", "#3F9A2E", "#C29100", "#5B6CE8", "#1795C2", "#DC4B40", "#A8743F", "#6A9A12"];
 
@@ -85,7 +87,10 @@ const EDGE_LOOK: Record<EdgeKind, { alpha: number; width: number; dash: number[]
   similar: { alpha: 0.42, width: 1, dash: [4, 4] },
   folder: { alpha: 0.3, width: 1, dash: [] },
   tag: { alpha: 0.3, width: 1, dash: [1.2, 3.4] },
+  chain: { alpha: 0.5, width: 1.35, dash: [7, 3] },
 };
+/** 맥락이 씨앗에서 한 단계 퍼지는 데 걸리는 시간(ms)과 한 점이 밝아지는 시간. */
+const WAVE_STEP = 150, WAVE_RISE = 420;
 
 const FORCE_CACHE = new Map<string, Vec>();
 
@@ -129,9 +134,29 @@ export class GraphScene {
   private reserved: Array<[number, number, number, number]> = [];
   /** 오른쪽 정보 카드가 열려 있으면 그만큼 비켜서 맞춘다(넓은 화면에서만, 좁으면 카드가 아래에 뜬다). */
   card = false;
+  /** 왼쪽 도구 패널이 열려 있으면 그만큼 비켜서 맞춘다(넓은 화면에서만). */
+  panel = false;
+  /** 중요도(0..1). 높은 점은 둘레에 빛무리가 진다. */
+  private glow: Map<string, number> | null = null;
+  /** 주제 묶음으로 색을 가를 때: 점 → 묶음 번호. */
+  private topics: Map<string, number> | null = null;
+  /** 도구가 가리킨 점들(발견 패널의 항목 등). 나머지는 흐려진다. */
+  private spot: Set<string> | null = null;
+  /** 에이전트 맥락: 씨앗에서 퍼진 점수와, 씨앗에서 몇 단계인지. */
+  private heat: { scores: Map<string, number>; seeds: Set<string>; depth: Map<string, number>; start: number; span: number } | null = null;
+  /** 두 점을 잇는 길. */
+  private route: { nodes: string[]; edges: Set<string>; order: Map<string, number>; start: number } | null = null;
+  /** 연결을 만드는 중: 여기서 커서(또는 올린 점)까지 줄을 그린다. */
+  private linkFrom: string | null = null;
+  private cursor: Vec | null = null;
+  /** 만든 순서대로 다시 보이는 중. */
+  private replaying: { start: number; span: number; steps: Array<{ at: number; time: number; doc: boolean }>; docs: number } | null = null;
   get insets(): Insets {
     const wide = this.w > 640;
-    return { top: 64, left: 24, right: this.card && wide ? 304 : 24, bottom: this.card && !wide ? Math.min(this.h * 0.48, 420) + 66 : 60 };
+    // 카드와 패널이 함께 들어가지 못하는 너비에서는 패널이 열린 동안 카드가 접힌다.
+    const card = this.card && !(this.panel && this.w < 896);
+    return { top: wide ? 64 : 104, left: this.panel && wide ? 364 : wide ? 64 : 24, right: card && wide ? 304 : 24,
+      bottom: (card || this.panel) && !wide ? Math.min(this.h * 0.48, 420) + 66 : 60 };
   }
   labelsAlways = false;
 
@@ -150,7 +175,7 @@ export class GraphScene {
     return {
       dark, fg: value("--foreground", dark ? "#f5f5f7" : "#1d1d1f"), bg: value("--background", dark ? "#1e1e20" : "#ffffff"),
       accent: value("--notes-accent", dark ? "#3dd0aa" : "#0f9478"), palette: dark ? PALETTE_DARK : PALETTE_LIGHT,
-      root: dark ? "#A6A6AE" : "#86868E", tag: dark ? "#C9CDD8" : "#6B7280", scale, font: value("--font-sans", "sans-serif"),
+      root: dark ? "#A6A6AE" : "#86868E", tag: dark ? "#C9CDD8" : "#6B7280", session: dark ? "#F3E9D2" : "#6B5B3E", scale, font: value("--font-sans", "sans-serif"),
     };
   }
   refreshTheme() {
@@ -163,12 +188,18 @@ export class GraphScene {
 
   private colorOf(node: GraphNode) {
     if (node.group === TAG_GROUP || node.kind === "tag") return this.theme.tag;
+    if (node.group === SESSION_GROUP) return this.theme.session;
+    if (this.topics && isDoc(node)) {
+      const topic = this.topics.get(node.id);
+      return topic === undefined ? this.theme.root : this.theme.palette[topic % this.theme.palette.length]!;
+    }
     if (node.group === ROOT_GROUP) return this.theme.root;
     const index = this.data?.groups.find((group) => group.id === node.group)?.index ?? 0;
     return this.theme.palette[index % this.theme.palette.length]!;
   }
   groupColor(group: string) {
     if (group === TAG_GROUP) return this.theme.tag;
+    if (group === SESSION_GROUP) return this.theme.session;
     if (group === ROOT_GROUP) return this.theme.root;
     const index = this.data?.groups.find((entry) => entry.id === group)?.index ?? 0;
     return this.theme.palette[index % this.theme.palette.length]!;
@@ -399,6 +430,75 @@ export class GraphScene {
   setMatches(ids: Set<string> | null) { this.matches = ids; this.kick(); }
   setGroupLit(group: string | null) { this.groupLit = group; this.kick(); }
   setLabelsAlways(on: boolean) { this.labelsAlways = on; this.kick(); }
+  setGlow(glow: Map<string, number> | null) { this.glow = glow; this.kick(); }
+  /** 주제 묶음 번호로 색을 가른다(null이면 폴더 색). */
+  setTopicColors(topics: Map<string, number> | null) {
+    this.topics = topics;
+    for (const state of this.nodes.values()) state.color = this.colorOf(state.node);
+    this.kick();
+  }
+  topicColor(index: number) { return this.theme.palette[index % this.theme.palette.length]!; }
+  setSpot(ids: Iterable<string> | null) { this.spot = ids ? new Set(ids) : null; this.kick(); }
+  /** 에이전트 맥락의 점수를 칠한다. 씨앗에서 이웃으로 한 단계씩 번져 간다. */
+  setHeat(scores: Map<string, number> | null, seeds: Iterable<string> = []) {
+    if (!scores || !scores.size) { if (this.heat) { this.heat = null; this.kick(); } return; }
+    const seedSet = new Set([...seeds].filter((id) => this.nodes.has(id)));
+    const depth = new Map<string, number>();
+    let frontier = [...seedSet];
+    for (const id of frontier) depth.set(id, 0);
+    for (let level = 1; frontier.length && level < 12; level++) {
+      const next: string[] = [];
+      for (const id of frontier) for (const other of this.around.get(id) ?? []) if (!depth.has(other) && (scores.get(other) ?? 0) > 0.02) { depth.set(other, level); next.push(other); }
+      frontier = next;
+    }
+    let deepest = 0;
+    for (const value of depth.values()) deepest = Math.max(deepest, value);
+    // 같은 씨앗에서 점수만 바뀌면(한도·질의 손질) 물결을 다시 일으키지 않는다.
+    const same = this.heat && this.heat.seeds.size === seedSet.size && [...seedSet].every((id) => this.heat!.seeds.has(id));
+    this.heat = { scores, seeds: seedSet, depth, start: same ? this.heat!.start : performance.now(), span: this.reduced ? 0 : deepest * WAVE_STEP + WAVE_RISE };
+    this.kick();
+  }
+  /** 두 점을 잇는 길을 그린다. 처음에서 끝으로 한 구간씩 그어진다. */
+  setRoute(nodes: string[] | null, edges: string[] = []) {
+    this.route = nodes && nodes.length ? { nodes, edges: new Set(edges), order: new Map(nodes.map((id, at) => [id, at])), start: performance.now() } : null;
+    if (this.route && nodes!.length > 1) this.fit(760, false, nodes!);
+    this.kick();
+  }
+  setLinkFrom(id: string | null) { this.linkFrom = id; this.kick(); }
+  /** 만든 순서대로 점이 하나씩 다시 나타난다(시간 흐름 재생). 태그·폴더는 처음 닿은 글과 함께 나온다. */
+  replay() {
+    if (!this.layout || !this.data || this.transition) return;
+    const now = performance.now();
+    const states = [...this.nodes.values()].filter((state) => state.visTo > 0 && !state.removed);
+    const born = new Map<string, number>();
+    for (const state of states) if (isDoc(state.node)) born.set(state.node.id, state.node.createdAt);
+    for (const state of states) {
+      if (isDoc(state.node)) continue;
+      let first = Infinity;
+      for (const other of this.around.get(state.node.id) ?? []) { const time = born.get(other); if (time !== undefined && isDoc(this.nodes.get(other)!.node)) first = Math.min(first, time); }
+      born.set(state.node.id, Number.isFinite(first) ? first : state.node.createdAt);
+    }
+    states.sort((a, b) => born.get(a.node.id)! - born.get(b.node.id)! || (a.node.id < b.node.id ? -1 : 1));
+    const span = this.reduced ? 0 : clamp(states.length * 110, 3200, 9000);
+    states.forEach((state, at) => {
+      state.vis = 0; state.appear = 0; state.visFrom = 0; state.visTo = 1; state.morph = 1;
+      state.from = { x: state.x, y: state.y }; state.to = { x: state.x, y: state.y };
+      state.delay = span * (at / Math.max(1, states.length - 1));
+    });
+    for (const state of this.edges.values()) {
+      if (state.removed || state.visTo === 0) continue;
+      state.vis = 0; state.visFrom = 0; state.draw = 0;
+      state.drawAt = now + Math.max(state.s.delay, state.t.delay) + 240;
+    }
+    this.live = false;
+    this.transition = { start: now, duration: this.reduced ? 0 : 620, spread: span };
+    this.replaying = { start: now, span, steps: states.map((state) => ({ at: state.delay, time: born.get(state.node.id)!, doc: isDoc(state.node) })), docs: states.filter((state) => isDoc(state.node)).length };
+    this.host.dataset.replaying = "";
+    this.kick();
+  }
+  get isReplaying() { return this.replaying !== null; }
+  /** 도구가 가리킨 점이 있는가(테스트가 본다). */
+  get spotted() { return this.spot !== null; }
 
   /** 점의 화면 좌표(문서 기준). 테스트와 툴팁이 쓴다. */
   point(id: string) {
@@ -471,6 +571,8 @@ export class GraphScene {
     }
     const [x, y] = this.local(event);
     const pointer = this.pointer;
+    this.cursor = { x, y };
+    if (this.linkFrom) this.kick();
     if (!pointer || pointer.id !== event.pointerId) {
       if (event.pointerType === "mouse") this.setHover(this.hit(x, y));
       return;
@@ -515,7 +617,7 @@ export class GraphScene {
     }
   }
 
-  pointerLeave() { if (!this.pointer) this.setHover(null); }
+  pointerLeave() { this.cursor = null; if (!this.pointer) this.setHover(null); }
 
   doubleClick(event: MouseEvent) {
     const [x, y] = this.local(event);
@@ -719,10 +821,14 @@ export class GraphScene {
     const lit = focus ? this.around.get(focus) ?? new Set<string>() : null;
     const floor = this.hovered ? 0 : this.view === "focus" ? 1 : 0.45;
     const f = reduced ? 1 : 1 - Math.exp(-dt / 110);
+    // 도구가 칠한 강조(길·맥락·가리킨 점). 켜져 있는 동안에는 마우스를 올리거나 점을 골라도 이 강조를 덮지 않는다(올린 점은 튀어 오르고 이름표만 뜬다).
+    const overlay = this.route || this.heat || this.spot;
+    if (this.heat && now - this.heat.start < this.heat.span) busy = true;
     for (const state of this.nodes.values()) {
       const id = state.node.id;
       let target = 1;
-      if (focus) target = id === focus || lit!.has(id) ? 1 : floor;
+      if (overlay) target = this.route ? (this.route.order.has(id) ? 1 : 0) : this.heat ? this.heatLevel(id, now) : this.spot!.has(id) ? 1 : 0;
+      else if (focus) target = id === focus || lit!.has(id) ? 1 : floor;
       if (this.matches) target = Math.min(target, this.matches.has(id) ? 1 : 0);
       if (this.groupLit) target = Math.min(target, state.node.group === this.groupLit ? 1 : 0);
       if (Math.abs(target - state.hl) > 0.002) { state.hl = lerp(state.hl, target, f); busy = true; } else state.hl = target;
@@ -739,7 +845,9 @@ export class GraphScene {
     }
     for (const state of this.edges.values()) {
       let target = 1;
-      if (focus) target = state.s.node.id === focus || state.t.node.id === focus ? 1 : this.hovered ? 0 : this.view === "focus" ? 0.7 : 0.35;
+      if (overlay) target = this.route ? (this.route.edges.has(state.edge.id) ? 1 : 0) : this.heat ? Math.min(this.heatLevel(state.s.node.id, now), this.heatLevel(state.t.node.id, now))
+        : this.spot!.has(state.s.node.id) && this.spot!.has(state.t.node.id) ? 1 : 0;
+      else if (focus) target = state.s.node.id === focus || state.t.node.id === focus ? 1 : this.hovered ? 0 : this.view === "focus" ? 0.7 : 0.35;
       if (this.matches) target = Math.min(target, this.matches.has(state.s.node.id) && this.matches.has(state.t.node.id) ? 1 : 0);
       if (this.groupLit) target = Math.min(target, state.s.node.group === this.groupLit && state.t.node.group === this.groupLit ? 1 : 0);
       if (Math.abs(target - state.hl) > 0.002) { state.hl = lerp(state.hl, target, f); busy = true; } else state.hl = target;
@@ -747,7 +855,9 @@ export class GraphScene {
     this.ripples = this.ripples.filter((ripple) => now - ripple.start < 900);
     if (this.ripples.length) busy = true;
     // 고른 점의 선 위로 흐르는 입자와 검색에 걸린 점의 깜빡임은 그동안 계속 움직인다.
-    if (!reduced && !document.hidden && ((focus && lit && lit.size) || this.matches?.size)) this.ambient = true;
+    if (!reduced && !document.hidden && ((focus && lit && lit.size) || this.matches?.size || this.route || this.heat || this.linkFrom)) this.ambient = true;
+    if (this.replaying && now - this.replaying.start > this.replaying.span + 1400) { this.replaying = null; delete this.host.dataset.replaying; this.events.replayed?.(); }
+    if (this.replaying) busy = true;
     if (this.hovered) {
       const state = this.nodes.get(this.hovered);
       if (state) {
@@ -757,6 +867,15 @@ export class GraphScene {
       }
     }
     return busy;
+  }
+
+  /** 맥락 점수가 이 점을 얼마나 밝히는가(0..1). 씨앗에서 먼 점일수록 조금 늦게 밝아진다. */
+  private heatLevel(id: string, now: number) {
+    const heat = this.heat!;
+    const score = heat.scores.get(id) ?? 0;
+    if (score <= 0.02) return 0;
+    const wave = heat.span ? clamp((now - heat.start - (heat.depth.get(id) ?? 0) * WAVE_STEP) / WAVE_RISE) : 1;
+    return (0.2 + 0.8 * Math.sqrt(score)) * easeOut(wave);
   }
 
   // ── 그리기 ────────────────────────────────────────────
@@ -773,10 +892,140 @@ export class GraphScene {
     if (this.prevDecor && progress < 1) this.drawDecor(this.prevDecor, 1 - progress, this.layout?.view === "network");
     if (this.layout) this.drawDecor(this.layout.decor, this.prevDecor ? progress : 1, this.layout.view === "network");
     if (!tr) this.prevDecor = null;
+    this.drawHalos(now);
     this.drawEdges(now);
+    this.drawRoute(now);
     this.drawNodes(now);
     this.drawLabels();
     this.drawRipples(now);
+    this.drawLinking(now);
+    this.drawReplay(now);
+  }
+
+  /** 점 둘레의 빛무리: 중요한 메모는 늘 옅게, 맥락에 든 메모는 점수만큼 밝게. 점보다 먼저 그려 선과 점 아래에 깔린다. */
+  private drawHalos(now: number) {
+    if (!this.glow && !this.heat) return;
+    const ctx = this.ctx, { dark, accent } = this.theme;
+    const overlay = this.route || this.heat || this.spot;
+    const dimming = Boolean(this.hovered ?? this.selected) || Boolean(this.matches || this.groupLit || overlay);
+    for (const state of this.nodes.values()) {
+      if (state.vis < 0.05 || !isDoc(state.node)) continue;
+      const id = state.node.id;
+      const heat = this.heat ? this.heatLevel(id, now) * ((this.heat.scores.get(id) ?? 0) > 0.02 ? 1 : 0) : 0;
+      const glow = this.heat ? 0 : this.glow?.get(id) ?? 0;
+      const level = this.heat ? heat : glow > 0.3 ? (glow - 0.3) / 0.7 : 0;
+      if (level < 0.04) continue;
+      const [x, y] = this.project(state.x, state.y);
+      const r = this.screenRadius(state) * Math.max(0, state.appear);
+      const reach = r * (this.heat ? 2.4 + 2.2 * level : 2.1 + 1.5 * level) + 6;
+      if (x < -reach || y < -reach || x > this.w + reach || y > this.h + reach) continue;
+      const fade = state.vis * (dimming && !this.heat ? lerp(0.12, 1, state.hl) : 1);
+      const color = this.heat ? accent : state.color;
+      const strength = (this.heat ? (dark ? 0.42 : 0.3) : (dark ? 0.26 : 0.17)) * level * fade;
+      const gradient = ctx.createRadialGradient(x, y, r * 0.6, x, y, reach);
+      gradient.addColorStop(0, rgba(color, strength));
+      gradient.addColorStop(0.45, rgba(color, strength * 0.36));
+      gradient.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = gradient;
+      ctx.beginPath(); ctx.arc(x, y, reach, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  /** 길: 처음에서 끝으로 한 구간씩 굵은 빛줄기가 그어지고, 그 위로 빛 알갱이가 달린다. */
+  private drawRoute(now: number) {
+    const route = this.route;
+    if (!route) return;
+    const ctx = this.ctx, { accent } = this.theme;
+    const tr = this.transition;
+    const widthScale = clamp(Math.sqrt(this.cam.k), 0.7, 1.4);
+    const segments: Array<{ at: number; p0: Vec; p1: Vec; c: [number, number, number, number] }> = [];
+    for (const state of this.edges.values()) {
+      if (!route.edges.has(state.edge.id) || state.vis < 0.05) continue;
+      const a = route.order.get(state.s.node.id), b = route.order.get(state.t.node.id);
+      if (a === undefined || b === undefined) continue;
+      const [sx, sy] = this.project(state.s.x, state.s.y), [tx, ty] = this.project(state.t.x, state.t.y);
+      const blend = tr && tr.duration ? easeInOut(clamp((now - tr.start - Math.max(state.s.delay, state.t.delay)) / tr.duration)) : 1;
+      const c = this.controls(state, sx, sy, tx, ty, blend);
+      // 길을 따라가는 방향으로 맞춘다(조절점을 맞바꾸면 같은 곡선이 거꾸로 된다).
+      segments.push(a <= b ? { at: Math.min(a, b), p0: { x: sx, y: sy }, p1: { x: tx, y: ty }, c } : { at: Math.min(a, b), p0: { x: tx, y: ty }, p1: { x: sx, y: sy }, c: [c[2], c[3], c[0], c[1]] });
+    }
+    if (!segments.length) return;
+    segments.sort((x, y) => x.at - y.at);
+    ctx.save();
+    ctx.lineCap = "round";
+    const point = (seg: (typeof segments)[number], t: number): Vec => {
+      const u = 1 - t;
+      return { x: u * u * u * seg.p0.x + 3 * u * u * t * seg.c[0] + 3 * u * t * t * seg.c[2] + t * t * t * seg.p1.x, y: u * u * u * seg.p0.y + 3 * u * u * t * seg.c[1] + 3 * u * t * t * seg.c[3] + t * t * t * seg.p1.y };
+    };
+    segments.forEach((seg, index) => {
+      const shown = this.reduced ? 1 : easeOut(clamp((now - route.start - index * 240) / 380));
+      if (shown <= 0) return;
+      for (const [width, alpha, blur] of [[7, 0.16, 0], [2.6, 0.95, 10]] as const) {
+        ctx.strokeStyle = rgba(accent, alpha);
+        ctx.lineWidth = width * widthScale;
+        ctx.shadowColor = rgba(accent, 0.8); ctx.shadowBlur = blur;
+        ctx.beginPath(); ctx.moveTo(seg.p0.x, seg.p0.y);
+        const steps = Math.max(2, Math.round(24 * shown));
+        for (let i = 1; i <= steps; i++) { const q = point(seg, (i / steps) * shown); ctx.lineTo(q.x, q.y); }
+        ctx.stroke();
+      }
+    });
+    ctx.shadowBlur = 0;
+    if (!this.reduced && now - route.start > segments.length * 240 + 200) {
+      // 처음에서 끝까지 달리는 빛 알갱이.
+      const lap = segments.length * 620 + 500;
+      const phase = ((now - route.start) % lap) / 620;
+      const index = Math.floor(phase);
+      if (index < segments.length) {
+        for (let tail = 0; tail < 6; tail++) {
+          const t = phase - index - tail * 0.035;
+          if (t < 0) break;
+          const q = point(segments[index]!, easeInOut(t));
+          ctx.fillStyle = tail ? rgba(accent, 0.5 - tail * 0.08) : "rgba(255,255,255,0.96)";
+          ctx.beginPath(); ctx.arc(q.x, q.y, (tail ? 3.2 - tail * 0.4 : 3.4) * widthScale, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  /** 연결을 만드는 중: 고른 메모에서 커서(올린 점이 있으면 그 점)까지 점선을 잇는다. */
+  private drawLinking(now: number) {
+    const from = this.linkFrom ? this.nodes.get(this.linkFrom) : null;
+    if (!from || from.vis < 0.2) return;
+    const target = this.hovered && this.hovered !== this.linkFrom ? this.nodes.get(this.hovered) : null;
+    const [x0, y0] = this.project(from.x, from.y);
+    const end = target ? this.project(target.x, target.y) : this.cursor ? [this.cursor.x, this.cursor.y] as [number, number] : null;
+    const ctx = this.ctx, { accent } = this.theme;
+    ctx.save();
+    ctx.strokeStyle = rgba(accent, 0.95);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x0, y0, this.screenRadius(from) + 6, 0, Math.PI * 2); ctx.stroke();
+    if (end) {
+      ctx.setLineDash([6, 5]);
+      ctx.lineDashOffset = this.reduced ? 0 : -now / 28;
+      ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(end[0], end[1]); ctx.stroke();
+      ctx.setLineDash([]);
+      if (target) { ctx.beginPath(); ctx.arc(end[0], end[1], this.screenRadius(target) + 6, 0, Math.PI * 2); ctx.stroke(); }
+      else { ctx.fillStyle = rgba(accent, 0.95); ctx.beginPath(); ctx.arc(end[0], end[1], 4, 0, Math.PI * 2); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+
+  /** 재생 중: 지금 어느 날까지 왔는지와 나타난 글의 수. */
+  private drawReplay(now: number) {
+    const replay = this.replaying;
+    if (!replay) return;
+    const elapsed = now - replay.start;
+    let shown = 0, time = 0;
+    for (const step of replay.steps) { if (step.at > elapsed) break; if (step.doc) { shown++; time = step.time; } }
+    if (!time) return;
+    const date = new Date(time);
+    const text = `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}  ·  ${shown} / ${replay.docs}`;
+    const { left, right, bottom } = this.insets;
+    const fade = clamp(elapsed / 300) * clamp((replay.span + 1400 - elapsed) / 400);
+    this.pill(text, (left + this.w - right) / 2, this.h - bottom - 22, fade, 13);
   }
 
   /** 세계 좌표에 붙은 점 격자. 끌거나 확대하면 함께 움직인다. */
@@ -955,9 +1204,11 @@ export class GraphScene {
   private drawEdges(now: number) {
     const ctx = this.ctx, k = this.cam.k, { fg, accent } = this.theme;
     const focus = this.hovered ?? this.selected;
+    const overlay = this.route || this.heat || this.spot;
     const tr = this.transition;
     const widthScale = clamp(Math.sqrt(k), 0.65, 1.35);
     ctx.lineCap = "round";
+    const wave: Array<{ state: EdgeState; c: [number, number, number, number]; p0: Vec; p1: Vec; t: number }> = [];
     const lit: Array<{ state: EdgeState; c: [number, number, number, number]; p0: Vec; p1: Vec }> = [];
     for (const state of this.edges.values()) {
       const base = state.vis * Math.min(state.s.vis, state.t.vis);
@@ -966,11 +1217,13 @@ export class GraphScene {
       const [x0, y0] = this.project(state.s.x, state.s.y), [x1, y1] = this.project(state.t.x, state.t.y);
       const blend = tr && tr.duration ? easeInOut(clamp((now - tr.start - Math.max(state.s.delay, state.t.delay)) / tr.duration)) : 1;
       const c = this.controls(state, x0, y0, x1, y1, blend);
-      const isLit = focus !== null && (state.s.node.id === focus || state.t.node.id === focus);
-      const dim = focus || this.matches || this.groupLit ? lerp(0.07, 1, state.hl) : 1;
+      const isLit = !overlay && focus !== null && (state.s.node.id === focus || state.t.node.id === focus);
+      const dim = focus || this.matches || this.groupLit || overlay ? lerp(0.07, 1, state.hl) : 1;
+      // 맥락에 든 두 점 사이의 선은 맥락 색으로 밝힌다.
+      const warm = overlay && this.heat ? Math.min(this.heat.scores.get(state.s.node.id) ?? 0, this.heat.scores.get(state.t.node.id) ?? 0) : 0;
       const color = isLit ? (focus === state.s.node.id ? state.s.color : state.t.color)
-        : state.edge.kind === "folder" ? state.t.color : state.edge.kind === "similar" ? accent : fg;
-      const alpha = base * dim * (isLit ? 0.9 : look.alpha * (state.edge.kind === "similar" ? 0.55 + state.edge.weight * 0.6 : 1));
+        : warm > 0.05 ? accent : state.edge.kind === "folder" ? state.t.color : state.edge.kind === "similar" ? accent : state.edge.kind === "chain" ? state.s.color : fg;
+      const alpha = base * dim * (isLit ? 0.9 : warm > 0.05 ? 0.4 + 0.5 * Math.sqrt(warm) : look.alpha * (state.edge.kind === "similar" ? 0.55 + state.edge.weight * 0.6 : 1));
       if (alpha < 0.008) continue;
       ctx.strokeStyle = rgba(color, alpha);
       ctx.lineWidth = (look.width + (isLit ? 0.7 : 0)) * widthScale;
@@ -986,10 +1239,25 @@ export class GraphScene {
         ctx.bezierCurveTo(ax, ay, dx, dy, lerp(dx, ex, t), lerp(dy, ey, t));
       } else ctx.bezierCurveTo(c[0], c[1], c[2], c[3], x1, y1);
       ctx.stroke();
-      if (state.draw >= 1 && state.edge.kind === "link" && (isLit || k > 1.15)) this.arrow(x1, y1, c[2], c[3], this.screenRadius(state.t), color, alpha);
+      if (state.draw >= 1 && (state.edge.kind === "link" || state.edge.kind === "chain") && (isLit || k > 1.15)) this.arrow(x1, y1, c[2], c[3], this.screenRadius(state.t), color, alpha);
       if (isLit && state.draw >= 1) lit.push({ state, c, p0: { x: x0, y: y0 }, p1: { x: x1, y: y1 } });
+      if (warm > 0.05 && this.heat!.span) {
+        // 씨앗 쪽에서 바깥으로 번지는 순간에만 알갱이 하나가 선을 타고 간다.
+        const ds = this.heat!.depth.get(state.s.node.id), dt = this.heat!.depth.get(state.t.node.id);
+        if (ds !== undefined && dt !== undefined && ds !== dt) {
+          const t = (now - this.heat!.start - Math.min(ds, dt) * WAVE_STEP) / (WAVE_STEP + 220);
+          if (t > 0 && t < 1) wave.push({ state, c, p0: { x: x0, y: y0 }, p1: { x: x1, y: y1 }, t: ds < dt ? t : 1 - t });
+        }
+      }
     }
     ctx.setLineDash([]);
+    for (const { c, p0, p1, t } of wave) {
+      const u = 1 - t;
+      const x = u * u * u * p0.x + 3 * u * u * t * c[0] + 3 * u * t * t * c[2] + t * t * t * p1.x;
+      const y = u * u * u * p0.y + 3 * u * u * t * c[1] + 3 * u * t * t * c[3] + t * t * t * p1.y;
+      ctx.fillStyle = rgba(accent, 0.3); ctx.beginPath(); ctx.arc(x, y, 6 * widthScale, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.95)"; ctx.beginPath(); ctx.arc(x, y, 2.2 * widthScale, 0, Math.PI * 2); ctx.fill();
+    }
     // 고른 점에서 이웃으로 흐르는 빛 알갱이.
     if (!this.reduced && focus) {
       for (const { state, c, p0, p1 } of lit) {
@@ -1027,7 +1295,8 @@ export class GraphScene {
   private drawNodes(now: number) {
     const ctx = this.ctx, { bg } = this.theme;
     const focus = this.hovered ?? this.selected;
-    const dimming = Boolean(focus || this.matches || this.groupLit);
+    const overlay = this.route || this.heat || this.spot;
+    const dimming = Boolean(focus || this.matches || this.groupLit || overlay);
     const list = [...this.nodes.values()].filter((state) => state.vis > 0.01);
     // 강조된 점이 위에 오도록.
     list.sort((a, b) => a.hl - b.hl || (a.node.id === focus ? 1 : 0) - (b.node.id === focus ? 1 : 0) || (a.node.kind === "folder" ? -1 : 0) - (b.node.kind === "folder" ? -1 : 0));
@@ -1042,7 +1311,7 @@ export class GraphScene {
       ctx.save();
       if (special && !this.reduced) { ctx.shadowColor = rgba(state.color, 0.75); ctx.shadowBlur = 18; }
       this.nodePath(state, x, y, r);
-      if (state.node.kind === "folder") {
+      if (isContainer(state.node)) {
         ctx.fillStyle = rgba(bg, alpha);
         ctx.fill();
         ctx.fillStyle = rgba(state.color, (this.theme.dark ? 0.3 : 0.2) * alpha);
@@ -1058,6 +1327,11 @@ export class GraphScene {
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = rgba(bg, 0.9 * alpha);
         ctx.stroke();
+        if (state.node.kind === "session" && r > 3.5) {
+          // 작업 세션은 가운데가 빈 육각형으로 메모와 가른다.
+          ctx.fillStyle = rgba(bg, 0.92 * alpha);
+          ctx.beginPath(); ctx.arc(x, y, r * 0.36, 0, Math.PI * 2); ctx.fill();
+        }
         if (state.node.kind === "note" && r > 5) {
           // 위쪽에 아주 옅은 빛을 얹어 구슬처럼 보이게.
           const gloss = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, 0, x - r * 0.35, y - r * 0.4, r * 1.1);
@@ -1074,6 +1348,24 @@ export class GraphScene {
         ctx.strokeStyle = rgba(state.color, 0.9 * state.vis);
         ctx.beginPath(); ctx.arc(x, y, r + 5, 0, Math.PI * 2); ctx.stroke();
       }
+      if (overlay && this.heat?.seeds.has(id)) {
+        // 맥락의 씨앗: 숨 쉬듯 커졌다 줄어드는 고리.
+        const breath = this.reduced ? 0.5 : (Math.sin(now / 520) + 1) / 2;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = rgba(this.theme.accent, (0.75 + 0.2 * breath) * state.vis);
+        ctx.beginPath(); ctx.arc(x, y, r + 5 + breath * 2.5, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (overlay && this.route?.order.has(id)) {
+        const end = this.route.order.get(id) === 0 || this.route.order.get(id) === this.route.nodes.length - 1;
+        ctx.lineWidth = end ? 2.4 : 1.6;
+        ctx.strokeStyle = rgba(this.theme.accent, 0.95 * state.vis);
+        ctx.beginPath(); ctx.arc(x, y, r + (end ? 6 : 4), 0, Math.PI * 2); ctx.stroke();
+      }
+      if (overlay && !this.route && !this.heat && this.spot?.has(id)) {
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = rgba(state.color, 0.85 * state.vis);
+        ctx.beginPath(); ctx.arc(x, y, r + 4.5, 0, Math.PI * 2); ctx.stroke();
+      }
       if (this.matches?.has(id)) {
         const pulse = this.reduced ? 0.5 : (Math.sin(now / 260) + 1) / 2;
         ctx.lineWidth = 1.5;
@@ -1087,6 +1379,11 @@ export class GraphScene {
     const ctx = this.ctx;
     ctx.beginPath();
     if (state.node.kind === "folder") this.roundRect(x - r, y - r, r * 2, r * 2, r * 0.45);
+    else if (state.node.kind === "session" || state.node.kind === "project") {
+      const size = r * 1.12;
+      for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + (i * Math.PI) / 3; if (i) ctx.lineTo(x + Math.cos(a) * size, y + Math.sin(a) * size); else ctx.moveTo(x + Math.cos(a) * size, y + Math.sin(a) * size); }
+      ctx.closePath();
+    }
     else if (state.node.kind === "tag") { ctx.moveTo(x, y - r * 1.15); ctx.lineTo(x + r * 1.15, y); ctx.lineTo(x, y + r * 1.15); ctx.lineTo(x - r * 1.15, y); ctx.closePath(); }
     else ctx.arc(x, y, r, 0, Math.PI * 2);
   }
@@ -1112,7 +1409,8 @@ export class GraphScene {
     const ctx = this.ctx, k = this.cam.k, { fg, bg, scale } = this.theme;
     const focus = this.hovered ?? this.selected;
     const lit = focus ? this.around.get(focus) : null;
-    const dimming = Boolean(focus || this.matches || this.groupLit);
+    const overlay = this.route || this.heat || this.spot;
+    const dimming = Boolean(focus || this.matches || this.groupLit || overlay);
     type Candidate = { state: NodeState; priority: number; forced: boolean; alpha: number };
     const candidates: Candidate[] = [];
     for (const state of this.nodes.values()) {
@@ -1121,8 +1419,9 @@ export class GraphScene {
       // 마우스를 올린 점(고른 점이 아니면)은 위에 뜬 이름표가 이름을 보이므로 캔버스에는 쓰지 않는다.
       if (id === this.hovered && id !== this.selected) continue;
       const degree = this.data?.degree.get(id) ?? 0;
-      const forced = id === focus || Boolean(lit?.has(id)) || Boolean(this.matches?.has(id)) || (this.groupLit !== null && state.node.group === this.groupLit && k > 0.5);
-      const importance = degree + (state.node.kind === "folder" ? 4 : 0);
+      const marked = overlay ? (this.route ? this.route.order.has(id) : this.heat ? (this.heat.scores.get(id) ?? 0) >= 0.3 : this.spot!.has(id)) : false;
+      const forced = marked || (!overlay && (id === focus || Boolean(lit?.has(id)))) || Boolean(this.matches?.has(id)) || (this.groupLit !== null && state.node.group === this.groupLit && k > 0.5);
+      const importance = degree + (isContainer(state.node) ? 4 : 0);
       const at = 1.05 - Math.min(0.8, importance * 0.1);
       // 구조 보기는 이름이 바깥으로 눕혀져 서로 덜 겹치므로 늘 보인다.
       let alpha = this.labelsAlways || this.view === "structure" ? 1 : forced ? 1 : smooth(at - 0.12, at + 0.08, k);

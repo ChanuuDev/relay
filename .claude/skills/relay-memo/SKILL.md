@@ -115,4 +115,4 @@ Invoke-RestMethod -Method Post -Uri "$api/api/v1/notes" -Headers @{ Origin = $ap
 | API 415 | `Content-Type: application/json`을 붙인다 |
 | 연결 거부 | `relay web --headless`로 서버를 켠 뒤 다시 보낸다 |
 
-`relay memo --help`로 옵션을 확인할 수 있다. 메모를 다른 PC로 옮기는 일은 이 스킬이 아니라 `relay notes export|import`가 맡는다.
+`relay memo --help`로 옵션을 확인할 수 있다. 메모를 다른 PC로 옮기는 일은 이 스킬이 아니라 `relay notes export|import`가 맡는다. 하려는 일에 관련된 메모를 그래프를 따라 넓게 고르거나 메모끼리의 연결을 볼 때는 relay-graph 스킬(`relay graph context|map|neighbors`)을 쓴다.

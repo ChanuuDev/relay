@@ -19,6 +19,8 @@ import { popOut } from "../../lib/popout-open";
 import { reduced } from "../../lib/motion";
 import { useNoteGraph } from "../../lib/note-graph-prefs";
 import { NotesGraph } from "./notes-graph";
+import { useDesktop } from "../../lib/desktop-store";
+import { navigate, sessionUrl } from "../../lib/store";
 
 const DRAG_TYPE = "application/x-relay-note";
 const UNDO_MS = 8000;
@@ -318,7 +320,8 @@ export function NotesWindow() {
       <section className="notes-content" aria-label={graphOpen ? "메모 그래프" : current?.kind === "note" ? "메모 편집" : "폴더 내용"} data-arrive={arrive ? "" : undefined}>
         {graphOpen
           ? <NotesGraph items={items} selected={selected} leaving={graphLeaving} onSelect={select} onBack={() => setPane("tree")}
-              onOpen={(id) => { closeGraph(true); open(id); setArrive(true); }} />
+              onOpen={(id) => { closeGraph(true); open(id); setArrive(true); }}
+              onOpenSession={popoutApp ? undefined : (id) => { navigate(sessionUrl(id)); useDesktop.getState().open("sessions"); }} />
           : current?.kind === "note"
           ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open}
               onCopyId={() => void copyReference(current.id)} onMenu={(left, top) => openMenu("item", current.id, left, top)} />

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Relay Graph"
+  short_description: "Relay 메모 지식 그래프에서 일에 맞는 맥락 묶음·이웃·경로·제안 연결 읽기"
+  default_prompt: "$relay-graph로 지금 작업과 관련된 Relay 메모를 찾아 주세요."
+policy:
+  allow_implicit_invocation: true

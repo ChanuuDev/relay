@@ -16,6 +16,8 @@ import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { transcriptModels } from "./hooks/transcript";
 import { EXPORT_FORMAT, NoteStore, parseExport, parseExportImages, type NoteItem } from "./notes/notes.store";
 import { findText, listText, MemoIndex, searchText } from "./notes/memo";
+import { graphml, GraphTool, linkedText, mapText, mermaid, neighborsText, pathResultText, suggestText, type GraphSource, type SessionScope } from "./notes/graph";
+import { DEFAULT_BUDGET, MAX_BUDGET, MIN_BUDGET } from "./web/lib/graph-context";
 import type { NoteList } from "@relay/core";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
@@ -212,6 +214,97 @@ async function memoIndex(config: ReturnType<typeof loadConfig>): Promise<MemoInd
   }
   const db = openDatabase(config, true);
   try { const data = new NoteStore(db).list(); return new MemoIndex(data.items, data.revision, api); } finally { db.close(); }
+}
+
+// 메모 지식 그래프를 AI 에이전트의 작업 맥락으로 읽는다. 메모 앱의 그래프 보기와 같은 계산을 쓰며, 쓰는 법은 relay-graph 스킬에 있다.
+const graph = program.command("graph").description("AI 에이전트용 메모 지식 그래프: 지도·맥락 묶음·이웃·경로·제안 연결 (relay-graph 스킬 참고)");
+const collect = (value: string, list: string[]) => [...list, value];
+const withSessions = (command: Command) => command.option("--sessions <scope>", "함께 볼 작업 세션: linked(메모와 이어진 세션, 기본) | all | none");
+/** 정해진 범위의 정수 옵션. */
+function whole(value: string | undefined, name: string, min: number, max: number, fallback: number) {
+  if (value === undefined) return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < min || number > max) invalid(`${name}: ${min}~${max} 사이의 정수를 입력하세요.`);
+  return number;
+}
+withSessions(graph.command("map").description("그래프 전체 지도: 주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결·연결 없는 메모"))
+  .option("--limit <number>", "항목마다 보일 수 (1~30, 기본 8)")
+  .action((o: { sessions?: string; limit?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.map(whole(o.limit, "--limit", 1, 30, 8)), mapText)));
+withSessions(graph.command("context [query...]").description("질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음: 핵심 메모 본문·주변 메모·관계·이어진 작업 세션을 토큰 한도 안에"))
+  .option("--from <id>", "중심으로 삼을 메모·폴더·세션 ID, #태그, 하나뿐인 제목 (여러 번 줄 수 있음)", collect, [])
+  .option("--budget <tokens>", `토큰 한도 어림 (${MIN_BUDGET}~${MAX_BUDGET}, 기본 ${DEFAULT_BUDGET})`)
+  .option("--brief", "본문 없이 제목·한 줄·이유만 (먼저 훑어볼 때)")
+  .option("--raw", "비밀번호·토큰처럼 보이는 값을 가리지 않음")
+  .action((words: string[], o: { sessions?: string; from: string[]; budget?: string; brief?: boolean; raw?: boolean }, c: Command) => {
+    const query = words.join(" ").trim();
+    if (!query && !o.from.length) invalid("질의나 --from <ID>를 주세요. 예: relay graph context \"배포 순서\" 또는 relay graph context --from <메모 ID>");
+    return graphRead(c, o.sessions, (tool) => {
+      const result = tool.context({ query, seeds: o.from, budget: whole(o.budget, "--budget", MIN_BUDGET, MAX_BUDGET, DEFAULT_BUDGET), brief: o.brief === true, redact: o.raw !== true });
+      return [result, result.text];
+    });
+  });
+withSessions(graph.command("neighbors <id>").description("어떤 점에 이어진 점들 (가까운 단계부터, 강한 관계부터)"))
+  .option("--depth <number>", "몇 단계까지 (1~3, 기본 1)")
+  .action((id: string, o: { sessions?: string; depth?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.neighbors(id, whole(o.depth, "--depth", 1, 3, 1)), neighborsText)));
+withSessions(graph.command("path <from> <to>").description("두 점을 잇는 가장 가까운 길 (어떤 메모를 거쳐 이어지는지)"))
+  .action((from: string, to: string, o: { sessions?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.path(from, to), pathResultText)));
+withSessions(graph.command("suggest").description("제안 연결: 아직 링크로 잇지 않았지만 이으면 좋을 메모 쌍과 그 이유"))
+  .option("--limit <number>", "보일 수 (1~100, 기본 12)").option("--for <id>", "이 메모와 이을 것만")
+  .action((o: { sessions?: string; limit?: string; for?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.suggest(whole(o.limit, "--limit", 1, 100, 12), o.for), suggestText)));
+withSessions(graph.command("link <from> <to>").description("<from> 메모 본문 끝에 <to>(메모·폴더·작업 세션)로 가는 링크 한 줄을 적음 (이미 이어져 있으면 그대로 둠)"))
+  .option("--why <text>", "링크 옆에 적을 이유 한 줄")
+  .action(async (from: string, to: string, o: { sessions?: string; why?: string }, c: Command) => {
+    const config = loadConfig(c.optsWithGlobals().dataDir);
+    const tool = new GraphTool(await graphSource(config, true), sessionScope(o.sessions));
+    const { result, item } = tool.link(from, to, o.why ?? "");
+    if (item) {
+      const batch = { upserts: [item], deletes: [] };
+      if (config.mode === "remote") result.revision = (await new RemoteClient(config).json<{ revision: number }>("/api/v1/notes", batch)).revision;
+      else { const db = openDatabase(config); try { result.revision = new NoteStore(db).apply(batch).revision; } finally { db.close(); } }
+    }
+    process.stdout.write(c.optsWithGlobals().json ? `${asciiJson(result)}\n` : linkedText(result));
+  });
+withSessions(graph.command("export").description("그래프를 다른 도구로 내보냄: 점마다 주제 묶음·연결 수·중요도·매개 중심성을 붙인 JSON, Gephi용 GraphML, 메모에 붙일 Mermaid"))
+  .option("--format <format>", "json(기본) | graphml | mermaid")
+  .action((o: { sessions?: string; format?: string }, c: Command) => {
+    const format = o.format ?? "json";
+    if (format !== "json" && format !== "graphml" && format !== "mermaid") invalid("--format: json | graphml | mermaid 중 하나를 입력하세요.");
+    return graphRead(c, o.sessions, (tool) => { const data = tool.export(); return [data, format === "graphml" ? graphml(data) : format === "mermaid" ? mermaid(data) : `${asciiJson(data)}\n`]; });
+  });
+
+function sessionScope(value: string | undefined): SessionScope {
+  if (value === undefined) return "linked";
+  if (value !== "linked" && value !== "all" && value !== "none") invalid("--sessions: linked | all | none 중 하나를 입력하세요.");
+  return value;
+}
+/** 그래프에 놓을 최근 세션 수. 그 앞의 기록은 메모와 이어져 있어도 보지 않는다. */
+const GRAPH_SESSIONS = 400;
+/** 메모와 세션 기록을 한 번에 읽는다. 원격 모드면 원격 서버에서 받는다. */
+async function graphSource(config: ReturnType<typeof loadConfig>, sessions: boolean): Promise<GraphSource> {
+  const api = `http://${config.webHost}:${config.webPort}`;
+  if (config.mode === "remote") {
+    const client = new RemoteClient(config);
+    const notes = await client.json<NoteList>("/api/v1/notes");
+    const list: Session[] = [];
+    for (let offset = 0; sessions && offset < GRAPH_SESSIONS; offset += 100) {
+      const page = await new RemoteSessions(client).list({ limit: 100, offset });
+      list.push(...page.items);
+      if (list.length >= page.page.total || !page.items.length) break;
+    }
+    return { items: notes.items, revision: notes.revision, api, sessions: list };
+  }
+  const db = openDatabase(config, true);
+  try {
+    const notes = new NoteStore(db).list();
+    return { items: notes.items, revision: notes.revision, api, sessions: sessions ? new SessionRepository(db).rows("", [], GRAPH_SESSIONS, 0) : [] };
+  } finally { db.close(); }
+}
+/** 그래프를 읽어 한 가지를 보인다. --json이면 결과 객체를, 아니면 에이전트가 읽을 글을 쓴다. */
+async function graphRead(command: Command, scope: string | undefined, action: (tool: GraphTool) => [unknown, string]) {
+  const wanted = sessionScope(scope);
+  const tool = new GraphTool(await graphSource(loadConfig(command.optsWithGlobals().dataDir), wanted !== "none"), wanted);
+  const [data, text] = action(tool);
+  process.stdout.write(command.optsWithGlobals().json ? `${asciiJson(data)}\n` : text.replace(/\n*$/, "\n"));
 }
 
 /** 메모 저장소를 열어 한 가지 일을 하고 닫는다. --json이면 결과 객체를, 아니면 한 줄 안내를 stdout에 쓴다. */

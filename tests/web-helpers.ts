@@ -38,14 +38,27 @@ export function hook(alias: string, payload: Record<string, unknown>, end = fals
   }
 }
 
+/** 서버를 띄우고 health가 200이 될 때까지 wait밀리초 기다린다. 그 안에 뜨지 않으면 false. */
+async function start(wait: number): Promise<boolean> {
+  const child = spawn(binary, ["web", "--data-dir", env.dir, "--port", String(env.port)], { cwd: env.dir, windowsHide: true, stdio: "pipe", env: spawnEnv });
+  server = child;
+  let logs = ""; child.stderr?.on("data", chunk => { logs += chunk; });
+  for (const deadline = Date.now() + wait; Date.now() < deadline;) {
+    if (child.exitCode !== null) throw new Error(`Server exited: ${logs}`);
+    try { if ((await fetch(`${env.url}/api/v1/health`, { signal: AbortSignal.timeout(2000) })).status === 200) return true; } catch { /* 아직 뜨지 않았다. */ }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 export async function launch() {
-  server = spawn(binary, ["web", "--data-dir", env.dir, "--port", String(env.port)], { cwd: env.dir, windowsHide: true, stdio: "pipe", env: spawnEnv });
-  let logs = ""; server.stderr?.on("data", chunk => { logs += chunk; });
-  // 갓 빌드한 exe는 백신 검사나 PC 부하로 처음 뜨는 데 몇 초 더 걸릴 수 있어, 기본 7초보다 넉넉히 기다린다.
-  await expect.poll(async () => {
-    if (server?.exitCode !== null) throw new Error(`Server exited: ${logs}`);
-    try { return (await fetch(`${env.url}/api/v1/health`)).status; } catch { return 0; }
-  }, { timeout: 20000 }).toBe(200);
+  // 갓 빌드한 exe는 백신 검사나 PC 부하로 처음 뜨는 데 몇 초 더 걸릴 수 있어 넉넉히 기다린다(평소에는 0.2초 안에 뜬다).
+  if (await start(12000)) return;
+  // 드물게 프로세스는 살아 있는데 응답이 없다(전체 검증 한 번에 한 건꼴, 매번 다른 테스트). 그 테스트만 다시 돌리면 통과하므로 한 번은 닫고 다시 띄운다.
+  await stop();
+  if (await start(20000)) return;
+  await stop();
+  throw new Error(`Server did not answer /api/v1/health on ${env.url} after two starts`);
 }
 
 export async function stop() {

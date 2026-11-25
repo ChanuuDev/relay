@@ -1248,6 +1248,13 @@ canvas.md-stl:active { cursor: grabbing; }
   --graph-shadow: 0 14px 34px -10px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .04) inset; --graph-thumb: rgba(255, 255, 255, .13);
   background: radial-gradient(70% 55% at 12% -5%, color-mix(in srgb, var(--notes-accent) 13%, transparent), transparent 72%),
     radial-gradient(55% 45% at 102% 104%, rgba(139, 92, 246, .13), transparent 70%), var(--graph-base); }
+/* 바탕의 빛이 아주 천천히 흘러 화면이 살아 있어 보인다(점과 선 아래에 깔린다). */
+.notes-graph::before { content: ""; position: absolute; inset: -18%; z-index: 0; pointer-events: none;
+  background: radial-gradient(36% 32% at 24% 30%, color-mix(in srgb, var(--notes-accent) 8%, transparent), transparent 70%),
+    radial-gradient(32% 30% at 78% 66%, rgba(139, 92, 246, .08), transparent 70%), radial-gradient(24% 22% at 62% 16%, rgba(59, 130, 246, .06), transparent 70%);
+  animation: graph-aurora 38s ease-in-out infinite alternate; will-change: transform; }
+.dark .notes-graph::before { background: radial-gradient(36% 32% at 24% 30%, color-mix(in srgb, var(--notes-accent) 10%, transparent), transparent 70%),
+    radial-gradient(32% 30% at 78% 66%, rgba(139, 92, 246, .12), transparent 70%), radial-gradient(24% 22% at 62% 16%, rgba(59, 130, 246, .09), transparent 70%); }
 .graph-stage { position: absolute; inset: 0; outline: none; cursor: grab; touch-action: none; }
 .notes-graph[data-hover] .graph-stage { cursor: pointer; }
 .notes-graph[data-dragging] .graph-stage { cursor: grabbing; }
@@ -1422,6 +1429,189 @@ canvas.md-stl:active { cursor: grabbing; }
 .graph-empty-orbit span:nth-child(2)::after { background: #3b82f6; width: 6px; height: 6px; top: -3px; }
 .graph-empty-orbit span:nth-child(3)::after { background: #f472b6; width: 5px; height: 5px; top: -2.5px; }
 
+/* 도구: 왼쪽 레일에서 발견·에이전트 맥락·경로 패널을 연다. 패널은 레일 옆에서 미끄러져 들어온다. */
+.notes-graph { container-type: inline-size; container-name: graph; }
+.graph-rail, .graph-hint, .graph-notice {
+  background: var(--graph-glass); border: .5px solid var(--graph-edge); box-shadow: var(--graph-shadow), var(--glass-highlight);
+  backdrop-filter: blur(22px) saturate(180%); -webkit-backdrop-filter: blur(22px) saturate(180%); }
+.graph-rail { position: absolute; z-index: 3; top: 60px; left: 12px; display: flex; flex-direction: column; gap: 2px; padding: 4px; border-radius: 17px;
+  animation: graph-rail-in .5s .16s cubic-bezier(.2, .8, .2, 1) both; }
+.graph-rail-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 13px;
+  color: color-mix(in srgb, var(--foreground) 70%, transparent); transition: background-color .16s ease-out, color .16s ease-out; }
+.graph-rail-button svg { width: 16px; height: 16px; transition: transform .24s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-rail-button:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.graph-rail-button:hover svg { transform: scale(1.1); }
+.graph-rail-button:active svg { transform: scale(.82); }
+.graph-rail-button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: -2px; }
+.graph-rail-button[aria-pressed="true"] { background: color-mix(in srgb, var(--notes-accent) 18%, transparent); color: var(--notes-accent); }
+.graph-rail-button[aria-pressed="true"] svg { animation: graph-icon-pop .42s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-rail-button[data-tool="replay"][aria-pressed="true"] svg { animation: graph-rewind 1.4s linear infinite; }
+.graph-rail-button:disabled { cursor: default; }
+.graph-rail-badge { position: absolute; top: -4px; right: -5px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; font-size: 9.5px; font-weight: 700; line-height: 15px;
+  text-align: center; font-variant-numeric: tabular-nums; color: #fff; background: var(--notes-accent); box-shadow: 0 0 0 1.5px var(--graph-base);
+  animation: graph-pop .4s .5s cubic-bezier(.34, 1.56, .64, 1) both; }
+.graph-rail-sep { height: .5px; margin: 3px 7px; background: var(--graph-edge); }
+
+.graph-panel { position: absolute; z-index: 3; top: 60px; left: 62px; bottom: 58px; width: 290px; display: flex; flex-direction: column; border-radius: 18px;
+  border: .5px solid var(--graph-edge); box-shadow: var(--glass-menu-shadow), var(--glass-highlight); overflow: hidden;
+  animation: graph-panel-in .42s cubic-bezier(.2, .9, .25, 1.08) both; }
+/* 점 위에 겹쳐 뜨므로 글이 읽히게 유리를 더 짙게 한다. */
+.graph-panel.material-chrome { background: var(--graph-glass-strong); backdrop-filter: blur(30px) saturate(180%); -webkit-backdrop-filter: blur(30px) saturate(180%); }
+.graph-panel-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 10px 10px 14px; border-bottom: .5px solid var(--border); }
+.graph-panel-head > div { flex: 1; min-width: 0; }
+.graph-panel-head h3 { margin: 0; font-size: calc(14px * var(--font-scale)); font-weight: 700; letter-spacing: -.01em; }
+.graph-panel-head p { margin: 3px 0 0; font-size: var(--fs-11); line-height: 1.5; color: var(--glass-text-muted); word-break: keep-all; }
+.graph-panel-head [data-slot="button"] { flex-shrink: 0; color: var(--glass-text-muted); }
+.graph-panel-head [data-slot="button"] svg { width: 13px; height: 13px; }
+.graph-panel-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 8px 10px; scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, .35) transparent; }
+.graph-panel-body > * { animation: graph-rise .4s cubic-bezier(.2, .8, .2, 1) both; }
+.graph-panel-body > :nth-child(2) { animation-delay: 40ms; } .graph-panel-body > :nth-child(3) { animation-delay: 80ms; }
+.graph-panel-body > :nth-child(4) { animation-delay: 120ms; } .graph-panel-body > :nth-child(n+5) { animation-delay: 160ms; }
+.graph-panel-body section { padding: 8px 0 4px; }
+.graph-panel-body section + section { border-top: .5px solid var(--border); }
+.graph-panel-body h4 { display: flex; align-items: baseline; gap: 6px; margin: 2px 6px 4px; font-size: 10.5px; font-weight: 650; letter-spacing: .06em; color: var(--glass-text-muted); }
+.graph-panel-body h4 > span { font-weight: 500; font-variant-numeric: tabular-nums; opacity: .8; }
+.graph-panel-body ul, .graph-panel-body ol { list-style: none; margin: 0; padding: 0; }
+.graph-panel-body li { animation: graph-rise .34s cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(90ms + var(--i, 0) * 24ms); }
+.graph-panel-note { margin: 0 6px 6px; font-size: var(--fs-11); line-height: 1.55; color: var(--glass-text-muted); word-break: keep-all; }
+.graph-panel-empty { margin: 14px 8px; font-size: var(--fs-12); line-height: 1.7; color: var(--glass-text-muted); word-break: keep-all; }
+.graph-panel code { padding: 1px 5px; border-radius: 5px; font-size: .92em; background: color-mix(in srgb, var(--foreground) 8%, transparent); }
+.graph-panel-foot { padding: 9px 10px 10px; border-top: .5px solid var(--border); background: color-mix(in srgb, var(--foreground) 3%, transparent); }
+
+.graph-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 6px; border-radius: 8px; text-align: left; font-size: var(--fs-12);
+  transition: background-color .15s ease-out, transform .2s cubic-bezier(.34, 1.4, .64, 1); }
+.graph-row:hover { background: var(--glass-control-fill); transform: translateX(2px); }
+.graph-row:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: -2px; }
+.graph-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-row-meta { flex-shrink: 0; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--glass-text-muted); }
+.graph-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.graph-row-text small { font-size: 10.5px; color: var(--glass-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-row-tall .graph-row { align-items: flex-start; padding-block: 5px; }
+.graph-row-tall .graph-card-dot { margin-top: 4px; }
+.graph-row-more .graph-row { color: var(--glass-text-muted); font-size: var(--fs-11); }
+.graph-card-dot[data-kind="session"], .graph-card-dot[data-kind="project"], .graph-tip-dot[data-kind="session"], .graph-tip-dot[data-kind="project"],
+.graph-chip[data-kind="session"] .graph-chip-dot { border-radius: 0; clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%); }
+.graph-sample-session { width: 11px; height: 12px; background: currentColor; opacity: .75; clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%); }
+
+/* 제안 연결: 두 메모와 이유, 한 번에 잇는 단추. */
+.graph-suggest li { position: relative; margin: 0 0 6px; padding: 8px 8px 8px 9px; border-radius: 12px; background: color-mix(in srgb, var(--foreground) 4.5%, transparent);
+  border: .5px solid transparent; transition: background-color .18s ease-out, border-color .18s ease-out, transform .22s cubic-bezier(.34, 1.4, .64, 1); }
+.graph-suggest li:hover { background: color-mix(in srgb, var(--notes-accent) 9%, transparent); border-color: color-mix(in srgb, var(--notes-accent) 30%, transparent); transform: translateY(-1px); }
+.graph-suggest-pair { display: flex; align-items: center; gap: 5px; min-width: 0; padding-right: 58px; font-size: var(--fs-12); font-weight: 600; }
+.graph-suggest-pair button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 46%; padding: 1px 2px; border-radius: 6px; }
+.graph-suggest-pair button span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-suggest-pair button:hover span:last-child { text-decoration: underline; text-underline-offset: 2px; }
+.graph-suggest-pair button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); }
+.graph-suggest-arrow { flex-shrink: 0; color: var(--glass-text-muted); }
+.graph-suggest li > p { margin: 4px 0 0 2px; font-size: 10.5px; line-height: 1.5; color: var(--glass-text-muted); word-break: keep-all; }
+.graph-suggest-link[data-slot="button"] { position: absolute; top: 6px; right: 6px; height: 24px; padding: 0 8px; gap: 4px; border-radius: 999px; font-size: 11px; }
+.graph-suggest-link svg, .graph-gap-actions svg { width: 12px; height: 12px; }
+.graph-gap { margin: 0 0 4px; padding: 9px 10px; border-radius: 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--notes-accent) 10%, transparent), color-mix(in srgb, #8b5cf6 9%, transparent));
+  border: .5px solid color-mix(in srgb, var(--notes-accent) 22%, transparent); }
+.graph-gap > p:first-child { margin: 0 0 4px; font-size: var(--fs-12); line-height: 1.5; overflow-wrap: anywhere; }
+.graph-gap .graph-panel-note { margin: 0 0 8px; }
+.graph-gap-actions { display: flex; gap: 6px; }
+
+/* 에이전트 맥락: 질의, 중심 점, 한도, 묶음 미리 보기. */
+.graph-context-query { display: block; margin: 8px 0 6px; }
+.graph-context-query textarea { display: block; width: 100%; min-height: 52px; resize: none; padding: 8px 10px; border-radius: 11px; font: inherit; font-size: var(--fs-12); line-height: 1.5;
+  color: var(--foreground); background: color-mix(in srgb, var(--foreground) 6%, transparent); border: .5px solid transparent; outline: none;
+  transition: background-color .18s ease-out, border-color .18s ease-out, box-shadow .18s ease-out; }
+.graph-context-query textarea::placeholder { color: var(--glass-text-muted); }
+.graph-context-query textarea:focus { background: color-mix(in srgb, var(--foreground) 3%, transparent); border-color: color-mix(in srgb, var(--notes-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--notes-accent) 18%, transparent); }
+.graph-context-seeds { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 8px; }
+.graph-seed { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 3px 0 8px; border-radius: 999px; font-size: 11px; font-weight: 560;
+  background: color-mix(in srgb, var(--notes-accent) 14%, transparent); border: .5px solid color-mix(in srgb, var(--notes-accent) 34%, transparent);
+  animation: graph-pop .3s cubic-bezier(.34, 1.56, .64, 1) both; }
+.graph-seed-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-seed-remove { display: grid; place-items: center; flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; color: var(--glass-text-muted); }
+.graph-seed-remove:hover { background: color-mix(in srgb, var(--foreground) 12%, transparent); color: var(--foreground); }
+.graph-seed-remove svg { width: 11px; height: 11px; }
+.graph-seed-add { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 24px; padding: 0 9px 0 7px; border-radius: 999px; font-size: 11px; font-weight: 560;
+  color: var(--notes-accent); border: .5px dashed color-mix(in srgb, var(--notes-accent) 60%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background-color .15s ease-out; }
+.graph-seed-add:hover { background: color-mix(in srgb, var(--notes-accent) 12%, transparent); }
+.graph-seed-add svg { width: 12px; height: 12px; flex-shrink: 0; }
+.graph-seed-hint { font-size: var(--fs-11); line-height: 1.5; color: var(--glass-text-muted); }
+.graph-budget { display: flex; align-items: center; gap: 2px; margin: 0 0 8px; padding: 2px; border-radius: 10px; background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.graph-budget > span { padding: 0 8px 0 7px; font-size: 10.5px; font-weight: 650; letter-spacing: .04em; color: var(--glass-text-muted); }
+.graph-budget button { flex: 1; height: 24px; border-radius: 8px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--foreground) 66%, transparent);
+  transition: background-color .18s ease-out, color .18s ease-out, box-shadow .18s ease-out; }
+.graph-budget button:hover { color: var(--foreground); }
+.graph-budget button[aria-checked="true"] { background: var(--graph-thumb); color: var(--foreground); box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px var(--graph-edge); }
+.graph-budget button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: -2px; }
+.graph-meter { display: flex; align-items: center; gap: 8px; margin: 2px 2px 6px; }
+.graph-meter-bar { flex: 1; height: 5px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--foreground) 10%, transparent); }
+.graph-meter-bar > span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--notes-accent), color-mix(in srgb, var(--notes-accent) 55%, #8b5cf6));
+  transform-origin: left; transform: scaleX(var(--share, 0)); transition: transform .5s cubic-bezier(.2, .8, .2, 1); }
+.graph-meter-text { flex-shrink: 0; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--glass-text-muted); }
+.graph-context-copy { display: flex; gap: 5px; }
+.graph-context-copy [data-slot="button"] { gap: 4px; }
+.graph-context-copy [data-slot="button"]:first-child { flex: 1; }
+.graph-context-copy svg { width: 12px; height: 12px; }
+.graph-context-status { margin: 7px 2px 0; min-height: 15px; font-size: 10.5px; line-height: 1.45; color: var(--glass-text-muted); word-break: keep-all; }
+
+/* 경로: 처음과 끝을 고르는 칸, 그 사이의 걸음. */
+.graph-path-slots { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 8px 0 8px; position: relative; }
+.graph-path-slot { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 3px 6px 3px 10px; border-radius: 11px; background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  border: .5px solid transparent; transition: border-color .18s ease-out, background-color .18s ease-out, box-shadow .18s ease-out; }
+.graph-path-slot[data-picking] { border-color: color-mix(in srgb, var(--notes-accent) 60%, transparent); background: color-mix(in srgb, var(--notes-accent) 9%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--notes-accent) 16%, transparent); }
+.graph-path-slot-name { flex-shrink: 0; width: 26px; font-size: 10.5px; font-weight: 650; letter-spacing: .04em; color: var(--glass-text-muted); }
+.graph-path-slot-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; height: 26px; text-align: left; font-size: var(--fs-12); font-weight: 560; border-radius: 6px; }
+.graph-path-slot-pick > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-path-slot-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); }
+.graph-path-slot-empty { font-weight: 500; color: var(--glass-text-muted); }
+.graph-path-slot[data-picking] .graph-path-slot-empty { color: var(--notes-accent); }
+.graph-path-swap[data-slot="button"] { position: absolute; top: calc(50% - 11px); right: 34px; z-index: 1; width: 22px; height: 22px; border-radius: 50%; background: var(--graph-glass-strong);
+  border: .5px solid var(--graph-edge); color: var(--glass-text-muted); }
+.graph-path-swap svg { width: 11px; height: 11px; transform: rotate(90deg); }
+.graph-path-steps li { position: relative; padding-left: 2px; }
+.graph-path-edge { display: block; margin: 0 0 0 9px; padding: 3px 0 3px 14px; border-left: 1.5px solid color-mix(in srgb, var(--notes-accent) 60%, transparent);
+  font-size: 10.5px; color: var(--glass-text-muted); }
+
+/* 카드의 도구 줄, 안내 띠. */
+.graph-card-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.graph-card-tools button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 7px; border-radius: 999px; font-size: 11px; font-weight: 560;
+  color: color-mix(in srgb, var(--foreground) 78%, transparent); background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  transition: background-color .15s ease-out, color .15s ease-out, transform .2s cubic-bezier(.34, 1.56, .64, 1); }
+.graph-card-tools button:hover { background: color-mix(in srgb, var(--notes-accent) 15%, transparent); color: var(--notes-accent); transform: translateY(-1px); }
+.graph-card-tools button:focus-visible { outline: 2px solid color-mix(in srgb, var(--ring) 70%, transparent); outline-offset: 1px; }
+.graph-card-tools svg { width: 12px; height: 12px; }
+.graph-hint, .graph-notice { position: absolute; z-index: 5; top: 60px; left: 50%; display: inline-flex; align-items: center; gap: 8px; max-width: min(440px, calc(100% - 160px));
+  padding: 7px 8px 7px 12px; border-radius: 999px; font-size: var(--fs-12); font-weight: 560; transform: translateX(-50%); animation: graph-toast .36s cubic-bezier(.2, .9, .3, 1.15) both; }
+.graph-notice { padding-right: 14px; }
+.graph-hint { border-color: color-mix(in srgb, var(--notes-accent) 45%, transparent); }
+.graph-hint > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--notes-accent); }
+.graph-hint > span, .graph-notice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-hint button { flex-shrink: 0; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--glass-text-muted);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent); }
+.graph-hint button:hover { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 14%, transparent); }
+.notes-graph[data-linking] .graph-stage, .notes-graph[data-picking] .graph-stage { cursor: crosshair; }
+.notes-graph[data-linking][data-hover] .graph-stage, .notes-graph[data-picking][data-hover] .graph-stage { cursor: copy; }
+.notes-graph[data-replaying] .graph-tip { display: none; }
+.notes-graph[data-diving] :is(.graph-rail, .graph-panel, .graph-hint, .graph-notice) { opacity: 0; transform: scale(.98); transition: opacity .18s ease-in, transform .18s ease-in; }
+
+@keyframes graph-aurora { 0% { transform: translate3d(-3%, -2%, 0) rotate(0deg) scale(1); } 50% { transform: translate3d(3%, 2%, 0) rotate(5deg) scale(1.07); }
+  100% { transform: translate3d(-2%, 3%, 0) rotate(-4deg) scale(1.03); } }
+@keyframes graph-rail-in { from { opacity: 0; transform: translateX(-12px); } }
+@keyframes graph-panel-in { from { opacity: 0; transform: translateX(-16px) scale(.97); } }
+@keyframes graph-toast { from { opacity: 0; transform: translate(-50%, -8px) scale(.96); } }
+@keyframes graph-rewind { to { transform: rotate(-360deg); } }
+
+/* 카드와 패널이 함께 들어가지 못하는 너비에서는 패널이 열린 동안 카드를 접는다. */
+@container graph (max-width: 56em) {
+  .notes-graph[data-tool] .graph-card { display: none; }
+}
+@container graph (max-width: 40em) {
+  .graph-rail { flex-direction: row; top: 56px; }
+  .graph-rail-sep { width: .5px; height: auto; margin: 7px 3px; }
+  .graph-panel { top: auto; left: 10px; right: 10px; bottom: 56px; width: auto; height: 48%; max-height: 420px; animation-name: graph-sheet-in; }
+  .graph-panel.material-chrome, .graph-card.material-chrome { background: color-mix(in srgb, var(--graph-base) 90%, transparent); }
+  .graph-hint, .graph-notice { top: 100px; max-width: calc(100% - 24px); }
+}
+
 /* 닫기: 살짝 줄며 흐려진다. 메모를 열 때는 점 속으로 파고든 뒤 사라진다. */
 .notes-graph[data-leaving] { animation: graph-out .23s cubic-bezier(.4, 0, 1, 1) forwards; }
 .notes-graph[data-diving] :is(.graph-bar, .graph-legend, .graph-zoom, .graph-card, .graph-tip) { opacity: 0; transform: scale(.98); transition: opacity .18s ease-in, transform .18s ease-in; }
@@ -1458,7 +1648,7 @@ canvas.md-stl:active { cursor: grabbing; }
   .graph-search:focus-within input, .graph-search[data-filled] input { display: block; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .notes-graph, .notes-graph *, .notes-content[data-arrive] > *, .graph-filters { animation: none !important; transition: none !important; }
+  .notes-graph, .notes-graph::before, .notes-graph *, .notes-content[data-arrive] > *, .graph-filters { animation: none !important; transition: none !important; }
 }
 
 /* ── 파일 탐색기 창: 유리 사이드바 · 목록/아이콘 보기 · 미리 보기 ─────────────── */

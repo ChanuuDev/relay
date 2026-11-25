@@ -2,22 +2,31 @@ import { labelOf as coreLabel, plainLine } from "@relay/core";
 import type { Item, Items, Note } from "./notes";
 
 /** 메모 지식 그래프. 메모·폴더·태그가 점(node)이고, 둘 사이의 관계가 선(edge)이다. 이 파일은 화면과 무관한 계산만 한다(단위 테스트 대상).
+ *  화면(메모 그래프)과 CLI(`relay graph`)가 같은 계산을 쓴다.
  *
  *  선의 종류
  *  - link: 본문의 `[[제목]]`(옵시디언식 위키 링크)이나 메모·폴더 ID 참조. 방향이 있다(쓴 메모 → 가리킨 메모).
  *  - mention: 다른 메모의 제목이 본문에 그대로 나온다(링크로 걸지 않은 언급).
  *  - similar: 두 메모가 드문 낱말을 여럿 함께 쓴다(TF-IDF 코사인 유사도). 메모마다 가장 가까운 몇 개만 잇는다.
- *  - folder: 메모·폴더와 그것을 담은 폴더.
- *  - tag: 메모와 본문의 `#태그`. */
-export type GraphNodeKind = "note" | "folder" | "tag";
-export type EdgeKind = "link" | "mention" | "similar" | "folder" | "tag";
-export const EDGE_KINDS: readonly EdgeKind[] = ["link", "mention", "similar", "folder", "tag"];
+ *  - folder: 메모·폴더와 그것을 담은 폴더. 작업 세션과 그 세션이 돈 프로젝트(작업 폴더)도 이 선으로 잇는다.
+ *  - tag: 메모와 본문의 `#태그`.
+ *  - chain: 이어받은 작업 세션과 그 앞 세션(relay continue).
+ *
+ *  작업 세션(에이전트가 Relay에 남긴 기록)은 둘째 층이다. 세션 요약이 메모 ID·`[[제목]]`을 적었거나 메모가 세션 ID를 적었으면 link,
+ *  메모 제목이 요약에 나오면 mention, 드문 낱말을 함께 쓰면 similar로 메모 층과 이어진다. 이 선들이 두 층의 접점이다. */
+export type GraphNodeKind = "note" | "folder" | "tag" | "session" | "project";
+export type EdgeKind = "link" | "mention" | "similar" | "folder" | "tag" | "chain";
+export const EDGE_KINDS: readonly EdgeKind[] = ["link", "mention", "similar", "folder", "tag", "chain"];
+/** 글이 있는 점(메모·작업 세션). 주제 묶음·맥락 고르기의 대상이다. */
+export const isDoc = (node: Pick<GraphNode, "kind">) => node.kind === "note" || node.kind === "session";
+/** 다른 점을 담는 점(폴더·프로젝트). */
+export const isContainer = (node: Pick<GraphNode, "kind">) => node.kind === "folder" || node.kind === "project";
 
 export type GraphNode = {
   id: string; kind: GraphNodeKind; label: string;
-  /** 색을 가르는 묶음: 최상위 폴더 ID, 최상위 메모는 ROOT_GROUP, 태그는 TAG_GROUP. */
+  /** 색을 가르는 묶음: 최상위 폴더 ID, 최상위 메모는 ROOT_GROUP, 태그는 TAG_GROUP, 작업 세션과 프로젝트는 SESSION_GROUP. */
   group: string;
-  /** 담은 폴더(태그는 null). */
+  /** 담은 폴더(태그는 null). 작업 세션은 프로젝트 점. */
   parentId: string | null;
   /** 폴더 깊이(최상위 0). 태그는 0. */
   depth: number;
@@ -26,18 +35,46 @@ export type GraphNode = {
   createdAt: number; updatedAt: number;
   /** 이 메모를 대표하는 낱말(드문 순). 메모가 아니면 빈 목록. */
   keywords: string[];
-  /** 태그면 그 태그를 쓴 메모 수, 폴더면 하위 메모 수. */
+  /** 태그면 그 태그를 쓴 메모 수, 폴더면 하위 메모 수, 프로젝트면 그래프에 든 세션 수. */
   count: number;
 };
 export type GraphEdge = { id: string; source: string; target: string; kind: EdgeKind; /** 0..1, 유사도는 그 값 */ weight: number };
 export type GraphGroup = { id: string; label: string; index: number };
 /** 내용으로 묶은 주제. label은 대표 낱말 몇 개, members는 메모 ID(중심이 되는 메모부터). */
 export type GraphCluster = { id: string; label: string; keywords: string[]; members: string[] };
-export type NoteGraph = { nodes: GraphNode[]; edges: GraphEdge[]; groups: GraphGroup[]; clusters: GraphCluster[]; byId: Map<string, GraphNode> };
+/** 낱말 무게(TF-IDF, 크기 1). 유사도 계산에 쓴다. */
+export type Vector = Map<string, number>;
+/** 그래프에 넣을 작업 세션(Relay 세션 기록에서 필요한 것만). 시각은 밀리초 epoch다. */
+export type GraphSession = {
+  id: string; provider: string; agent: string; providerSessionId: string; name: string | null; summary: string; cwd: string;
+  status: string | null; createdAt: number; updatedAt: number; parentId: string | null;
+};
+export type NoteGraph = {
+  nodes: GraphNode[]; edges: GraphEdge[]; groups: GraphGroup[]; clusters: GraphCluster[]; byId: Map<string, GraphNode>;
+  /** 글이 있는 점(메모·세션)의 낱말 무게. */
+  vectors: Map<string, Vector>;
+  /** 세션 점 ID → 세션 기록. */
+  sessions: Map<string, GraphSession>;
+};
+
+/** Relay 세션 기록에서 그래프에 쓸 것만 고른다. */
+export const toGraphSession = (session: {
+  id: string; provider: string; agent: string; providerSessionId: string; sessionName: string | null; summary: string; workingDirectory: string;
+  status: string | null; createdAt: string; updatedAt: string; parentSessionId: string | null;
+}): GraphSession => ({
+  id: session.id, provider: session.provider, agent: session.agent, providerSessionId: session.providerSessionId, name: session.sessionName, summary: session.summary,
+  cwd: session.workingDirectory, status: session.status, createdAt: Date.parse(session.createdAt) || 0, updatedAt: Date.parse(session.updatedAt) || 0, parentId: session.parentSessionId,
+});
 
 export const ROOT_GROUP = "group:root";
 export const TAG_GROUP = "group:tag";
+export const SESSION_GROUP = "group:session";
 export const tagId = (name: string) => `tag:${name.toLocaleLowerCase("ko-KR")}`;
+export const sessionNodeId = (id: string) => `session:${id}`;
+const cleanPath = (cwd: string) => cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+export const projectNodeId = (cwd: string) => `project:${cleanPath(cwd).toLocaleLowerCase("en-US")}`;
+/** 작업 폴더의 마지막 이름. */
+export const projectLabel = (cwd: string) => cleanPath(cwd).split("/").pop() || cwd || "프로젝트";
 
 const labelOf = (item: Item) => coreLabel(item);
 /** 그래프에 쓸 짧은 이름. 제목이 없으면 본문 첫 줄을 쓰고 길면 줄인다. */
@@ -87,15 +124,21 @@ export function tagsOf(body: string): string[] {
 const normalize = (text: string) => text.normalize("NFC").toLocaleLowerCase("ko-KR").replace(/\s+/g, " ").trim();
 const isWordChar = (char: string | undefined) => Boolean(char && /[\p{L}\p{N}_]/u.test(char));
 
-/** title이 text에 낱말 처음부터 나오는가. 한국어는 조사가 붙으므로 뒤쪽 경계는 보지 않고 앞쪽만 본다(「회고」가 「회고를」에는 걸리고 「주간회고」에는 안 걸린다). */
+/** title이 text에 낱말 처음부터 나오는가. 한국어는 조사가 붙으므로 뒤에 한글이 이어지면 그것이 조사일 때만 같은 낱말로 본다
+ *  (「회고」가 「회고를」·「회고에서는」에는 걸리고 「주간회고」·「회고집」에는 안 걸린다). */
 export function mentions(text: string, title: string) {
   if (!title) return false;
+  const last = title[title.length - 1]!;
   for (let at = text.indexOf(title); at !== -1; at = text.indexOf(title, at + 1)) {
-    if (!isWordChar(text[at - 1])) {
-      // 영문·숫자 제목은 뒤도 낱말 경계여야 한다(「api」가 「apis」에 걸리지 않게).
-      const last = title[title.length - 1]!;
-      if (!/[a-z0-9]/i.test(last) || !/[a-z0-9]/i.test(text[at + title.length] ?? "")) return true;
-    }
+    if (isWordChar(text[at - 1])) continue;
+    const end = at + title.length;
+    // 영문·숫자 제목은 뒤도 낱말 경계여야 한다(「api」가 「apis」에 걸리지 않게).
+    if (/[a-z0-9]/i.test(last)) { if (!/[a-z0-9]/i.test(text[end] ?? "")) return true; continue; }
+    if (!HANGUL.test(last) || !HANGUL.test(text[end] ?? "")) return true;
+    let tail = "";
+    for (let i = end; i < text.length && tail.length <= 6 && HANGUL.test(text[i]!); i++) tail += text[i];
+    const rest = tail.startsWith("들") ? tail.slice(1) : tail;
+    if (!rest || JOSA_SET.has(rest)) return true;
   }
   return false;
 }
@@ -109,6 +152,10 @@ const JOSA = [
   "하고", "라고", "라는", "이며", "이고", "이다", "했다", "한다", "하는", "하기", "하여", "해서", "하면", "했던", "되는", "된다", "되어", "되면", "에는", "에도",
   "은", "는", "이", "가", "을", "를", "의", "에", "로", "와", "과", "도", "만", "랑", "요",
 ].sort((a, b) => b.length - a.length);
+const JOSA_SET = new Set([...JOSA, "이었고", "였고", "이고", "이며", "이면", "인데", "이지만", "이라", "이라서", "으로써", "로써", "로서", "으로서", "에서의", "에의", "과의", "와의",
+  "이나", "나", "든", "이든", "야", "이야", "께", "께서는", "에게는", "한테는", "만의", "만은", "만을", "도록", "같이", "뿐", "뿐만", "대로", "이라도", "라도", "란", "으로의", "로의", "에서만",
+  "였다", "이었다", "입니다", "임", "일", "인", "임을", "에선", "에겐", "엔", "론", "으론", "은요", "는요"]);
+const HANGUL = /\p{Script=Hangul}/u;
 const STOP_KO = new Set([
   "그리고", "그러나", "하지만", "그래서", "또한", "그런데", "따라서", "그러면", "있는", "없는", "있다", "없다", "하다", "했다", "한다", "있습니다", "없습니다",
   "같은", "같다", "이런", "저런", "그런", "이것", "그것", "저것", "여기", "거기", "우리", "저희", "너무", "매우", "정말", "아주", "조금", "많이", "가장", "모든",
@@ -147,9 +194,8 @@ export function tokenize(text: string): string[] {
   return out;
 }
 
-type Vector = Map<string, number>;
 /** 메모마다 낱말 가중치(TF-IDF, 크기 1로 맞춤)와 대표 낱말. 제목 낱말은 세 배로 센다. 너무 흔한 낱말(메모 절반 넘게)은 뺀다. */
-function weigh(notes: Note[]): { vectors: Map<string, Vector>; keywords: Map<string, string[]> } {
+function weigh(notes: Note[]): { vectors: Map<string, Vector>; keywords: Map<string, string[]>; df: Map<string, number> } {
   const counts = new Map<string, Map<string, number>>();
   const df = new Map<string, number>();
   for (const note of notes) {
@@ -178,6 +224,32 @@ function weigh(notes: Note[]): { vectors: Map<string, Vector>; keywords: Map<str
     const norm = Math.hypot(...shared.map(([, value]) => value)) || 1;
     vectors.set(id, new Map(shared.map(([word, value]) => [word, value / norm])));
   }
+  return { vectors, keywords, df };
+}
+
+/** 세션 글을 메모의 낱말 공간에 놓는다. 메모의 낱말 빈도(df)를 그대로 써서, 세션을 넣어도 메모끼리의 유사도와 대표 낱말이 바뀌지 않는다. */
+function weighSessions(sessions: GraphSession[], df: Map<string, number>, total: number) {
+  const vectors = new Map<string, Vector>();
+  const keywords = new Map<string, string[]>();
+  const common = Math.max(2, total * 0.5);
+  for (const session of sessions) {
+    const terms = new Map<string, number>();
+    const add = (word: string, by: number) => terms.set(word, (terms.get(word) ?? 0) + by);
+    for (const word of tokenize(session.name ?? "")) add(word, 3);
+    for (const word of tokenize(prose(session.summary).split("\n").map(plainLine).join("\n"))) add(word, 1);
+    const scored: Array<[string, number]> = [];
+    for (const [word, count] of terms) {
+      const seen = df.get(word) ?? 0;
+      if (total > 3 && seen > common) continue;
+      scored.push([word, (1 + Math.log(count)) * (Math.log((1 + total) / (1 + seen)) + 1)]);
+    }
+    scored.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    const id = sessionNodeId(session.id);
+    keywords.set(id, scored.slice(0, 6).map(([word]) => word));
+    const shared = scored.filter(([word]) => (df.get(word) ?? 0) >= 1).slice(0, 32);
+    const norm = Math.hypot(...scored.slice(0, 32).map(([, value]) => value)) || 1;
+    vectors.set(id, new Map(shared.map(([word, value]) => [word, value / norm])));
+  }
   return { vectors, keywords };
 }
 
@@ -204,10 +276,17 @@ export function similarities(vectors: Map<string, Vector>, minShared = 2) {
 
 // ── 그래프 만들기 ─────────────────────────────────────────
 
-export type BuildOptions = { /** 메모마다 잇는 비슷한 메모 수 */ similarPerNote?: number; /** 이보다 낮은 유사도는 잇지 않는다 */ minSimilarity?: number };
+export type BuildOptions = {
+  /** 메모마다 잇는 비슷한 메모 수 */ similarPerNote?: number;
+  /** 이보다 낮은 유사도는 잇지 않는다 */ minSimilarity?: number;
+  /** 함께 놓을 작업 세션. */
+  sessions?: GraphSession[];
+  /** linked(기본): 메모와 이어진 세션만 넣는다. all: 모두 넣는다. */
+  sessionScope?: "linked" | "all";
+};
 
 export function buildGraph(items: Items, options: BuildOptions = {}): NoteGraph {
-  const { similarPerNote = 3, minSimilarity = 0.16 } = options;
+  const { similarPerNote = 3, minSimilarity = 0.16, sessions = [], sessionScope = "linked" } = options;
   const all = Object.values(items);
   const notes = all.filter((item): item is Note => item.kind === "note").sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
   const folders = all.filter((item) => item.kind === "folder").sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
@@ -229,7 +308,7 @@ export function buildGraph(items: Items, options: BuildOptions = {}): NoteGraph 
   const groups: GraphGroup[] = tops.map((folder, index) => ({ id: folder.id, label: labelOf(folder), index }));
   if (notes.some((note) => topOf(note) === ROOT_GROUP)) groups.push({ id: ROOT_GROUP, label: "최상위", index: groups.length });
 
-  const { vectors, keywords } = weigh(notes);
+  const { vectors, keywords, df } = weigh(notes);
   const nodes: GraphNode[] = [];
   const byId = new Map<string, GraphNode>();
   const push = (node: GraphNode) => { nodes.push(node); byId.set(node.id, node); };
@@ -316,9 +395,140 @@ export function buildGraph(items: Items, options: BuildOptions = {}): NoteGraph 
   chosen.sort((x, y) => y.score - x.score || (x.a + x.b < y.a + y.b ? -1 : 1));
   for (const { a, b, score } of chosen) addEdge(a, b, "similar", Math.min(1, score));
 
-  const graph: NoteGraph = { nodes, edges, groups, clusters: [], byId };
-  graph.clusters = clustersOf(graph, keywords);
+  // 작업 세션 층. 메모와 닿는 선(접점)을 먼저 찾고, 범위에 든 세션만 점으로 만든다.
+  const sessionIndex = new Map<string, GraphSession>();
+  if (sessions.length) {
+    const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    const weighed = weighSessions(ordered, df, notes.length);
+    const postings = new Map<string, Array<[string, number]>>();
+    for (const [id, vector] of vectors) for (const [word, value] of vector) {
+      const list = postings.get(word);
+      if (list) list.push([id, value]); else postings.set(word, [[id, value]]);
+    }
+    type Contact = { source: string; target: string; kind: EdgeKind; weight: number };
+    const contacts = new Map<string, Contact[]>();
+    const touch = (session: string, contact: Contact) => contacts.set(session, [...(contacts.get(session) ?? []), contact]);
+    // 메모가 적어 둔 세션 ID(Agent 세션 ID나 Relay 내부 ID).
+    const byToken = new Map<string, string>();
+    for (const session of ordered) {
+      const id = sessionNodeId(session.id);
+      for (const token of [session.providerSessionId, session.id.replace(/^ses_/, "")]) if (token.length >= 8) byToken.set(token.toLowerCase(), id);
+    }
+    for (const note of notes) for (const match of note.body.matchAll(UUID)) {
+      const session = byToken.get(match[0].toLowerCase());
+      if (session) touch(session, { source: note.id, target: session, kind: "link", weight: 1 });
+    }
+    for (const session of ordered) {
+      const id = sessionNodeId(session.id);
+      const raw = `${session.name ?? ""}\n${session.summary}`;
+      for (const match of raw.matchAll(UUID)) { const hit = byId.get(match[0].toLowerCase()) ?? byId.get(match[0]); if (hit && hit.kind !== "tag") touch(id, { source: id, target: hit.id, kind: "link", weight: 1 }); }
+      for (const name of wikiTargets(raw)) { const target = titleIndex.get(normalize(name)); if (target) touch(id, { source: id, target, kind: "link", weight: 1 }); }
+      const text = normalize(prose(raw));
+      for (const [title, ids] of titles) if (ids.length === 1 && title.length >= 3 && mentions(text, title)) touch(id, { source: id, target: ids[0]!, kind: "mention", weight: 0.8 });
+      const scores = new Map<string, { score: number; shared: number }>();
+      for (const [word, value] of weighed.vectors.get(id) ?? []) for (const [note, other] of postings.get(word) ?? []) {
+        const entry = scores.get(note);
+        if (entry) { entry.score += value * other; entry.shared++; } else scores.set(note, { score: value * other, shared: 1 });
+      }
+      // 세션 요약은 길고 낱말이 많아 메모와 쉽게 겹친다. 셋 이상의 드문 낱말을 함께 쓰는 가장 가까운 메모 하나만 잇는다.
+      const near = [...scores].filter(([, entry]) => entry.shared >= 3 && entry.score >= Math.max(minSimilarity, 0.26))
+        .sort((a, b) => b[1].score - a[1].score || (a[0] < b[0] ? -1 : 1)).slice(0, 1);
+      for (const [note, entry] of near) touch(id, { source: id, target: note, kind: "similar", weight: Math.min(1, entry.score) });
+    }
+    // 느슨한 단서(언급·비슷함)는 추린다. 직접 가리킨 것(ID·[[제목]])은 모두 남긴다.
+    // 1) 여러 세션이 입에 올리는 제목(프로젝트 이름 같은 것)은 단서가 못 된다. 2) 메모 하나에 붙는 세션은 셋까지. 3) 느슨한 단서로만 들어오는 세션 수에도 한도를 둔다.
+    const updated = new Map(ordered.map((session) => [sessionNodeId(session.id), session.updatedAt]));
+    const mentioned = new Map<string, number>();
+    for (const list of contacts.values()) for (const contact of list) if (contact.kind === "mention") mentioned.set(contact.target, (mentioned.get(contact.target) ?? 0) + 1);
+    const generic = Math.max(3, Math.ceil(ordered.length * 0.08));
+    const loose: Array<Contact & { session: string }> = [];
+    for (const [session, list] of contacts) {
+      const firm = list.filter((contact) => contact.kind === "link");
+      for (const contact of list) if (contact.kind !== "link" && !(contact.kind === "mention" && mentioned.get(contact.target)! > generic)) loose.push({ ...contact, session });
+      if (firm.length) contacts.set(session, firm); else contacts.delete(session);
+    }
+    loose.sort((a, b) => b.weight - a.weight || updated.get(b.session)! - updated.get(a.session)! || (a.session + a.target < b.session + b.target ? -1 : 1));
+    const perNote = new Map<string, number>();
+    const looseSessions = new Set<string>();
+    const room = Math.max(6, Math.round(notes.length * 0.4));
+    for (const contact of loose) {
+      if ((perNote.get(contact.target) ?? 0) >= 3) continue;
+      if (!contacts.has(contact.session) && !looseSessions.has(contact.session)) { if (looseSessions.size >= room) continue; looseSessions.add(contact.session); }
+      perNote.set(contact.target, (perNote.get(contact.target) ?? 0) + 1);
+      touch(contact.session, { source: contact.source, target: contact.target, kind: contact.kind, weight: contact.weight });
+    }
+    const included = ordered.filter((session) => sessionScope === "all" || contacts.has(sessionNodeId(session.id)));
+    if (included.length) {
+      const projects = new Map<string, GraphSession[]>();
+      for (const session of included) if (session.cwd) projects.set(projectNodeId(session.cwd), [...(projects.get(projectNodeId(session.cwd)) ?? []), session]);
+      // 세션이 하나뿐인 프로젝트는 점으로 만들지 않는다(메모와 이어진 세션만 볼 때 잎사귀만 늘어난다).
+      for (const [id, members] of projects) {
+        if (members.length < (sessionScope === "all" ? 1 : 2)) { projects.delete(id); continue; }
+        push({ id, kind: "project", label: projectLabel(members[0]!.cwd), group: SESSION_GROUP, parentId: null, depth: 0, size: 0,
+          createdAt: Math.min(...members.map((member) => member.createdAt)), updatedAt: Math.max(...members.map((member) => member.updatedAt)), keywords: [], count: members.length });
+      }
+      for (const session of included) {
+        const id = sessionNodeId(session.id);
+        const project = session.cwd && projects.has(projectNodeId(session.cwd)) ? projectNodeId(session.cwd) : null;
+        const label = (session.name ?? "").trim() || plainLine(session.summary.split("\n").find((line) => line.trim()) ?? "") || "작업 세션";
+        push({ id, kind: "session", label: label.length > 28 ? `${label.slice(0, 27).trimEnd()}…` : label, group: SESSION_GROUP, parentId: project, depth: project ? 1 : 0,
+          size: session.summary.length, createdAt: session.createdAt, updatedAt: session.updatedAt, keywords: weighed.keywords.get(id) ?? [], count: 0 });
+        sessionIndex.set(id, session);
+        const vector = weighed.vectors.get(id);
+        if (vector) vectors.set(id, vector);
+        if (project) addEdge(project, id, "folder");
+      }
+      const order: Record<string, number> = { link: 0, mention: 1, similar: 2 };
+      const all = [...contacts.values()].flat().sort((a, b) => order[a.kind]! - order[b.kind]! || b.weight - a.weight || (a.source + a.target < b.source + b.target ? -1 : 1));
+      for (const contact of all) addEdge(contact.source, contact.target, contact.kind, contact.weight);
+      for (const session of included) if (session.parentId) addEdge(sessionNodeId(session.id), sessionNodeId(session.parentId), "chain", 0.9);
+      groups.push({ id: SESSION_GROUP, label: "작업 세션", index: groups.length });
+    }
+  }
+
+  const words = new Map(keywords);
+  for (const node of nodes) if (node.kind === "session") words.set(node.id, node.keywords);
+  const graph: NoteGraph = { nodes, edges, groups, clusters: [], byId, vectors, sessions: sessionIndex };
+  graph.clusters = clustersOf(graph, words);
   return graph;
+}
+
+/** 링크로 가리킬 메모의 이름과, 그 이름을 `[[…]]`에 적으면 그 메모만 가리키는지. */
+export function linkTarget(items: Items, id: string): { id: string; title: string; unique: boolean } {
+  const item = items[id];
+  const title = item ? (item.kind === "note" ? item.title.trim() || labelOf(item) : labelOf(item)).trim() : "";
+  const key = normalize(title);
+  let same = 0;
+  for (const other of Object.values(items)) {
+    const names = other.kind === "note" ? [other.title, labelOf(other)] : [labelOf(other)];
+    if (names.some((name) => normalize(name) === key)) same++;
+  }
+  return { id, title, unique: Boolean(key) && same === 1 && !/[[\]|#\n]/.test(title) };
+}
+
+/** 앞서 덧붙인 연결 줄 바로 아래에 이어 적어 목록 하나로 모은다. */
+function appendLine(body: string, line: string) {
+  const trimmed = body.replace(/\s+$/, "");
+  const tail = /(?:^|\n)- (?:\\?\[\\?\[|「|작업 세션 「)[^\n]*$/.test(trimmed);
+  return trimmed ? `${trimmed}${tail ? "\n" : "\n\n"}${line}\n` : `${line}\n`;
+}
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** 메모 본문 끝에 다른 메모로 가는 링크 한 줄을 덧붙인다. 제목이 하나뿐이면 `[[제목]]`, 겹치거나 없으면 ID를 적는다(ID 참조도 링크가 된다).
+ *  이미 같은 링크가 있으면 본문을 그대로 돌려준다. */
+export function appendLink(body: string, target: { id: string; title: string; unique: boolean }, why = ""): string {
+  const title = oneLine(target.title.replace(/[[\]|#]/g, " "));
+  if (target.unique && title && wikiTargets(body).some((name) => normalize(name) === normalize(title))) return body;
+  if (body.toLowerCase().includes(target.id.toLowerCase())) return body;
+  const link = target.unique && title ? `[[${title}]]` : `「${title || "메모"}」 (메모 ID: ${target.id})`;
+  return appendLine(body, `- ${link}${oneLine(why) ? ` — ${oneLine(why)}` : ""}`);
+}
+
+/** 메모 본문 끝에 작업 세션을 가리키는 한 줄을 덧붙인다. 세션 ID가 본문에 있으면 메모와 세션이 링크로 이어진다. */
+export function appendSessionLink(body: string, session: Pick<GraphSession, "providerSessionId" | "name">, why = ""): string {
+  if (body.toLowerCase().includes(session.providerSessionId.toLowerCase())) return body;
+  const name = oneLine((session.name ?? "").replace(/[「」]/g, " ")) || "작업 세션";
+  return appendLine(body, `- 작업 세션 「${name}」 (세션 ID: ${session.providerSessionId})${oneLine(why) ? ` — ${oneLine(why)}` : ""}`);
 }
 
 /** 이웃(방향 무시). kinds를 주면 그 종류의 선만 본다. */
@@ -332,7 +542,7 @@ export function neighbors(graph: Pick<NoteGraph, "edges">, kinds?: ReadonlySet<E
 /** 주제 묶음: 메모끼리의 선(링크·언급·비슷함, 같은 태그)에 무게를 주어 이웃의 묶음을 따라가는 방식(label propagation)으로 나눈다.
  *  홀로 남은 메모는 「연결 없는 메모」 한 묶음이 된다. 결과는 항상 같다(정렬된 순서로만 돈다). */
 export function clustersOf(graph: Pick<NoteGraph, "nodes" | "edges">, keywords: Map<string, string[]>): GraphCluster[] {
-  const notes = graph.nodes.filter((node) => node.kind === "note").map((node) => node.id).sort();
+  const notes = graph.nodes.filter(isDoc).map((node) => node.id).sort();
   if (!notes.length) return [];
   const isNote = new Set(notes);
   const weights = new Map<string, Map<string, number>>();
@@ -348,7 +558,7 @@ export function clustersOf(graph: Pick<NoteGraph, "nodes" | "edges">, keywords: 
   for (const edge of graph.edges) {
     if (edge.kind === "tag") { tagMembers.set(edge.target, [...(tagMembers.get(edge.target) ?? []), edge.source]); continue; }
     if (edge.kind === "folder" || !isNote.has(edge.source) || !isNote.has(edge.target)) continue;
-    link(edge.source, edge.target, edge.kind === "link" ? 1 : edge.kind === "mention" ? 0.8 : 0.5 + edge.weight);
+    link(edge.source, edge.target, edge.kind === "link" ? 1 : edge.kind === "mention" ? 0.8 : edge.kind === "chain" ? 0.7 : 0.5 + edge.weight);
   }
   for (const members of tagMembers.values()) if (members.length <= 12) for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) link(members[i]!, members[j]!, 0.6);
 
