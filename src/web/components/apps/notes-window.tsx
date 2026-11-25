@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -9,11 +9,13 @@ import { DesktopMenu, type MenuEntry } from "../desktop/menu";
 import { NoteDocument } from "./note-editor";
 import { SplitView } from "../desktop/split-view";
 import {
-  childMap, exportNotes, importNotes, isWithin, labelOf, memoReference, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
+  childMap, exportNotes, handOff, importNotes, isWithin, labelOf, memoReference, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type Row,
 } from "../../lib/notes";
 import { useNoteAlert } from "../../lib/note-images";
 import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
+import { openPopout, popoutApp } from "../../lib/popout";
+import { useDesktop } from "../../lib/desktop-store";
 
 const DRAG_TYPE = "application/x-relay-note";
 const UNDO_MS = 8000;
@@ -156,6 +158,17 @@ export function NotesWindow() {
     });
   }
 
+  /** 메모를 바탕화면 밖 별도 창으로 옮긴다. 보던 메모와 보내지 못한 변경을 먼저 넘기고, 열리면 이 창은 닫는다(두 곳에서 같은 메모를 고치지 않게). */
+  function popOut() {
+    void handOff();
+    const result = openPopout("notes");
+    if (result === "blocked") {
+      setNotice((current) => (current?.tone === "progress" ? current : { tone: "error", text: "브라우저가 새 창을 막았습니다. 주소창의 팝업 차단 표시에서 이 사이트의 팝업을 허용한 뒤 다시 눌러 주세요." }));
+      return;
+    }
+    useDesktop.getState().close("notes");
+  }
+
   /** AI 에이전트에 붙여 넣을 한 줄(참조해 달라는 문구와 ID)을 복사한다. 에이전트는 relay memo --find <ID>로 읽는다. */
   async function copyReference(id: string) {
     const item = useNotes.getState().items[id];
@@ -255,6 +268,8 @@ export function NotesWindow() {
           const rect = event.currentTarget.getBoundingClientRect();
           openMenu("tools", null, rect.right - 200, rect.bottom + 4);
         }}><Ellipsis aria-hidden="true" /></Button>
+      {popoutApp ? null : <Button type="button" variant="ghost" size="icon-sm" id="notes-popout" aria-label="새 창으로 열기" title="새 창으로 열기: 다른 모니터로 옮길 수 있는 별도 창에 메모를 엽니다"
+        onClick={popOut}><SquareArrowOutUpRight aria-hidden="true" /></Button>}
       <input ref={fileRef} id="notes-import-file" type="file" accept=".json,application/json" hidden onChange={importFile} />
     </div>} />}>
     <SplitView name="notes" label="메모 목록" className="notes-layout" data-pane={pane} defaultWidth={256} minWidth={200} maxWidth={480} minMain={320} side={

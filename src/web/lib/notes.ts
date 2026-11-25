@@ -405,6 +405,7 @@ export const useNoteLeading = create<{ leading: number; setLeading: (leading: nu
 // ── DB와 맞추기 ─────────────────────────────────────────────
 // 고친 항목만 모아 SAVE_DELAY 뒤에 한 번에 보낸다(POST). 보내지 못한 변경은 PENDING_KEY에 남겨 창을 닫아도 다음에 보낸다.
 // POLL_MS마다 저장 번호(ETag)만 묻고, 다른 탭·창이 고쳤을 때만 목록을 다시 받는다. 아직 보내지 못한 이 창의 변경이 이긴다.
+// 같은 브라우저의 다른 창(별도 메모 창 등)에는 저장하자마자 알려, 그 창이 폴링을 기다리지 않고 바로 다시 받게 한다.
 
 type Pending = { upserts: Map<string, Item>; deletes: Map<string, number> };
 let stamp = 0;
@@ -417,7 +418,13 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let viewTimer: ReturnType<typeof setTimeout> | undefined;
 let flushing = false;
 let polling = false;
+/** 확인 중에 다시 받으라는 요청이 오면, 지금 확인이 끝난 뒤 한 번 더 받는다. */
+let repoll = false;
 let retryDelay = 3000;
+/** 같은 브라우저의 다른 창·탭과 저장 소식을 주고받는다. 없으면 폴링만으로 맞춘다. */
+const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("relay-notes") : null;
+/** 다른 창에 이 저장 번호까지 서버에 있다고 알린다. */
+const announce = (saved: number) => { try { channel?.postMessage({ revision: saved }); } catch { /* 알리지 못해도 폴링이 맞춘다. */ } };
 
 function readPending(): Pending {
   const result: Pending = { upserts: new Map(), deletes: new Map() };
@@ -471,6 +478,7 @@ export async function flush() {
     // 그사이 다른 곳에서도 저장했다면 목록을 다시 받는다.
     const missed = data.revision !== revision + 1;
     revision = data.revision;
+    announce(revision);
     setSync(hasPending() ? "saving" : "saved");
     if (missed) void poll(true);
   } catch {
@@ -507,6 +515,7 @@ function applyRemote(list: unknown[]) {
 
 /** 저장 번호가 바뀌었을 때만 목록을 다시 받는다. 보내는 중이면 건너뛴다(보낸 뒤 번호를 맞춘다). */
 async function poll(force = false) {
+  if (polling && force) repoll = true;
   if (polling || flushing || (!force && document.hidden)) return;
   polling = true;
   try {
@@ -518,7 +527,10 @@ async function poll(force = false) {
     if (flushing || data.revision < revision) return;
     revision = data.revision;
     applyRemote(data.items);
-  } catch { /* 다음 확인 때 다시 묻는다. */ } finally { polling = false; }
+  } catch { /* 다음 확인 때 다시 묻는다. */ } finally {
+    polling = false;
+    if (repoll) { repoll = false; void poll(true); }
+  }
 }
 
 // ── 다른 환경으로 옮기기 ─────────────────────────────────────
@@ -563,6 +575,7 @@ export async function importNotes(file: File): Promise<ImportResult> {
   const response = await fetch(`${API}/import`, { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: text });
   if (!response.ok) throw new Error(await failure(response, "서버가 가져오기를 거절했습니다."));
   const { added, updated, kept, revision: saved } = await response.json() as ImportResult & { revision: number };
+  announce(saved);
   // 다른 확인이나 저장이 진행 중이면 poll이 건너뛰므로, 합친 저장 번호를 받을 때까지 잠깐씩 다시 묻는다.
   for (let tries = 0; revision < saved && tries < 20; tries++) {
     await poll(true);
@@ -601,6 +614,10 @@ async function start() {
   }
 }
 
+function writeView() {
+  const { selected, expanded } = useNotes.getState();
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ selected, expanded: Object.keys(expanded) })); } catch { /* 보기 상태는 잃어도 된다. */ }
+}
 useNotes.subscribe((state) => {
   if (state.items !== seen && !remote) {
     for (const [id, item] of Object.entries(state.items)) if (seen[id] !== item) { pending.upserts.set(id, item); pending.deletes.delete(id); }
@@ -610,11 +627,15 @@ useNotes.subscribe((state) => {
   }
   seen = state.items;
   clearTimeout(viewTimer);
-  viewTimer = setTimeout(() => {
-    const { selected, expanded } = useNotes.getState();
-    try { localStorage.setItem(VIEW_KEY, JSON.stringify({ selected, expanded: Object.keys(expanded) })); } catch { /* 보기 상태는 잃어도 된다. */ }
-  }, 250);
+  viewTimer = setTimeout(writeView, 250);
 });
+/** 다른 창(별도 메모 창)이 이 창의 상태로 시작하도록 보기 상태(고른 메모·펼친 폴더)를 지금 남기고, 보내지 못한 변경을 보낸다.
+ *  보내는 동안 열린 창은 브라우저에 남긴 변경을 먼저 얹어 보이고, 저장이 끝나면 알림을 받아 다시 맞춘다. */
+export function handOff() {
+  clearTimeout(viewTimer);
+  writeView();
+  return flush();
+}
 // 창을 닫거나 가릴 때: 보내지 못한 변경을 브라우저에 남기고, 작으면 바로 보낸다(keepalive는 64KB까지).
 function leaveNow() {
   writePending();
@@ -624,4 +645,9 @@ function leaveNow() {
 }
 window.addEventListener("pagehide", leaveNow);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush(); else void poll(); });
+// 다른 창이 더 새 저장 번호를 알리면 가려져 있어도 바로 다시 받는다(다른 모니터에 띄운 창은 늘 보이므로 포커스와 무관하다).
+channel?.addEventListener("message", (event: MessageEvent<{ revision?: unknown }>) => {
+  const saved = event.data?.revision;
+  if (typeof saved === "number" && saved > revision && useNotes.getState().status === "ready") void poll(true);
+});
 void start();

@@ -29,10 +29,12 @@ import { AUTO_LAUNCH_INTERVAL, autoLaunchServer } from "./lib/launch";
 import { listLocation, navigate, useUI } from "./lib/store";
 import { isMobileWidth, useDesktop } from "./lib/desktop-store";
 import { enter, enterToast, exit, exitToast } from "./lib/motion";
-import { applyTheme, isDark, watchSystemTheme } from "./lib/theme";
-import { applyFontSize } from "./lib/font-size";
-import { listCustomImages } from "./lib/wallpaper";
-import { setupPwa, useInstall } from "./lib/pwa";
+import { applyTheme, isDark, readTheme, THEME_KEY, watchSystemTheme } from "./lib/theme";
+import { applyFontSize, FONT_SIZE_KEY, readFontSize } from "./lib/font-size";
+import { listCustomImages, readWallpaper, WALLPAPER_KEY } from "./lib/wallpaper";
+import { setupPwa, syncTitlebarColor, useInstall } from "./lib/pwa";
+import { popoutApp, rememberBounds, type PopoutApp } from "./lib/popout";
+import { labelOf, useNotes } from "./lib/notes";
 import { loadCredentials, saveCredentials } from "./lib/credentials";
 import { BrowserLogin } from "./components/browser-login";
 
@@ -54,6 +56,95 @@ function reloadFor(build: string, force = false) {
 setupPwa(() => useDesktop.getState().clampAll(window.innerWidth, window.innerHeight));
 // 저장한 글자 크기는 첫 렌더 전에 적용한다. 그 전에는 빈 바탕만 보이므로 테마처럼 선적용 스크립트가 필요 없다.
 applyFontSize(useUI.getState().fontSize, false);
+// 별도 창은 닫거나 옮긴 자리를 기억해 다음에 같은 자리(다른 모니터 포함)에 열린다.
+if (popoutApp) rememberBounds(popoutApp);
+
+/** 서버가 다른 화면 빌드로 다시 떴으면(relay web --reload, 재설치) 새 화면으로 바꾼다.
+ *  입력 중이면 끊지 않고 알리며(true), 탭이 가려지면 그때 새로 고친다. 메모는 pagehide에서 저장된다. */
+function useBuildReload(serverBuild: string | undefined) {
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    if (!serverBuild || !pageBuild || pageBuild.startsWith("%") || serverBuild === pageBuild) return;
+    if (!editing()) { reloadFor(serverBuild); return; }
+    setUpdateReady(true);
+    const hidden = () => { if (document.hidden) reloadFor(serverBuild); };
+    document.addEventListener("visibilitychange", hidden);
+    return () => document.removeEventListener("visibilitychange", hidden);
+  }, [serverBuild]);
+  return [updateReady, setUpdateReady] as const;
+}
+
+function UpdateToast({ build, onClose }: { build: string | undefined; onClose: () => void }) {
+  return <div id="update-status" className="update-toast material-toast" role="status">
+    <RotateCw aria-hidden="true" /><span>Relay가 새 버전으로 다시 시작됐습니다.</span>
+    <Button type="button" size="xs" onClick={() => { if (build) reloadFor(build, true); }}>새로 고침</Button>
+    <Button type="button" variant="ghost" size="icon-xs" aria-label="안내 닫기" onClick={onClose}><X aria-hidden="true" /></Button>
+  </div>;
+}
+
+/** 테마·시스템 테마를 따라 어두운 화면인지 돌려준다. */
+function useDark() {
+  const theme = useUI((state) => state.theme);
+  const [dark, setDark] = useState(() => isDark(theme));
+  useEffect(() => {
+    setDark(isDark(theme));
+    if (theme !== "system") return;
+    return watchSystemTheme(() => { applyTheme("system"); setDark(isDark("system")); });
+  }, [theme]);
+  return dark;
+}
+
+/** 내 사진 목록을 브라우저 저장소에서 읽어 둔다. 고른 사진이 없으면 기본 사진이 그대로 보인다. */
+function loadCustomImages(isCancelled = () => false) {
+  void listCustomImages().then((images) => {
+    if (!isCancelled()) useUI.getState().setCustomImages(images.map((image) => ({ id: image.id, name: image.name, url: URL.createObjectURL(image.blob) })));
+  });
+}
+
+/** 바탕화면 밖 별도 창. 앱 하나가 운영체제 창 전체를 채우고, 바탕화면 창에서 바꾼 테마·글자 크기·바탕화면을 바로 따라간다.
+ *  창이 운영체제 초점을 잃으면 상단바를 흐리게 보인다(다른 모니터의 어느 창이 입력을 받는지 알 수 있게). */
+function PopoutShell({ app }: { app: PopoutApp }) {
+  const dark = useDark();
+  const health = useQuery(resource<HealthData>("/api/v1/health"));
+  const [updateReady, setUpdateReady] = useBuildReload(health.data?.build);
+  const title = useNotes((state) => {
+    const item = state.selected ? state.items[state.selected] : undefined;
+    return item ? labelOf(item) : null;
+  });
+  useEffect(() => { document.title = title ? `${title} · Relay 메모` : "Relay 메모"; }, [title]);
+  useEffect(() => {
+    let cancelled = false;
+    loadCustomImages(() => cancelled);
+    const follow = (event: StorageEvent) => {
+      if (event.storageArea !== localStorage) return;
+      if (event.key === THEME_KEY) { const theme = readTheme(); applyTheme(theme, false); useUI.setState({ theme }); }
+      else if (event.key === FONT_SIZE_KEY) { const fontSize = readFontSize(); applyFontSize(fontSize, false); useUI.setState({ fontSize }); }
+      else if (event.key === WALLPAPER_KEY) { useUI.setState({ wallpaper: readWallpaper() }); loadCustomImages(() => cancelled); }
+    };
+    window.addEventListener("storage", follow);
+    return () => { cancelled = true; window.removeEventListener("storage", follow); };
+  }, []);
+  useEffect(() => {
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    // 초점이 창 안 iframe(다이어그램 등)으로 옮겨 가도 blur가 오므로, 한 박자 뒤 문서 전체의 초점으로 판단한다.
+    const update = () => {
+      useDesktop.setState({ focused: document.hasFocus() ? app : null });
+      clearTimeout(settle);
+      requestAnimationFrame(syncTitlebarColor);
+      settle = setTimeout(syncTitlebarColor, 250);
+    };
+    const later = () => setTimeout(update, 0);
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", later);
+    update();
+    return () => { clearTimeout(settle); window.removeEventListener("focus", update); window.removeEventListener("blur", later); };
+  }, [app]);
+  return <div className="desktop" data-shell="popout">
+    <Wallpaper dark={dark} />
+    <main id="desktop"><NotesWindow /></main>
+    {updateReady && <UpdateToast build={health.data?.build} onClose={() => setUpdateReady(false)} />}
+  </div>;
+}
 
 function App() {
   const currentLocation = useUI((state) => state.location);
@@ -73,33 +164,25 @@ function App() {
   const pending = watched.some((query) => query.isPending);
   const successAt = Math.min(...watched.map((query) => query.dataUpdatedAt));
   const connection = failed || health.data?.remote?.reachable === false ? "offline" : pending ? "pending" : "online";
-  const theme = useUI((state) => state.theme);
   const mobile = useDesktop((state) => state.mobile);
   const standalone = useInstall((state) => state.standalone);
-  const [dark, setDark] = useState(() => isDark(theme));
+  const dark = useDark();
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null);
   const [toastLeaving, setToastLeaving] = useState(false);
   const [fallback, setFallback] = useState<{ value: string } | null>(null);
   const [fallbackLeaving, setFallbackLeaving] = useState(false);
-  const [updateReady, setUpdateReady] = useState(false);
   const serverBuild = health.data?.build;
+  const [updateReady, setUpdateReady] = useBuildReload(serverBuild);
   const copyRef = useRef<HTMLTextAreaElement>(null);
   const toastRef = useRef<HTMLDivElement>(null);
   const fallbackRef = useRef<HTMLElement>(null);
   const copyTriggerRef = useRef<HTMLElement | null>(null);
   const selectedRef = useRef<string | undefined>(undefined);
 
-  useEffect(() => {
-    setDark(isDark(theme));
-    if (theme !== "system") return;
-    return watchSystemTheme(() => { applyTheme("system"); setDark(isDark("system")); });
-  }, [theme]);
-  // 내 사진 목록은 브라우저 저장소에서 한 번 읽어 둔다. 고른 사진이 없으면 기본 사진이 그대로 보인다.
+  // 내 사진 목록은 브라우저 저장소에서 한 번 읽어 둔다.
   useEffect(() => {
     let cancelled = false;
-    void listCustomImages().then((images) => {
-      if (!cancelled) useUI.getState().setCustomImages(images.map((image) => ({ id: image.id, name: image.name, url: URL.createObjectURL(image.blob) })));
-    });
+    loadCustomImages(() => cancelled);
     return () => { cancelled = true; };
   }, []);
   useEffect(() => {
@@ -152,16 +235,6 @@ function App() {
     }
   }, [id, detail.data?.session.sessionName, currentLocation, standalone]);
   useEffect(() => { if (fallback !== null && !fallbackLeaving) { copyRef.current?.focus(); copyRef.current?.select(); } }, [fallback, fallbackLeaving]);
-  // 서버가 다른 화면 빌드로 다시 떴으면(relay web --reload, 재설치) 새 화면으로 바꾼다.
-  // 입력 중이면 끊지 않고 알리며, 탭이 가려지면 그때 새로 고친다. 메모는 pagehide에서 저장된다.
-  useEffect(() => {
-    if (!serverBuild || !pageBuild || pageBuild.startsWith("%") || serverBuild === pageBuild) return;
-    if (!editing()) { reloadFor(serverBuild); return; }
-    setUpdateReady(true);
-    const hidden = () => { if (document.hidden) reloadFor(serverBuild); };
-    document.addEventListener("visibilitychange", hidden);
-    return () => document.removeEventListener("visibilitychange", hidden);
-  }, [serverBuild]);
   // 설치한 앱을 서버 없이 열었으면(보관본 화면) Windows에 등록한 relay:// 링크로 백그라운드 서버를 켠다. 서버가 뜨면 3초 폴링이 스스로 다시 잇는다.
   // 브라우저는 처음엔 사용자 조작 없이 외부 링크를 열지 않으므로, 그때는 `서버 켜기`를 눌러 `항상 허용`을 고른 뒤부터 자동으로 켜진다. 끊긴 동안은 1분마다 다시 시도한다.
   // 브라우저 모드는 이 PC의 서버가 아니라 원격 Relay에 붙으므로 켜지 않는다.
@@ -240,11 +313,7 @@ function App() {
       <ActivityWindow />
     </main>
     <Dock />
-    {updateReady && <div id="update-status" className="update-toast material-toast" role="status">
-      <RotateCw aria-hidden="true" /><span>Relay가 새 버전으로 다시 시작됐습니다.</span>
-      <Button type="button" size="xs" onClick={() => { if (serverBuild) reloadFor(serverBuild, true); }}>새로 고침</Button>
-      <Button type="button" variant="ghost" size="icon-xs" aria-label="안내 닫기" onClick={() => setUpdateReady(false)}><X aria-hidden="true" /></Button>
-    </div>}
+    {updateReady && <UpdateToast build={serverBuild} onClose={() => setUpdateReady(false)} />}
     {toast && <div id="copy-status" className="copy-toast material-toast" role="status" ref={toastRef} data-leaving={toastLeaving ? "" : undefined}><Check />{toast.text}</div>}
     {fallback !== null && <section id="copy-fallback" className="copy-fallback material-menu" aria-labelledby="copy-label" ref={fallbackRef}
       data-leaving={fallbackLeaving ? "" : undefined}
@@ -273,7 +342,10 @@ function BrowserGate() {
     activateCredentials(credentials);
     setPhase("ready");
   }} />;
-  return <App />;
+  return <Screen />;
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><QueryClientProvider client={queryClient}><TooltipProvider delayDuration={250}>{browserMode ? <BrowserGate /> : <App />}</TooltipProvider></QueryClientProvider></StrictMode>);
+/** 주소가 별도 창이면 그 앱만, 아니면 바탕화면 전체를 그린다. */
+const Screen = () => (popoutApp ? <PopoutShell app={popoutApp} /> : <App />);
+
+createRoot(document.getElementById("root")!).render(<StrictMode><QueryClientProvider client={queryClient}><TooltipProvider delayDuration={250}>{browserMode ? <BrowserGate /> : <Screen />}</TooltipProvider></QueryClientProvider></StrictMode>);

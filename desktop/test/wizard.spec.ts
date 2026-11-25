@@ -261,3 +261,88 @@ test("메뉴바가 제목 표시줄을 대신하고 창 조작·테마·바탕�
   await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.restore());
   await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true);
 });
+
+test("메모를 별도 앱 창으로 띄우고, 다시 누르면 그 창을 앞으로 가져오며, 그 창의 바깥 링크는 기본 브라우저로 연다", async () => {
+  type Overlay = { color?: string; symbolColor?: string; height?: number };
+  await app!.evaluate(({ BrowserWindow, shell }) => {
+    const scope = globalThis as unknown as { relayOverlays: Record<number, Overlay>; relayExternal: string[] };
+    scope.relayOverlays = {}; scope.relayExternal = [];
+    const original = BrowserWindow.prototype.setTitleBarOverlay;
+    BrowserWindow.prototype.setTitleBarOverlay = function (options) { scope.relayOverlays[this.id] = options; return original.call(this, options); };
+    // 테스트가 실제 브라우저를 띄우지 않게 바깥 링크 열기를 가로챈다.
+    shell.openExternal = async (url: string) => { scope.relayExternal.push(url); };
+  });
+  const wizard = await app!.firstWindow();
+  await wizard.locator("#card-local").click();
+  await expect(wizard.locator("#done-lead")).toContainText("로컬 서버로 저장했습니다");
+  const opened = app!.waitForEvent("window");
+  await wizard.locator("#open-main").click();
+  const main = await opened;
+  const notes = main.locator('.window[data-window="notes"]');
+  await main.locator('.dock-item[aria-label="메모"]').click();
+  await expect(notes).toBeVisible();
+
+  const popping = app!.waitForEvent("window");
+  await notes.getByRole("button", { name: "새 창으로 열기" }).click();
+  const popout = await popping;
+  expect(new URL(popout.url()).search).toBe("?window=notes");
+  await expect(notes).toBeHidden();
+  const popped = popout.locator('.window[data-window="notes"]');
+  await expect(popped).toHaveAttribute("data-popout", "");
+  await expect(popout).toHaveTitle("Relay 메모");
+  expect(await popout.evaluate(() => "relayDesktop" in window)).toBe(false);
+  const windows = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed())
+    .map((window) => ({ id: window.id, url: window.webContents.getURL(), minimized: window.isMinimized(), visible: window.isVisible() })));
+  const before = await windows();
+  const child = before.find((window) => window.url.includes("window=notes"))!;
+  expect(child).toBeTruthy();
+
+  // 제목 표시줄을 숨긴 창: 메모 상단바가 제목 표시줄이 되고, 창 조작 버튼은 상단바 도구 오른쪽에 놓이며 상단바 아래 경계선은 덮지 않는다.
+  await expect(popout.locator("html")).toHaveAttribute("data-titlebar", "overlay");
+  const metrics = await popout.evaluate(() => {
+    const overlay = (navigator as unknown as { windowControlsOverlay: { visible: boolean; getTitlebarAreaRect(): DOMRect } }).windowControlsOverlay;
+    const bar = document.querySelector("[data-popout-titlebar]")!;
+    return { visible: overlay.visible, area: overlay.getTitlebarAreaRect().toJSON(), bar: bar.getBoundingClientRect().toJSON(),
+      tools: document.querySelector(".notes-tools")!.getBoundingClientRect().toJSON(),
+      drag: getComputedStyle(bar).getPropertyValue("-webkit-app-region"),
+      button: getComputedStyle(document.querySelector(".notes-tools button")!).getPropertyValue("-webkit-app-region") };
+  });
+  expect(metrics.visible).toBe(true);
+  expect(metrics.area.height).toBe(51);
+  expect(metrics.bar.y).toBe(0);
+  expect(metrics.bar.height).toBe(52);
+  expect(metrics.tools.right).toBeLessThanOrEqual(metrics.area.right);
+  expect(metrics.drag).toBe("drag"); expect(metrics.button).toBe("no-drag");
+  // 화면이 알린 상단바 색이 그 창의 조작 버튼에 쓰인다.
+  await expect.poll(() => app!.evaluate((_electron, id) => (globalThis as unknown as { relayOverlays: Record<number, Overlay> }).relayOverlays[id]?.symbolColor, child.id)).toBeTruthy();
+  await popout.screenshot({ path: path.join(root, "output/notes-popout-window.png") });
+  const nativeCapture = await app!.evaluate(async ({ BrowserWindow, desktopCapturer }, id) => {
+    const window = BrowserWindow.fromId(id)!;
+    const sources = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: window.getBounds() });
+    return sources.find((source) => source.id === window.getMediaSourceId())?.thumbnail.toPNG().toString("base64");
+  }, child.id);
+  if (nativeCapture) writeFileSync(path.join(root, "output/notes-popout-window-native.png"), Buffer.from(nativeCapture, "base64"));
+
+  // 다시 누르면 새 창을 만들지 않고 떠 있는 창을 앞으로 가져온다(최소화해 두었으면 되살린다).
+  await app!.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.minimize(), child.id);
+  await expect.poll(async () => (await windows()).find((window) => window.id === child.id)?.minimized).toBe(true);
+  await main.locator('.dock-item[aria-label="메모"]').click();
+  await expect(notes).toBeVisible();
+  await notes.getByRole("button", { name: "새 창으로 열기" }).click();
+  await expect(notes).toBeHidden();
+  await expect.poll(async () => (await windows()).length).toBe(before.length);
+  await expect.poll(async () => (await windows()).find((window) => window.id === child.id)).toMatchObject({ minimized: false, visible: true });
+
+  // 별도 창에서 연 바깥 링크는 앱 안에 창을 만들지 않고 기본 브라우저로 넘긴다.
+  await popout.evaluate(() => { window.open("https://example.com/docs", "_blank", "noopener"); });
+  await expect.poll(() => app!.evaluate(() => (globalThis as unknown as { relayExternal: string[] }).relayExternal)).toEqual(["https://example.com/docs"]);
+  expect((await windows()).length).toBe(before.length);
+
+  // 창을 닫으면 다음에는 새로 만든다.
+  await app!.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.close(), child.id);
+  await expect.poll(async () => (await windows()).length).toBe(before.length - 1);
+  await main.locator('.dock-item[aria-label="메모"]').click();
+  const again = app!.waitForEvent("window");
+  await notes.getByRole("button", { name: "새 창으로 열기" }).click();
+  expect(new URL((await again).url()).search).toBe("?window=notes");
+});

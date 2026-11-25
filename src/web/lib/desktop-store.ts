@@ -3,6 +3,7 @@ import { APPS, APP_IDS, DOCK_RESERVED, MAX_Z, MOBILE_DOCK_HEIGHT, MOBILE_MAX_WID
 import { readDockOrder, sameOrder, writeDockOrder } from "./dock-order";
 import { captureFrame } from "./motion";
 import { menuBarHeight } from "./pwa";
+import { popoutApp } from "./popout";
 
 export type Win = { open: boolean; minimized: boolean; maximized: boolean; x: number; y: number; w: number; h: number; z: number };
 export type Windows = Record<AppId, Win>;
@@ -115,6 +116,12 @@ function raise(state: DesktopState, id: AppId, patch: Partial<Win> = {}) {
 
 function initialState() {
   const W = window.innerWidth, H = window.innerHeight;
+  // 별도 창은 그 앱 하나만 창 전체에 그린다. 바탕화면 배치는 읽지도 쓰지도 않고, 좁아져도 모바일 셸로 바꾸지 않는다(앱 안 레이아웃이 폭을 따른다).
+  if (popoutApp) {
+    const windows = defaults(W, H);
+    for (const id of APP_IDS) windows[id] = { ...windows[id], open: id === popoutApp, z: id === popoutApp ? 1 : 0 };
+    return { windows, focused: popoutApp as AppId | null, nextZ: 2, mobile: false, closing: {} as Transient, minimizing: {} as Transient, dockOrder: readDockOrder() };
+  }
   const mobile = isMobileWidth(W);
   const windows = restore(W, H, mobile);
   const nextZ = Math.max(0, ...APP_IDS.map((id) => windows[id].z)) + 1;
@@ -187,7 +194,7 @@ export const useDesktop = create<DesktopState>((set, get) => ({
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 useDesktop.subscribe((state) => {
-  if (state.mobile) return;
+  if (state.mobile || popoutApp) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const windows: Saved = {};

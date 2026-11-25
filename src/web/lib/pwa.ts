@@ -105,9 +105,10 @@ function photoTone(image: HTMLImageElement, x: number, w: number, h: number): Rg
 }
 
 /** 설치한 앱의 제목 표시줄 색(theme-color)을 메뉴바 유리의 겉보기 색에 맞춘다. 유리 뒤 바탕화면의 평균색에 메뉴바의 채도 필터와
- *  반투명 채움을 겹쳐 계산한다. 제목 표시줄을 숨긴 앱에서는 창 조작 버튼이 놓이는 오른쪽 끝을, 아니면 메뉴바 전체 폭을 잰다. */
+ *  반투명 채움을 겹쳐 계산한다. 제목 표시줄을 숨긴 앱에서는 창 조작 버튼이 놓이는 오른쪽 끝을, 아니면 메뉴바 전체 폭을 잰다.
+ *  메뉴바가 없는 별도 창(앱 하나만 띄운 창)은 그 앱의 상단바가 제목 표시줄을 대신하므로 그 막대를 잰다. */
 export function syncTitlebarColor() {
-  const menubar = document.querySelector<HTMLElement>(".menubar");
+  const menubar = document.querySelector<HTMLElement>(".menubar") ?? document.querySelector<HTMLElement>("[data-popout-titlebar]");
   const wallpaper = document.querySelector<HTMLElement>(".wallpaper");
   const meta = document.querySelector('meta[name="theme-color"]');
   if (!menubar || !wallpaper || !meta) return;

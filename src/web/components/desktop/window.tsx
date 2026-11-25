@@ -7,6 +7,7 @@ import {
   reduced, registerFrame, resetMotion, restoreFromDock, settleFrame, takeFrame,
 } from "../../lib/motion";
 import { cn } from "../../lib/utils";
+import { popoutApp } from "../../lib/popout";
 import { WindowTitleBar } from "./window-title-bar";
 import { RESIZE_DIRS, useResizeHandle } from "./use-window-behavior";
 
@@ -28,9 +29,10 @@ export function Window({ id, header, children, bodyClassName, detail }: {
   const was = useRef({ minimized: win.minimized, maximized: mobile || win.maximized, focused });
   const maximized = mobile || win.maximized;
 
-  // A1 열기: Dock 쪽에서 떠오른다. 첫 로드는 60ms 간격으로 순차.
+  // A1 열기: Dock 쪽에서 떠오른다. 첫 로드는 60ms 간격으로 순차. 별도 창은 운영체제가 창을 띄우므로 움직이지 않는다.
+  const popout = popoutApp === id;
   useGSAP(() => {
-    if (!win.open) return;
+    if (!win.open || popout) return;
     setLeaving(false);
     enterWindow(frameRef.current, bootDelay());
   }, { dependencies: [win.open] });
@@ -98,6 +100,14 @@ export function Window({ id, header, children, bodyClassName, detail }: {
   }, { dependencies: [focused, mobile] });
 
   if (!win.open) return null;
+  // 별도 창: 앱 하나가 운영체제 창 전체를 채운다. 옮기기·크기·닫기는 운영체제 창이 맡으므로 손잡이를 두지 않는다.
+  if (popout) return <section className="window" role="region" aria-label={`${APPS[id].title} 창`} tabIndex={-1}
+    data-window={id} data-popout="" data-focused={focused ? "" : undefined} data-detail={detail ? "" : undefined}>
+    <div className="window-frame" ref={(element) => { frameRef.current = element; registerFrame(id, element); }}>
+      {header ?? <WindowTitleBar id={id} />}
+      <div className={cn("window-body", bodyClassName)}>{children}</div>
+    </div>
+  </section>;
   // 최대화한 창은 메뉴바 바로 아래에서 시작한다. 설치한 앱이 제목 표시줄 자리를 쓰면 메뉴바가 높아지므로 CSS 변수를 따른다.
   const style: CSSProperties = maximized
     ? { top: "var(--menubar-height)", left: 0, right: 0, bottom: reservedBottom(mobile), width: "auto", height: "auto", transform: "none", zIndex: win.z }

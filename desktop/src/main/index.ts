@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray, type WindowOpenHandlerResponse } from "electron";
 import path from "node:path";
 import type { ConnectionReport, DesktopConfig, MigrateResult, Mode, RelayConfig, RelayStatus, RemoteConfig } from "../shared/types";
 import { dataDirectory, defaultDeviceName, normalizeUrl, readConfig, writeConfig } from "./config";
@@ -6,6 +6,7 @@ import { log, logFile } from "./log";
 import { probe, RelayProcess } from "./relay";
 import { testConnection } from "./remote";
 import { ensureInstalled } from "./setup";
+import { popoutAppOf, popoutOptions, popoutUrl, visibleBounds, type PopoutApp } from "./popout";
 
 /**
  * Relay Windows 앱.
@@ -17,6 +18,8 @@ const hiddenStart = process.argv.includes("--hidden");
 let config: RelayConfig = readConfig();
 let relay: RelayProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
+/** 화면이 바탕화면 밖으로 띄운 앱 창(메모 등). 앱마다 하나만 두고, 다시 열면 그 창을 앞으로 가져온다. */
+const popouts = new Map<PopoutApp, BrowserWindow>();
 let wizardWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
@@ -79,7 +82,7 @@ async function showMain() {
     width: 1280, height: 820, minWidth: 760, minHeight: 520, show: false, title: "Relay", icon: iconPath(), backgroundColor: "#111318",
     autoHideMenuBar: true,
     titleBarStyle: "hidden", titleBarOverlay: { color: "#1e1e20", symbolColor: "#f5f5f7", height: 32 },
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(__dirname, "..", "preload", "shell.js") },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: shellPreload() },
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("close", (event) => {
@@ -88,8 +91,43 @@ async function showMain() {
     mainWindow?.hide();
   });
   mainWindow.on("closed", () => { mainWindow = null; if (!(config.desktop?.closeToTray ?? true)) app.quit(); });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) void shell.openExternal(url); return { action: "deny" }; });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => openFromMain(url));
+  mainWindow.webContents.on("did-create-window", (child, { url }) => adoptPopout(child, url));
   await mainWindow.loadURL(`${relay!.url}/`);
+}
+
+const shellPreload = () => path.join(__dirname, "..", "preload", "shell.js");
+/** 바깥 링크는 기본 브라우저로 열고 앱 안에 창을 만들지 않는다. */
+function openExternal(url: string): WindowOpenHandlerResponse {
+  if (/^https?:/.test(url)) void shell.openExternal(url);
+  return { action: "deny" };
+}
+/** 본 화면이 연 창: 같은 서버의 별도 창 주소면 앱 창으로 만들고(이미 있으면 앞으로 가져온다), 나머지는 바깥 링크로 연다. */
+function openFromMain(url: string): WindowOpenHandlerResponse {
+  const popout = relay ? popoutAppOf(url, relay.url) : null;
+  if (!popout) return openExternal(url);
+  const existing = popouts.get(popout);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show(); existing.focus();
+    return { action: "deny" };
+  }
+  return { action: "allow", overrideBrowserWindowOptions: popoutOptions(popout, iconPath(), shellPreload()) };
+}
+/** 새로 만든 별도 창을 맡는다. 마지막에 둔 모니터가 빠졌으면 본 창이 있는 모니터 가운데로 옮기고, 그 창의 바깥 링크도 기본 브라우저로 연다. */
+function adoptPopout(child: BrowserWindow, url: string) {
+  const popout = relay ? popoutAppOf(url, relay.url) : null;
+  if (!popout) { child.destroy(); return; }
+  popouts.set(popout, child);
+  const fallback = screen.getDisplayMatching(mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : child.getBounds()).workArea;
+  const moved = visibleBounds(child.getBounds(), screen.getAllDisplays().map((display) => display.workArea), fallback);
+  if (moved) child.setBounds(moved);
+  child.webContents.setWindowOpenHandler(({ url: next }) => openExternal(next));
+  child.on("closed", () => { if (popouts.get(popout) === child) popouts.delete(popout); });
+}
+/** 서버 포트가 바뀌면 떠 있는 별도 창도 새 주소로 다시 연다. */
+async function reloadPopouts(base: string) {
+  await Promise.all([...popouts].map(([popout, child]) => (child.isDestroyed() ? undefined : child.loadURL(popoutUrl(popout, base)).catch(() => {}))));
 }
 
 async function openWizard() {
@@ -155,9 +193,12 @@ async function runMaintenance(args: string[]): Promise<MigrateResult> {
 
 function registerIpc() {
   ipcMain.on("window:appearance", (event, appearance: { color?: unknown; dark?: unknown } | null) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return;
+    // 본 창과 별도 창만 제 창 조작 버튼 색을 바꾼다.
+    const target = [mainWindow, ...popouts.values()].find((window) => window && !window.isDestroyed()
+      && event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame);
+    if (!target) return;
     if (!appearance || typeof appearance.color !== "string" || !/^#[\da-f]{6}$/i.test(appearance.color) || typeof appearance.dark !== "boolean") return;
-    mainWindow.setTitleBarOverlay({ color: appearance.color, symbolColor: appearance.dark ? "#f5f5f7" : "#1d1d1f" });
+    target.setTitleBarOverlay({ color: appearance.color, symbolColor: appearance.dark ? "#f5f5f7" : "#1d1d1f" });
   });
   const handle = (channel: string, listener: (...args: any[]) => unknown) => {
     ipcMain.handle(channel, (event, ...args) => {
@@ -193,6 +234,7 @@ function registerIpc() {
       config = writeConfig({ ...config, webPort: port });
       if (config.mode) await startRelay();
       if (mainWindow) await mainWindow.loadURL(`http://127.0.0.1:${port}/`);
+      await reloadPopouts(`http://127.0.0.1:${port}`);
       return config;
     } catch (error) {
       await (relay as RelayProcess | null)?.stop().catch(() => {});
@@ -200,6 +242,7 @@ function registerIpc() {
       relay = null;
       if (wasRunning) await startRelay().catch(() => {});
       if (mainWindow) await mainWindow.loadURL(`http://127.0.0.1:${previous.webPort}/`).catch(() => {});
+      await reloadPopouts(`http://127.0.0.1:${previous.webPort}`);
       throw error;
     }
   });

@@ -324,6 +324,15 @@ html[data-titlebar] .menubar button, html[data-titlebar] .menu-overlay { -webkit
 .resize-handle[data-window-resize-handle="se"] { bottom: 0; right: -10px; width: 22px; height: 12px; z-index: 7; cursor: nwse-resize; }
 body[data-window-dragging] { user-select: none; }
 body[data-window-dragging] .window-frame { transition: none; }
+/* 별도 창(주소 /?window=<앱>): 앱 하나가 운영체제 창 전체를 채운다. 테두리·그림자·둥근 모서리는 운영체제 창이 맡는다. */
+.window[data-popout] { inset: 0; }
+.window[data-popout] .window-frame { border: 0; border-radius: 0; box-shadow: none; }
+/* 제목 표시줄을 숨긴 창(Windows 앱·설치한 앱)에서는 상단바가 제목 표시줄이다. 창 조작 버튼 자리를 비우고, 빈 곳을 잡아 창을 옮긴다. */
+html[data-titlebar] .titlebar[data-popout-titlebar] { min-height: max(52px, var(--menubar-height)); padding-left: calc(var(--titlebar-left) + 16px); padding-right: calc(var(--titlebar-right) + 10px);
+  -webkit-app-region: drag; app-region: drag; }
+html[data-titlebar] .titlebar[data-popout-titlebar] :is(button, input, a, [role="button"], [role="group"]),
+html[data-titlebar] [data-shell="popout"] :is(.desktop-menu, .material-menu, [role="menu"], [role="dialog"]) { -webkit-app-region: no-drag; app-region: no-drag; }
+.desktop[data-shell="popout"] .update-toast { top: calc(max(52px, var(--menubar-height)) + 10px); }
 
 /* 창 상단바와 조작 버튼 */
 .titlebar { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); user-select: none; }

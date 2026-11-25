@@ -730,6 +730,99 @@ test("메모 창: 좁은 화면에서는 목록과 내용을 번갈아 보인다
   await page.screenshot({ path: test.info().outputPath("notes-mobile.png") });
 });
 
+test("메모 창: 새 창으로 열면 메모만 담은 별도 창이 뜨고, 고친 내용·테마가 바탕화면 창과 바로 맞으며 다시 누르면 그 창을 앞으로 가져온다", async ({ page, context }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await seed(page, SAMPLE, { expanded: ["f-work"], selected: "n-plan" });
+  const notes = page.locator(win("notes"));
+  await expect(notes.locator("#note-title")).toHaveValue("분기 계획");
+
+  // 보던 메모가 별도 창에 그대로 열리고, 바탕화면 안의 메모 창은 닫힌다(두 곳에서 같은 메모를 고치지 않게).
+  const opening = page.waitForEvent("popup");
+  await notes.getByRole("button", { name: "새 창으로 열기" }).click();
+  const popup = await opening;
+  popup.on("pageerror", (error) => errors.push(`별도 창: ${error.message}`));
+  await expect(notes).toBeHidden();
+  expect(new URL(popup.url()).search).toBe("?window=notes");
+  const popped = popup.locator(win("notes"));
+  await expect(popped).toHaveAttribute("data-popout", "");
+  await expect(popped).toHaveAttribute("data-focused", "");
+  await expect(popped.locator("#note-title")).toHaveValue("분기 계획");
+  await expect(popup).toHaveTitle("분기 계획 · Relay 메모");
+  await expect(item(popup, "분기 계획")).toHaveAttribute("aria-selected", "true");
+
+  // 별도 창에는 메모 하나만 있다: 메뉴바·Dock·창 안 조작 버튼(닫기 등)이 없고, 창 전체를 채운다.
+  await expect(popup.locator(".menubar")).toHaveCount(0);
+  await expect(popup.locator(".dock")).toHaveCount(0);
+  await expect(popped.locator(".window-controls")).toHaveCount(0);
+  await expect(popped.getByRole("button", { name: "새 창으로 열기" })).toHaveCount(0);
+  const [frame, viewport] = [await popped.locator(".window-frame").boundingBox(), popup.viewportSize()!];
+  expect(frame).toEqual({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+  // 상단바를 끌어도 창이 화면 안에서 움직이지 않는다(옮기기는 운영체제 창이 맡는다).
+  await popped.locator(".titlebar").hover({ position: { x: 240, y: 20 } });
+  await popup.mouse.down(); await popup.mouse.move(400, 300, { steps: 4 }); await popup.mouse.up();
+  expect(await popped.locator(".window-frame").boundingBox()).toEqual(frame);
+
+  // 별도 창에서 고친 내용은 서버에 저장되고, 바탕화면 창은 다시 열자마자 그 내용을 보인다.
+  await popped.locator("#note-body").click();
+  await popup.keyboard.press("Control+End");
+  await popup.keyboard.type(" 별도 창에서 씀");
+  await expect.poll(async () => (await saved(page)).items.find((entry: { id: string }) => entry.id === "n-plan")?.body).toContain("별도 창에서 씀");
+  await page.locator(dock("메모")).click();
+  await expect(notes).toBeVisible();
+  await expect(notes.locator("#note-body")).toContainText("별도 창에서 씀", { timeout: 2500 });
+  // 바탕화면 창에서 새로 만든 메모도 별도 창 트리에 곧 보인다.
+  await item(page, "업무").click();
+  await notes.getByRole("button", { name: "새 메모" }).first().click();
+  await page.keyboard.type("바탕화면에서 만든 메모");
+  await expect(item(popup, "바탕화면에서 만든 메모")).toBeVisible({ timeout: 2500 });
+
+  // 다시 누르면 새 창을 열지 않고 떠 있는 창을 쓴다.
+  await notes.getByRole("button", { name: "새 창으로 열기" }).click();
+  await expect(notes).toBeHidden();
+  expect(context.pages()).toHaveLength(2);
+
+  // 바탕화면 창에서 테마를 바꾸면 별도 창도 따라간다.
+  const dark = await popup.evaluate(() => document.documentElement.classList.contains("dark"));
+  await page.getByRole("button", { name: dark ? "라이트 모드로 전환" : "다크 모드로 전환" }).click();
+  await expect(popup.locator("html")).toHaveClass(dark ? /\blight\b/ : /\bdark\b/);
+
+  // 좁은 별도 창은 목록과 내용을 번갈아 보이고, 가로로 넘치지 않는다.
+  await popup.setViewportSize({ width: 520, height: 640 });
+  await expect(popped.locator(".notes-sidebar")).toBeVisible();
+  await expect(popped.locator(".notes-content")).toBeHidden();
+  await item(popup, "분기 계획").click();
+  await expect(popped.locator(".notes-sidebar")).toBeHidden();
+  await expect(popped.locator("#note-body")).toContainText("별도 창에서 씀");
+  await popped.getByRole("button", { name: "목록", exact: true }).click();
+  await expect(popped.locator(".notes-sidebar")).toBeVisible();
+  expect(await popup.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await popup.setViewportSize({ width: 1000, height: 720 });
+
+  // 창을 닫으면 자리와 크기를 남겨 다음에 같은 자리에 연다. 바탕화면 배치에는 별도 창이 끼어들지 않는다.
+  await popup.close({ runBeforeUnload: true });
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("relay-popout-notes-v1") ?? "null")?.width)).toBe(1000);
+  expect(errors).toEqual([]);
+});
+
+test("감사용 스크린샷: 별도 메모 창 다크·라이트", async ({ page }) => {
+  await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"], selected: "n-weekly" });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const opening = page.waitForEvent("popup");
+  await page.locator(win("notes")).getByRole("button", { name: "새 창으로 열기" }).click();
+  const popup = await opening;
+  await popup.setViewportSize({ width: 1100, height: 720 });
+  await expect(popup.locator(win("notes")).locator("#note-title")).toHaveValue("주간 회의");
+  await popup.waitForTimeout(500);
+  await popup.screenshot({ path: test.info().outputPath("notes-popout-dark.png") });
+  await page.getByRole("button", { name: "라이트 모드로 전환" }).click();
+  await expect(popup.locator("html")).toHaveClass(/\blight\b/);
+  await popup.waitForTimeout(500);
+  await popup.screenshot({ path: test.info().outputPath("notes-popout-light.png") });
+  await popup.setViewportSize({ width: 520, height: 720 });
+  await popup.waitForTimeout(300);
+  await popup.screenshot({ path: test.info().outputPath("notes-popout-narrow.png") });
+});
+
 test("감사용 스크린샷: 메모 창 다크·라이트", async ({ page }) => {
   await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"], selected: "n-weekly" });
   await page.emulateMedia({ reducedMotion: "reduce" });
