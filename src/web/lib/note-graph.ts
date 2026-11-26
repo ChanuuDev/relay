@@ -1,4 +1,4 @@
-import { labelOf as coreLabel, plainLine } from "@relay/core";
+import { JOSA, labelOf as coreLabel, plainLine, prose, tagsOf, tokenize, type LinkItem } from "@relay/core";
 import type { Item, Items, Note } from "./notes";
 
 /** 메모 지식 그래프. 메모·폴더·태그가 점(node)이고, 둘 사이의 관계가 선(edge)이다. 이 파일은 화면과 무관한 계산만 한다(단위 테스트 대상).
@@ -11,12 +11,13 @@ import type { Item, Items, Note } from "./notes";
  *  - folder: 메모·폴더와 그것을 담은 폴더. 작업 세션과 그 세션이 돈 프로젝트(작업 폴더)도 이 선으로 잇는다.
  *  - tag: 메모와 본문의 `#태그`.
  *  - chain: 이어받은 작업 세션과 그 앞 세션(relay continue).
+ *  - semantic: 임베딩으로 잰 뜻의 가까움. 낱말이 달라도 같은 이야기를 하는 메모를 잇는다(의미 색인이 있을 때만).
  *
  *  작업 세션(에이전트가 Relay에 남긴 기록)은 둘째 층이다. 세션 요약이 메모 ID·`[[제목]]`을 적었거나 메모가 세션 ID를 적었으면 link,
  *  메모 제목이 요약에 나오면 mention, 드문 낱말을 함께 쓰면 similar로 메모 층과 이어진다. 이 선들이 두 층의 접점이다. */
 export type GraphNodeKind = "note" | "folder" | "tag" | "session" | "project";
-export type EdgeKind = "link" | "mention" | "similar" | "folder" | "tag" | "chain";
-export const EDGE_KINDS: readonly EdgeKind[] = ["link", "mention", "similar", "folder", "tag", "chain"];
+export type EdgeKind = "link" | "mention" | "similar" | "folder" | "tag" | "chain" | "semantic";
+export const EDGE_KINDS: readonly EdgeKind[] = ["link", "mention", "similar", "folder", "tag", "chain", "semantic"];
 /** 글이 있는 점(메모·작업 세션). 주제 묶음·맥락 고르기의 대상이다. */
 export const isDoc = (node: Pick<GraphNode, "kind">) => node.kind === "note" || node.kind === "session";
 /** 다른 점을 담는 점(폴더·프로젝트). */
@@ -55,6 +56,8 @@ export type NoteGraph = {
   vectors: Map<string, Vector>;
   /** 세션 점 ID → 세션 기록. */
   sessions: Map<string, GraphSession>;
+  /** 의미 선의 근거: 두 메모에서 가장 가까운 절. 키는 `작은 ID\n큰 ID`. */
+  semantic: Map<string, LinkItem>;
 };
 
 /** Relay 세션 기록에서 그래프에 쓸 것만 고른다. */
@@ -85,40 +88,19 @@ export function shortLabel(item: Item, max = 28) {
 
 // ── 본문 읽기 ─────────────────────────────────────────────
 
-const FENCE = /^(\s*)(```|~~~)[^\n]*\n[\s\S]*?^\1\2[^\S\n]*$/gm;
-const INLINE_CODE = /`[^`\n]*`/g;
-const URL_LIKE = /\b(?:https?:\/\/|www\.)\S+/gi;
-const IMAGE_PATH = /\/api\/v1\/notes\/images\/[0-9a-f]{64}/g;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+// 낱말 뽑기와 태그 읽기는 서버의 검색과 같은 규칙을 쓰도록 공용 코어에 있다.
+export { tagsOf, tokenize };
+
 /** `[[제목]]`, `[[제목|보일 이름]]`, `[[제목#절]]`. 서식 편집기는 대괄호를 `\[\[제목\]\]`로 저장하므로 앞의 역슬래시도 받는다. */
 const WIKI = /\\?\[\\?\[((?:\\[^[\]]|[^[\]|#\n\\])+)(?:#[^\]|\n]*?)?(?:\|[^\]\n]*?)?\\?\]\\?\]/g;
 /** Markdown 이스케이프(`\_`, `\*` 등)를 푼다. */
 const unescapeMarkdown = (text: string) => text.replace(/\\([\\`*_{}[\]()#+\-.!|~<>])/g, "$1");
-/** 줄 처음이나 빈칸·여는 괄호 뒤의 #낱말. 제목(# 제목)·색 값(#fff)·숫자(#12)는 태그가 아니다. */
-const TAG = /(^|[\s(（[{,，])#([\p{L}_][\p{L}\p{N}_/-]{0,39})/gmu;
-const HEX_COLOR = /^[0-9a-f]{3,8}$/i;
-
-/** 코드 블록·인라인 코드를 뺀 본문(링크·태그를 코드에서 찾지 않는다). */
-const prose = (body: string) => body.replace(FENCE, "\n").replace(INLINE_CODE, " ");
-
 /** 본문의 `[[…]]` 대상 이름들(앞뒤 빈칸 정리, 중복 제거). */
 export function wikiTargets(body: string): string[] {
   const found = new Set<string>();
   for (const match of prose(body).matchAll(WIKI)) { const name = unescapeMarkdown(match[1]!).trim(); if (name) found.add(name); }
   return [...found];
-}
-
-/** 본문의 #태그들(소문자 기준 중복 제거, 처음 쓴 모양을 남긴다). 마크다운 제목 줄의 #은 태그가 아니다. */
-export function tagsOf(body: string): string[] {
-  const found = new Map<string, string>();
-  const text = prose(body).split("\n").filter((line) => !/^\s{0,3}#{1,6}\s/.test(line)).join("\n");
-  for (const match of text.matchAll(TAG)) {
-    const name = match[2]!.replace(/[/-]+$/, "");
-    if (!name || HEX_COLOR.test(name)) continue;
-    const key = name.toLocaleLowerCase("ko-KR");
-    if (!found.has(key)) found.set(key, name);
-  }
-  return [...found.values()];
 }
 
 const normalize = (text: string) => text.normalize("NFC").toLocaleLowerCase("ko-KR").replace(/\s+/g, " ").trim();
@@ -145,55 +127,10 @@ export function mentions(text: string, title: string) {
 
 // ── 낱말과 유사도 ─────────────────────────────────────────
 
-/** 한 글자 조사는 남는 말이 두 글자 이상일 때만 뗀다(「회의」의 「의」는 떼지 않는다). 긴 것부터 본다. */
-const JOSA = [
-  "에서부터", "으로부터", "이라고는", "에게서", "이라고", "이라는", "에서는", "으로는", "까지는", "부터는", "에서도", "으로도", "이었다", "였다",
-  "입니다", "합니다", "됩니다", "습니다", "에서", "에게", "한테", "께서", "으로", "까지", "부터", "처럼", "보다", "마다", "조차", "밖에", "이나", "이란", "이랑",
-  "하고", "라고", "라는", "이며", "이고", "이다", "했다", "한다", "하는", "하기", "하여", "해서", "하면", "했던", "되는", "된다", "되어", "되면", "에는", "에도",
-  "은", "는", "이", "가", "을", "를", "의", "에", "로", "와", "과", "도", "만", "랑", "요",
-].sort((a, b) => b.length - a.length);
 const JOSA_SET = new Set([...JOSA, "이었고", "였고", "이고", "이며", "이면", "인데", "이지만", "이라", "이라서", "으로써", "로써", "로서", "으로서", "에서의", "에의", "과의", "와의",
   "이나", "나", "든", "이든", "야", "이야", "께", "께서는", "에게는", "한테는", "만의", "만은", "만을", "도록", "같이", "뿐", "뿐만", "대로", "이라도", "라도", "란", "으로의", "로의", "에서만",
   "였다", "이었다", "입니다", "임", "일", "인", "임을", "에선", "에겐", "엔", "론", "으론", "은요", "는요"]);
 const HANGUL = /\p{Script=Hangul}/u;
-const STOP_KO = new Set([
-  "그리고", "그러나", "하지만", "그래서", "또한", "그런데", "따라서", "그러면", "있는", "없는", "있다", "없다", "하다", "했다", "한다", "있습니다", "없습니다",
-  "같은", "같다", "이런", "저런", "그런", "이것", "그것", "저것", "여기", "거기", "우리", "저희", "너무", "매우", "정말", "아주", "조금", "많이", "가장", "모든",
-  "각각", "다른", "통해", "위해", "대한", "대해", "관련", "경우", "때문", "정도", "이후", "이전", "다음", "지금", "오늘", "내일", "어제", "부분", "내용",
-  "해당", "기준", "현재", "이상", "이하", "하나", "그냥", "모두", "어떤", "무엇", "어떻게", "언제", "어디", "누가", "왜냐하면", "만약", "혹은", "또는",
-  "메모", "정리", "이번", "저번", "다시", "아직", "이미", "계속", "바로", "먼저", "나중", "때문에", "있음", "없음", "함", "됨", "것", "수", "등", "및", "중", "후", "전",
-]);
-const STOP_EN = new Set(("the and for with that this from are was were you your not but have has had can will would should could into onto about over under "
-  + "than then them they their there here what when where which while who whom why how all any each few more most other some such only own same too very "
-  + "just also been being does did doing done its it's our ours out off again once both between through during before after above below further "
-  + "http https www com org net html htm png jpg jpeg gif svg pdf api notes images true false null undefined").split(" "));
-/** 낱말로 보지 않는 덩어리: 글자와 숫자가 섞인 것(비밀번호·ID·버전)이나 기호가 여럿 들어간 것. 키워드로 드러나지 않게 미리 거른다. */
-const NOT_WORDISH = /(?=.*\p{L})(?=.*\p{N})|[!@#$%^&*=+~|\\<>{}]{2,}|[@:]\S/u;
-
-/** 본문에서 낱말을 뽑는다. 한글은 조사를 떼고 두 글자 이상, 영문은 세 글자 이상(소문자). 주소·코드 주소·ID·비밀번호 같은 덩어리는 버린다. */
-export function tokenize(text: string): string[] {
-  const out: string[] = [];
-  const clean = text.replace(IMAGE_PATH, " ").replace(URL_LIKE, " ").replace(UUID, " ").replace(/\S+@\S+\.\S+/g, " ");
-  for (const raw of clean.split(/\s+/)) {
-    if (!raw || raw.length > 60 || NOT_WORDISH.test(raw)) continue;
-    for (const match of raw.matchAll(/\p{Script=Hangul}+|\p{Script=Han}+|[A-Za-z][A-Za-z'’-]*[A-Za-z]/gu)) {
-      let word = match[0];
-      if (/\p{Script=Hangul}/u.test(word)) {
-        for (const josa of JOSA) if (word.length - josa.length >= 2 && word.endsWith(josa)) { word = word.slice(0, -josa.length); break; }
-        if (word.length < 2 || word.length > 12 || STOP_KO.has(word)) continue;
-        out.push(word);
-      } else if (/\p{Script=Han}/u.test(word)) {
-        if (word.length >= 2 && word.length <= 8) out.push(word);
-      } else {
-        word = word.toLowerCase().replace(/['’]s$/, "");
-        if (word.length < 3 || word.length > 24 || STOP_EN.has(word)) continue;
-        out.push(word);
-      }
-    }
-  }
-  return out;
-}
-
 /** 메모마다 낱말 가중치(TF-IDF, 크기 1로 맞춤)와 대표 낱말. 제목 낱말은 세 배로 센다. 너무 흔한 낱말(메모 절반 넘게)은 뺀다. */
 function weigh(notes: Note[]): { vectors: Map<string, Vector>; keywords: Map<string, string[]>; df: Map<string, number> } {
   const counts = new Map<string, Map<string, number>>();
@@ -283,6 +220,8 @@ export type BuildOptions = {
   sessions?: GraphSession[];
   /** linked(기본): 메모와 이어진 세션만 넣는다. all: 모두 넣는다. */
   sessionScope?: "linked" | "all";
+  /** 의미 색인이 미리 계산해 둔 메모 쌍(GET /api/v1/notes/semantic-links). */
+  semantic?: LinkItem[];
 };
 
 export function buildGraph(items: Items, options: BuildOptions = {}): NoteGraph {
@@ -379,6 +318,18 @@ export function buildGraph(items: Items, options: BuildOptions = {}): NoteGraph 
     for (const member of members) addEdge(member, id, "tag", 0.6);
   }
   if (tagNotes.size) groups.push({ id: TAG_GROUP, label: "태그", index: groups.length });
+
+  // 의미 연결: 임베딩으로 잰 가까움. 링크·언급이 없는 쌍에만 달고, 메모마다 센 것부터 넷까지 단다.
+  // 이 선이 달린 쌍에는 낱말 유사도 선을 따로 달지 않는다(같은 쌍은 더 강한 근거 하나만 남긴다).
+  const semantic = new Map<string, LinkItem>();
+  const semanticCount = new Map<string, number>();
+  for (const item of [...(options.semantic ?? [])].sort((x, y) => y.strength - x.strength || y.score - x.score || (x.a + x.b < y.a + y.b ? -1 : 1))) {
+    if (byId.get(item.a)?.kind !== "note" || byId.get(item.b)?.kind !== "note" || linked.has(pairKey(item.a, item.b))) continue;
+    if ((semanticCount.get(item.a) ?? 0) >= 4 || (semanticCount.get(item.b) ?? 0) >= 4) continue;
+    addEdge(item.a, item.b, "semantic", Math.max(0.05, Math.min(1, item.strength)));
+    semantic.set(pairKey(item.a, item.b), item);
+    for (const id of [item.a, item.b]) semanticCount.set(id, (semanticCount.get(id) ?? 0) + 1);
+  }
 
   // 비슷한 내용: 메모마다 가장 가까운 몇 개(서로 이미 이어졌으면 건너뛴다).
   const best = new Map<string, Array<{ other: string; score: number }>>();
@@ -488,7 +439,7 @@ export function buildGraph(items: Items, options: BuildOptions = {}): NoteGraph 
 
   const words = new Map(keywords);
   for (const node of nodes) if (node.kind === "session") words.set(node.id, node.keywords);
-  const graph: NoteGraph = { nodes, edges, groups, clusters: [], byId, vectors, sessions: sessionIndex };
+  const graph: NoteGraph = { nodes, edges, groups, clusters: [], byId, vectors, sessions: sessionIndex, semantic };
   graph.clusters = clustersOf(graph, words);
   return graph;
 }

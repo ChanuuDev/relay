@@ -11,12 +11,14 @@ if (-not [IO.Path]::IsPathRooted($ProjectDirectory)) { throw 'ProjectDirectory m
 $projectRoot = (Resolve-Path -LiteralPath $ProjectDirectory).Path
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { throw 'ProjectDirectory must be a directory.' }
 $agentFolder = switch ($Agent) { 'codex' { '.agents' } 'claude' { '.claude' } 'grok' { '.grok' } 'gemini' { '.gemini' } }
-# relay-session records the session; relay-memo reads and writes Relay notes; relay-graph picks context from the notes graph. Claude Code, Grok and Gemini read
+# relay-session records the session; relay-memo reads and writes Relay notes; relay-graph picks context from the notes graph; relay-embedding builds the
+# semantic index of the notes. Claude Code, Grok and Gemini read
 # argument-hint from the frontmatter, Codex reads agents/openai.yaml instead.
 $skills = [ordered]@{
     'relay-session' = 'argument-hint: codex|claude|grok|cursor|gemini'
     'relay-memo' = 'argument-hint: <memo-id|folder-id|query>'
     'relay-graph' = 'argument-hint: <query|memo-id>'
+    'relay-embedding' = 'argument-hint: [status|cards|run|setup|doctor]'
 }
 function Test-Link([string]$ItemPath) {
     # Test-Path follows a link, so a dangling junction is recognised through its own attributes instead.

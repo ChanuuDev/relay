@@ -22,6 +22,8 @@ import { ImportService } from "./import/import.service.js";
 import { MaintenanceService } from "./maintenance/maintenance.service.js";
 import { NotesController } from "./notes/notes.controller.js";
 import { NotesService } from "./notes/notes.service.js";
+import { NotesIndexController } from "./notes/index.controller.js";
+import { NotesIndexService } from "./notes/index.service.js";
 import { AgentController } from "./pcs/agent.controller.js";
 import { PcBroker } from "./pcs/pc-broker.service.js";
 import { PcsController } from "./pcs/pcs.controller.js";
@@ -38,12 +40,12 @@ export class AppModule implements NestModule {
     return {
       module: AppModule,
       imports: [DatabaseModule.forRoot(db), ...(options.schedule === false ? [] : [ScheduleModule.forRoot()])],
-      controllers: [HealthController, AuthController, DevicesController, SessionsController, NotesController, CalculatorController, FilesController, ImportController, PcsController, AgentController,
+      controllers: [HealthController, AuthController, DevicesController, SessionsController, NotesIndexController, NotesController, CalculatorController, FilesController, ImportController, PcsController, AgentController,
         TasksController, BoardController, EventsController, HolidaysController, ActivityController],
       providers: [
         { provide: CONFIG, useValue: config },
         { provide: "RELAY_LOG", useValue: options.log !== false },
-        AuthService, DevicesService, SessionsService, NotesService, CalculatorService, FilesService, ImportService, MaintenanceService, PcBroker, PlannerService, HolidaysService,
+        AuthService, DevicesService, SessionsService, NotesService, NotesIndexService, CalculatorService, FilesService, ImportService, MaintenanceService, PcBroker, PlannerService, HolidaysService,
         { provide: APP_FILTER, useClass: RelayErrorFilter },
         { provide: APP_GUARD, useClass: AuthGuard },
         { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },

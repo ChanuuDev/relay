@@ -9,10 +9,10 @@ import { isDoc, type EdgeKind, type GraphEdge, type GraphNode, type NoteGraph, t
  *  - 제안 연결: Adamic–Adar(2003) 공통 이웃 점수에 제목 언급·낱말 유사도를 더한다. */
 
 /** 관계의 세기(0..1). 중요도·맥락 퍼뜨리기·경로 찾기가 함께 쓴다. 폴더에 함께 담긴 것은 약한 단서로만 본다. */
-export const EDGE_STRENGTH: Record<EdgeKind, number> = { link: 1, mention: 0.7, chain: 0.65, similar: 0.5, tag: 0.45, folder: 0.18 };
-export const strengthOf = (edge: GraphEdge) => (edge.kind === "similar" ? 0.2 + 0.6 * edge.weight : EDGE_STRENGTH[edge.kind]);
+export const EDGE_STRENGTH: Record<EdgeKind, number> = { link: 1, mention: 0.7, chain: 0.65, semantic: 0.6, similar: 0.5, tag: 0.45, folder: 0.18 };
+export const strengthOf = (edge: GraphEdge) => (edge.kind === "similar" ? 0.2 + 0.6 * edge.weight : edge.kind === "semantic" ? 0.35 + 0.45 * edge.weight : EDGE_STRENGTH[edge.kind]);
 /** 내용으로 이어진 선(폴더에 담긴 것은 뺀다). */
-export const CONTENT_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["link", "mention", "similar", "tag", "chain"]);
+export const CONTENT_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["link", "mention", "similar", "tag", "chain", "semantic"]);
 
 type Graph = Pick<NoteGraph, "nodes" | "edges">;
 export type Arc = { to: string; edge: GraphEdge; weight: number; /** 선의 방향대로 가는가 */ forward: boolean };
@@ -383,7 +383,8 @@ export function healthNotes(health: Health): string[] {
   return notes.length ? notes.slice(0, 2) : ["메모가 고르게 이어져 있습니다."];
 }
 
-export type SuggestReason = { kind: "mention" | "similar" | "neighbors" | "gap"; text: string };
+/** semantic은 임베딩으로 잰 뜻의 가까움이며, 근거가 된 두 절(from 쪽·to 쪽의 소제목)을 함께 싣는다. */
+export type SuggestReason = { kind: "mention" | "similar" | "neighbors" | "gap" | "semantic"; text: string; evidence?: { from: string; to: string } };
 export type Suggestion = { from: string; to: string; score: number; reasons: SuggestReason[] };
 
 /** 제안 연결: 아직 `[[링크]]`로 잇지 않았지만 이으면 좋을 메모 쌍. from 메모의 본문에 to로 가는 링크를 적는 쪽으로 제안한다.
@@ -416,6 +417,18 @@ export function suggestLinks(graph: NoteGraph, insight: Insight = analyze(graph)
     else if (edge.kind === "similar") {
       const words = sharedWords(graph.vectors.get(edge.source), graph.vectors.get(edge.target));
       propose(edge.source, edge.target, 0.3 + 0.55 * edge.weight, { kind: "similar", text: `드문 낱말을 함께 씁니다${words.length ? `: ${words.join(", ")}` : ""}` });
+    } else if (edge.kind === "semantic") {
+      const item = graph.semantic.get(key(edge.source, edge.target));
+      const section = (id: string) => (item ? (item.a === id ? item.aHeading : item.bHeading) : "");
+      const reason: SuggestReason = { kind: "semantic", text: "낱말은 달라도 뜻이 가깝습니다" };
+      propose(edge.source, edge.target, 0.42 + 0.48 * edge.weight, reason);
+      // 근거 절은 링크를 적을 쪽(from)과 받을 쪽(to)에 맞춰 적는다(쌍의 방향은 propose가 정한다).
+      const made = found.get(key(edge.source, edge.target));
+      if (made && item) {
+        reason.evidence = { from: section(made.from), to: section(made.to) };
+        const names = [reason.evidence.from, reason.evidence.to].filter(Boolean);
+        if (names.length) reason.text = `낱말은 달라도 뜻이 가깝습니다: ${names.map((value) => `「${value.split(" > ").pop()}」`).join(" ↔ ")}`;
+      }
     }
   }
 
@@ -455,7 +468,7 @@ export function suggestLinks(graph: NoteGraph, insight: Insight = analyze(graph)
 export function tally(graph: Graph) {
   const nodes: Record<GraphNode["kind"], number> = { note: 0, folder: 0, tag: 0, session: 0, project: 0 };
   for (const node of graph.nodes) nodes[node.kind]++;
-  const edges: Record<EdgeKind, number> = { link: 0, mention: 0, similar: 0, folder: 0, tag: 0, chain: 0 };
+  const edges: Record<EdgeKind, number> = { link: 0, mention: 0, similar: 0, folder: 0, tag: 0, chain: 0, semantic: 0 };
   for (const edge of graph.edges) edges[edge.kind]++;
   return { nodes, edges };
 }

@@ -16,9 +16,10 @@ import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { transcriptModels } from "./hooks/transcript";
 import { EXPORT_FORMAT, NoteStore, parseExport, parseExportImages, type NoteItem } from "./notes/notes.store";
 import { findText, listText, MemoIndex, searchText } from "./notes/memo";
+import { embedCommands, memoDocCommands, rankedSearch, searchNotes, semanticLinks, toHits } from "./notes/embed-cli";
 import { graphml, GraphTool, linkedText, mapText, mermaid, neighborsText, pathResultText, suggestText, type GraphSource, type SessionScope } from "./notes/graph";
 import { DEFAULT_BUDGET, MAX_BUDGET, MIN_BUDGET } from "./web/lib/graph-context";
-import type { NoteList } from "@relay/core";
+import { parseSearch, type NoteList } from "@relay/core";
 import { copyToClipboard } from "./output/clipboard";
 import { render } from "./output/human";
 import { browse, copyNotice, interactiveTerminal, terminalContext } from "./output/interactive";
@@ -185,17 +186,31 @@ notes.command("import <file>").description("내보낸 JSON 파일의 메모를 �
   });
 
 // AI 에이전트가 메모를 컨텍스트로 읽는다. 쓰기와 고치기는 메모 API(POST /api/v1/notes)로 하며, 방법은 relay-memo 스킬에 있다.
-program.command("memo").description("AI 에이전트용 메모 읽기: 목록·찾기·검색 (쓰기·고치기는 메모 API, relay-memo 스킬 참고)")
+const memo = program.command("memo").description("AI 에이전트용 메모 읽기: 목록·찾기·검색 (쓰기·고치기는 메모 API, relay-memo 스킬 참고)")
   .option("--list", "폴더 트리와 메모 ID 목록 (본문 없음)")
   .option("--folder <id>", "--list를 이 폴더 아래로 좁힘")
   .option("--find <id>", "메모 ID로 제목·위치·본문 읽기. 폴더 ID면 그 아래 모든 메모를 함께 보임 (ID 앞 6자 이상도 받음)")
-  .option("--search <text>", "폴더 이름·메모 제목·본문 검색 (띄어 쓴 낱말이 모두 든 항목)")
-  .action(async (o: { list?: boolean; folder?: string; find?: string; search?: string }, c: Command) => {
+  .option("--search <text>", "메모 검색: 낱말과 뜻으로 찾아 관련 있는 순서대로 맞은 절과 함께 보임 (의미 색인이 없으면 낱말로만)")
+  .option("--mode <mode>", "--search 방식: hybrid(낱말+의미, 기본) | keyword(낱말) | semantic(의미) | exact(띄어 쓴 낱말이 글자 그대로 모두 든 메모·폴더)")
+  .option("--type <types>", "--search를 문서 유형으로 좁힘: memo,knowledge,design,decision (쉼표로 여럿)")
+  .option("--status <statuses>", "--search를 문서 상태로 좁힘: draft,adopted,superseded")
+  .option("--project <name>", "--search를 프로젝트로 좁힘")
+  .option("--history", "--search에서 대체된 문서도 감점 없이 봄")
+  .option("--limit <number>", "--search로 보일 메모 수 (1~50, 기본 10)")
+  .action(async (o: { list?: boolean; folder?: string; find?: string; search?: string; mode?: string; type?: string; status?: string; project?: string; history?: boolean; limit?: string }, c: Command) => {
     const picked = [o.list === true, o.find !== undefined, o.search !== undefined].filter(Boolean).length;
     if (picked > 1) invalid("--list, --find, --search 중 하나만 지정하세요.");
     if (o.folder !== undefined && !o.list) invalid("--folder는 --list와 함께 씁니다.");
+    if (o.search === undefined && [o.mode, o.type, o.status, o.project, o.history, o.limit].some((value) => value !== undefined)) invalid("--mode, --type, --status, --project, --history, --limit은 --search와 함께 씁니다.");
     if (!picked) return void process.stdout.write(c.helpInformation());
-    const index = await memoIndex(loadConfig(c.optsWithGlobals().dataDir));
+    const config = loadConfig(c.optsWithGlobals().dataDir);
+    if (o.search !== undefined && o.mode !== "exact") {
+      if (!o.search.trim()) invalid("검색어를 입력하세요.");
+      // 관련 있는 순서로 찾는다. 원격 서버가 아직 검색 API를 모르는 옛 판이면 아래의 글자 그대로 찾기로 답한다.
+      const ranked = await rankedSearch(config, o.search, o);
+      if (ranked) return void process.stdout.write(c.optsWithGlobals().json ? `${asciiJson(ranked.data)}\n` : ranked.text.replace(/\n*$/, "\n"));
+    }
+    const index = await memoIndex(config);
     const [data, text] = o.list ? withText(index.list(o.folder), listText)
       : o.find !== undefined ? withText(index.find(o.find), findText) : withText(index.search(o.search!), searchText);
     process.stdout.write(c.optsWithGlobals().json ? `${asciiJson(data)}\n` : text.replace(/\n*$/, "\n"));
@@ -215,6 +230,10 @@ async function memoIndex(config: ReturnType<typeof loadConfig>): Promise<MemoInd
   const db = openDatabase(config, true);
   try { const data = new NoteStore(db).list(); return new MemoIndex(data.items, data.revision, api); } finally { db.close(); }
 }
+
+memoDocCommands(memo, { asciiJson, memoIndex });
+// 메모 의미 검색의 색인과 임베딩 서버. 쓰는 법은 relay-embedding 스킬에 있다.
+embedCommands(program, { asciiJson, memoIndex });
 
 // 메모 지식 그래프를 AI 에이전트의 작업 맥락으로 읽는다. 메모 앱의 그래프 보기와 같은 계산을 쓰며, 쓰는 법은 relay-graph 스킬에 있다.
 const graph = program.command("graph").description("AI 에이전트용 메모 지식 그래프: 지도·맥락 묶음·이웃·경로·제안 연결 (relay-graph 스킬 참고)");
@@ -236,12 +255,16 @@ withSessions(graph.command("context [query...]").description("질의나 중심 �
   .option("--budget <tokens>", `토큰 한도 어림 (${MIN_BUDGET}~${MAX_BUDGET}, 기본 ${DEFAULT_BUDGET})`)
   .option("--brief", "본문 없이 제목·한 줄·이유만 (먼저 훑어볼 때)")
   .option("--raw", "비밀번호·토큰처럼 보이는 값을 가리지 않음")
-  .action((words: string[], o: { sessions?: string; from: string[]; project?: string | boolean; budget?: string; brief?: boolean; raw?: boolean }, c: Command) => {
+  .option("--lexical", "질의를 낱말로만 찾음(의미 검색을 쓰지 않음)")
+  .action(async (words: string[], o: { sessions?: string; from: string[]; project?: string | boolean; budget?: string; brief?: boolean; raw?: boolean; lexical?: boolean }, c: Command) => {
     const query = words.join(" ").trim();
     if (!query && !o.from.length && o.project === undefined) invalid("질의나 --from <ID>, --project를 주세요. 예: relay graph context \"배포 순서\" 또는 relay graph context --from <메모 ID>");
     const project = o.project === undefined ? undefined : directory(typeof o.project === "string" ? o.project : process.cwd(), false);
+    // 질의가 있으면 서버의 검색(낱말 + 의미)으로 씨앗을 고른다. 검색하지 못하면 그래프 안의 낱말 검색만으로 고른다.
+    let hits: ReturnType<typeof toHits> | undefined;
+    if (query && !o.lexical) try { hits = toHits(await searchNotes(loadConfig(c.optsWithGlobals().dataDir), parseSearch({ query: query.slice(0, 500), limit: 12 }))); } catch { /* 낱말로만 찾는다. */ }
     return graphRead(c, o.sessions, (tool) => {
-      const result = tool.context({ query, seeds: o.from, project, budget: whole(o.budget, "--budget", MIN_BUDGET, MAX_BUDGET, DEFAULT_BUDGET), brief: o.brief === true, redact: o.raw !== true });
+      const result = tool.context({ query, seeds: o.from, project, budget: whole(o.budget, "--budget", MIN_BUDGET, MAX_BUDGET, DEFAULT_BUDGET), brief: o.brief === true, redact: o.raw !== true, ...(hits?.length ? { hits } : {}) });
       return [result, result.text];
     });
   });
@@ -251,8 +274,8 @@ withSessions(graph.command("neighbors <id>").description("어떤 점에 이어�
 withSessions(graph.command("path <from> <to>").description("두 점을 잇는 가장 가까운 길 (어떤 메모를 거쳐 이어지는지)"))
   .action((from: string, to: string, o: { sessions?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.path(from, to), pathResultText)));
 withSessions(graph.command("suggest").description("제안 연결: 아직 링크로 잇지 않았지만 이으면 좋을 메모 쌍과 그 이유"))
-  .option("--limit <number>", "보일 수 (1~100, 기본 12)").option("--for <id>", "이 메모와 이을 것만")
-  .action((o: { sessions?: string; limit?: string; for?: string }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.suggest(whole(o.limit, "--limit", 1, 100, 12), o.for), suggestText)));
+  .option("--limit <number>", "보일 수 (1~100, 기본 12)").option("--for <id>", "이 메모와 이을 것만").option("--semantic", "뜻이 가까워서 나온 제안만(의미 색인이 있을 때)")
+  .action((o: { sessions?: string; limit?: string; for?: string; semantic?: boolean }, c: Command) => graphRead(c, o.sessions, (tool) => withText(tool.suggest(whole(o.limit, "--limit", 1, 100, 12), o.for, o.semantic === true), suggestText)));
 withSessions(graph.command("link <from> <to>").description("<from> 메모 본문 끝에 <to>(메모·폴더·작업 세션)로 가는 링크 한 줄을 적음 (이미 이어져 있으면 그대로 둠)"))
   .option("--why <text>", "링크 옆에 적을 이유 한 줄")
   .action(async (from: string, to: string, o: { sessions?: string; why?: string }, c: Command) => {
@@ -293,12 +316,14 @@ async function graphSource(config: ReturnType<typeof loadConfig>, sessions: bool
       list.push(...page.items);
       if (list.length >= page.page.total || !page.items.length) break;
     }
-    return { items: notes.items, revision: notes.revision, api, sessions: list };
+    return { items: notes.items, revision: notes.revision, api, sessions: list, links: await semanticLinks(config) };
   }
   const db = openDatabase(config, true);
   try {
     const notes = new NoteStore(db).list();
-    return { items: notes.items, revision: notes.revision, api, sessions: sessions ? new SessionRepository(db).rows("", [], GRAPH_SESSIONS, 0) : [] };
+    const source = { items: notes.items, revision: notes.revision, api, sessions: sessions ? new SessionRepository(db).rows("", [], GRAPH_SESSIONS, 0) : [] };
+    db.close();
+    return { ...source, links: await semanticLinks(config) };
   } finally { db.close(); }
 }
 /** 그래프를 읽어 한 가지를 보인다. --json이면 결과 객체를, 아니면 에이전트가 읽을 글을 쓴다. */

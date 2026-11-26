@@ -7,6 +7,9 @@ import { errorBody, RelayError } from "../errors";
 import { SessionRepository } from "../session/session.repository";
 import { SessionService } from "../session/session.service";
 import { exportFileName, MAX_IMAGE_UPLOAD_BYTES, NOTE_IMAGES_PATH, NoteStore, parseBatch, parseExport, parseExportImages, parseImageUpload } from "../notes/notes.store";
+import { createHash } from "node:crypto";
+import { INDEX_API, MAX_INDEX_BODY_BYTES, serveIndex, type SemanticIndex } from "@relay/core";
+import { EmbedderHost, RemoteIndex, loadEmbedding, localIndex, startIndexWorker } from "../notes/embed";
 import { CalculatorStore, parseHistoryAction } from "../calculator/calculator.store";
 import { parseBoardAction, parseEventBatch, parseEventFilter, parseTaskBatch, parseTaskFilter, PlannerStore } from "../planner/planner.store";
 import { startHolidaySync, syncLocalHolidays } from "../planner/holidays";
@@ -62,10 +65,12 @@ export interface Features {
   calculator?: CalculatorStore;
   /** 일정 관리(GET·POST /api/v1/tasks, /api/v1/board, /api/v1/events) */
   planner?: PlannerStore;
+  /** 메모 의미 검색(POST /api/v1/notes/search, GET /api/v1/notes/index-status 등 @relay/core의 INDEX_API). host는 이 PC의 임베딩 서버로, 있으면 검색 질의를 벡터로 바꿔 싣는다. */
+  index?: { engine: () => SemanticIndex; host?: EmbedderHost };
 }
 
 /** 세션 조회는 service(읽기 전용 연결)로 한다. 쓰기는 features에 준 저장소로만 하며 모두 같은 출처 JSON만 받는다. */
-export function handler(service: SessionService, config: Config, { notes, files, writer, calculator, planner }: Features = {}) {
+export function handler(service: SessionService, config: Config, { notes, files, writer, calculator, planner, index }: Features = {}) {
   // 보안 헤더에 이 프로세스의 ID를 더한다. `relay web --close`가 이 값으로 종료할 서버를 찾는다.
   const pid = { [PID_HEADER]: String(process.pid) };
   const headers = { ...securityHeaders(config.webPort), ...pid };
@@ -96,6 +101,21 @@ export function handler(service: SessionService, config: Config, { notes, files,
   };
   const readBody = async (request: Request) => {
     try { return await request.json() as unknown; } catch { throw new RelayError("INVALID_ARGUMENT", "JSON 본문을 읽을 수 없습니다."); }
+  };
+  /** 메모 의미 검색·색인 API. 경로와 요청 검사는 원격 서버와 같은 함수(serveIndex)가 한다. 읽기 응답은 내용의 해시를 ETag로 달아, 바뀌지 않았으면 304로 답한다. */
+  const serveNotesIndex = async (request: Request, url: URL) => {
+    try {
+      if (!index) throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);
+      if (request.method !== "GET" && request.method !== "POST") throw new RelayError("METHOD_NOT_ALLOWED", "GET 조회와 POST만 허용합니다.", 2, 405);
+      let body: unknown;
+      if (request.method === "POST") { checkWrite(request, config.webPort, MAX_INDEX_BODY_BYTES); body = await readBody(request); } else checkRequest(request, config.webPort);
+      const result = await serveIndex(index.engine(), request.method, url.pathname, Object.fromEntries(url.searchParams), body);
+      if (request.method !== "GET") return Response.json(result, { headers });
+      const text = JSON.stringify(result);
+      const tag = `"${createHash("sha256").update(text).digest("hex").slice(0, 32)}"`;
+      if (request.headers.get("if-none-match") === tag) return new Response(null, { status: 304, headers: { ...headers, ETag: tag } });
+      return new Response(text, { headers: { ...headers, "Content-Type": "application/json;charset=utf-8", ETag: tag } });
+    } catch (error) { return failed(error, "GET, POST"); }
   };
   /** 다른 환경으로 옮길 파일. 주소로 바로 열어도 날짜를 붙인 이름으로 내려받는다. */
   const exportNotes = (url: URL) => {
@@ -275,8 +295,10 @@ export function handler(service: SessionService, config: Config, { notes, files,
     } catch (error) { return failed(error, allow); }
   };
   const local = (request: Request): Response | Promise<Response> => {
+    const target = new URL(request.url);
+    if (INDEX_API.test(target.pathname)) return serveNotesIndex(request, target);
     if (request.method === "POST") {
-      const pathname = new URL(request.url).pathname;
+      const pathname = target.pathname;
       if (notes && pathname === NOTES_PATH) return saveNotes(request);
       if (notes && pathname === NOTES_IMPORT_PATH) return importNotes(request);
       if (notes && pathname === NOTE_IMAGES_PATH) return saveImage(request);
@@ -291,7 +313,7 @@ export function handler(service: SessionService, config: Config, { notes, files,
     }
     return read(request);
   };
-  return config.mode === "remote" ? remoteHandler(config, local) : local;
+  return config.mode === "remote" ? remoteHandler(config, local, index?.host) : local;
 }
 
 export function startServer(config: Config) {
@@ -303,10 +325,14 @@ export function startServer(config: Config) {
   const notes = new NoteStore(writeDb);
   // 어느 메모도 가리키지 않은 지 오래된 그림은 서버를 켤 때 정리한다. 실패해도 화면은 연다.
   try { notes.pruneImages(); } catch { /* 다음에 켤 때 다시 정리한다. */ }
+  // 임베딩 설정(embedding.json)이 있으면 이 PC가 임베딩을 맡는다: 검색 질의를 벡터로 바꾸고, 떠 있는 동안 색인 워커를 돌린다. 설정이 잘못됐어도 화면은 연다.
+  let host: EmbedderHost | undefined;
+  try { const embedding = loadEmbedding(config.dataDirectory); if (embedding) host = new EmbedderHost(embedding); } catch { /* relay embed status가 알린다. */ }
+  const engine = localIndex(writeDb, {}, host ? async (query, model) => (model.key === host!.key ? host!.query(query) : { failed: "model_mismatch" }) : undefined);
   let server;
   try {
     server = Bun.serve({ hostname: config.webHost, port: config.webPort,
-      fetch: handler(service, config, { notes, files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb), planner: new PlannerStore(writeDb) }),
+      fetch: handler(service, config, { notes, files: { launch: systemLauncher }, writer, calculator: new CalculatorStore(writeDb), planner: new PlannerStore(writeDb), index: { engine: () => engine, host } }),
       maxRequestBodySize: config.mode === "remote" ? 256 * 1024 * 1024 : MAX_IMPORT_BYTES, development: false, reusePort: false });
   } catch (error) {
     db.close(); writeDb.close();
@@ -321,6 +347,7 @@ export function startServer(config: Config) {
   const agent = startAgent(config);
   // 로컬 모드이고 공휴일 인증키가 있으면 매일 서울 00:00에 공휴일을 받는다.
   const holidays = startHolidaySync(config);
+  const indexer = host && host.config.auto !== false ? startIndexWorker(() => (config.mode === "remote" ? new RemoteIndex(config) : engine), host) : null;
   let stopped = false;
-  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); agent.stop(); holidays.stop(); await server.stop(false); db.close(); writeDb.close(); } } };
+  return { server, async stop() { if (!stopped) { stopped = true; clearInterval(timer); agent.stop(); holidays.stop(); indexer?.stop(); host?.stop(); await server.stop(false); db.close(); writeDb.close(); } } };
 }

@@ -16,3 +16,12 @@ export * from "./session-context.js";
 export * from "./handoff.js";
 
 export { testRemoteConnection, normalizeRemoteUrl } from "./connection.js";
+
+export * from "./text.js";
+export * from "./redact.js";
+export * from "./vector.js";
+export * from "./chunk.js";
+export * from "./semantic.js";
+export * from "./semantic-index.js";
+export * from "./embedding.js";
+export * from "./semantic-api.js";

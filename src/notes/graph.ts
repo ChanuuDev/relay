@@ -1,4 +1,4 @@
-import { labelOf, type NoteItem, type Session } from "@relay/core";
+import { labelOf, type LinkItem, type NoteItem, type Session } from "@relay/core";
 import { RelayError } from "../errors";
 import { MemoIndex } from "./memo";
 import {
@@ -12,7 +12,8 @@ import type { Items } from "../web/lib/notes";
 // 읽기(map·context·neighbors·path·suggest·export)는 저장소를 고치지 않고, link만 메모 본문 끝에 링크 한 줄을 적는다.
 
 export type SessionScope = "linked" | "all" | "none";
-export type GraphSource = { items: NoteItem[]; revision: number; api: string; sessions: Session[] };
+/** links는 의미 색인이 계산해 둔 메모 쌍(없으면 낱말 관계만으로 그린다). */
+export type GraphSource = { items: NoteItem[]; revision: number; api: string; sessions: Session[]; links?: LinkItem[] };
 /** short는 글에 적는 짧은 ID(겹치지 않는 앞부분). 메모·폴더는 relay memo와 relay graph가 앞부분을 받는다. */
 type Ref = { id: string; short: string; label: string; kind: GraphNode["kind"]; path?: string };
 type Head = { schemaVersion: 1; revision: number; api: string };
@@ -37,7 +38,7 @@ export type GraphLinked = Head & { from: Ref; to: Ref; changed: boolean; line: s
 export type GraphExport = Head & { nodes: Array<{ id: string; kind: GraphNode["kind"]; label: string; group: string; topic: string | null; degree: number; rank: number; between: number; updatedAt: number }>;
   edges: Array<{ source: string; target: string; kind: EdgeKind; weight: number }> };
 
-const EDGE_WORD: Record<EdgeKind, string> = { link: "링크", mention: "언급", similar: "비슷함", tag: "태그", folder: "폴더", chain: "이어받음" };
+const EDGE_WORD: Record<EdgeKind, string> = { link: "링크", mention: "언급", similar: "비슷함", tag: "태그", folder: "폴더", chain: "이어받음", semantic: "뜻이 가까움" };
 const KIND_WORD: Record<GraphNode["kind"], string> = { note: "메모", folder: "폴더", tag: "태그", session: "작업 세션", project: "프로젝트" };
 const normalize = (text: string) => text.normalize("NFC").toLocaleLowerCase("ko-KR").replace(/\s+/g, " ").trim();
 
@@ -52,7 +53,7 @@ export class GraphTool {
     this.items = Object.fromEntries(source.items.map((item) => [item.id, item])) as Items;
     this.index = new MemoIndex([...source.items], source.revision, source.api);
     this.shorts = shortRefs(source.items.map((item) => item.id));
-    this.graph = buildGraph(this.items, scope === "none" ? {} : { sessions: source.sessions.map(toGraphSession), sessionScope: scope });
+    this.graph = buildGraph(this.items, { ...(scope === "none" ? {} : { sessions: source.sessions.map(toGraphSession), sessionScope: scope }), semantic: source.links ?? [] });
   }
 
   private get head(): Head { return { schemaVersion: 1, revision: this.source.revision, api: this.source.api }; }
@@ -154,9 +155,10 @@ export class GraphTool {
     return { ...this.head, from: this.ref(from.id), to: this.ref(to.id), connected: Boolean(found), steps };
   }
 
-  suggest(limit = 12, only?: string): GraphSuggestions {
+  /** semantic이면 임베딩으로 잰 뜻의 가까움이 근거인 제안만 보인다. */
+  suggest(limit = 12, only?: string, semantic = false): GraphSuggestions {
     const node = only === undefined ? undefined : this.resolve(only);
-    const all = suggestLinks(this.graph, this.insight, { limit: 500, only: node?.id });
+    const all = suggestLinks(this.graph, this.insight, { limit: 500, only: node?.id }).filter((entry) => !semantic || entry.reasons.some((reason) => reason.kind === "semantic"));
     return { ...this.head, total: all.length, items: all.slice(0, limit).map((entry) => ({
       from: this.ref(entry.from), to: this.ref(entry.to), score: Math.round(entry.score * 100) / 100, reasons: entry.reasons.map((reason) => reason.text),
       command: `relay graph link ${entry.from} ${entry.to}` })) };
@@ -193,7 +195,7 @@ const edgeText = (kind: EdgeKind, weight: number, direction: "out" | "in" | "bot
 
 export function mapText(map: GraphMap): string {
   const { counts } = map;
-  const content = (["link", "mention", "similar", "tag", "chain"] as const).filter((kind) => counts.edges[kind]).map((kind) => `${EDGE_WORD[kind]} ${counts.edges[kind]}`);
+  const content = (["link", "mention", "semantic", "similar", "tag", "chain"] as const).filter((kind) => counts.edges[kind]).map((kind) => `${EDGE_WORD[kind]} ${counts.edges[kind]}`);
   const lines = ["# Relay 메모 그래프 지도", "",
     `- 점: 메모 ${counts.notes}개 · 폴더 ${counts.folders}개 · 태그 ${counts.tags}개${counts.sessions ? ` · 메모와 이어진 작업 세션 ${counts.sessions}개` : ""}`,
     `- 내용으로 이어진 선: ${content.length ? content.join(" · ") : "없음"}`,

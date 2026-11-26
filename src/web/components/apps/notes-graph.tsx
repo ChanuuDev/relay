@@ -10,6 +10,7 @@ import { appendLink, appendSessionLink, buildGraph, isDoc, linkTarget, ROOT_GROU
 import { analyze, shortestPath, suggestLinks } from "../../lib/graph-insight";
 import { buildContext, DEFAULT_BUDGET } from "../../lib/graph-context";
 import { useGraphSessions } from "../../lib/graph-sessions";
+import { useIndexStatus, useSemanticLinks } from "../../lib/semantic";
 import { focusOf, GRAPH_VIEWS, type GraphView } from "../../lib/graph-layout";
 import { useNoteGraph, type GraphLinkKind } from "../../lib/note-graph-prefs";
 import { pathOf, previewOf, search, useNotes, type Items } from "../../lib/notes";
@@ -26,11 +27,12 @@ const VIEWS: Record<GraphView, { label: string; icon: LucideIcon; hint: string }
   topics: { label: "주제", icon: Shapes, hint: "내용이 비슷한 메모끼리 묶음" },
   timeline: { label: "시간", icon: CalendarRange, hint: "고친 날짜 순서, 폴더별 줄" },
 };
-const KIND_LABEL: Record<EdgeKind, string> = { link: "링크", mention: "언급", similar: "비슷한 내용", folder: "폴더", tag: "태그", chain: "이어받은 세션" };
+const KIND_LABEL: Record<EdgeKind, string> = { link: "링크", mention: "언급", similar: "비슷한 내용", folder: "폴더", tag: "태그", chain: "이어받은 세션", semantic: "뜻이 가까움" };
 const LINKS: Array<{ kind: GraphLinkKind; label: string; hint: string }> = [
   { kind: "link", label: "링크", hint: "[[제목]]이나 메모 ID로 가리킴" },
   { kind: "mention", label: "언급", hint: "다른 메모의 제목이 본문에 나옴" },
   { kind: "similar", label: "비슷한 내용", hint: "드문 낱말을 여럿 함께 씀" },
+  { kind: "semantic", label: "뜻이 가까움", hint: "낱말이 달라도 같은 이야기(의미 색인이 있을 때)" },
 ];
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 const optionId = (id: string) => `graph-node-${id.replace(/[^\w-]/g, "_")}`;
@@ -49,7 +51,10 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
   const prefs = useNoteGraph();
   const { view } = prefs;
   const sessions = useGraphSessions(prefs.sessions);
-  const graph = useMemo(() => buildGraph(items, prefs.sessions ? { sessions } : {}), [items, sessions, prefs.sessions]);
+  // 의미 색인이 미리 계산해 둔 메모 쌍. 색인이 없으면 빈 목록이고 그래프는 낱말 관계만으로 그린다.
+  const semantic = useSemanticLinks(true);
+  const indexStatus = useIndexStatus(true);
+  const graph = useMemo(() => buildGraph(items, { ...(prefs.sessions ? { sessions } : {}), semantic: semantic.links }), [items, sessions, prefs.sessions, semantic.links]);
   const insight = useMemo(() => analyze(graph), [graph]);
   const suggestions = useMemo(() => suggestLinks(graph, insight, { limit: 24 }), [graph, insight]);
   const data = useMemo<SceneData>(() => {
@@ -386,7 +391,8 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
 
     <ToolRail tool={tool} onTool={openTool} replaying={replaying} onReplay={replay} badge={suggestions.length} />
     {tool === "insight" && <InsightPanel graph={graph} insight={insight} suggestions={suggestions} visible={visible} colorOf={colorOf} onPick={pick} onSpot={spot}
-      onClose={() => openTool(null)} onLink={link} />}
+      onClose={() => openTool(null)} onLink={link} index={indexStatus}
+      onDismiss={async (from, to) => { setNotice(await semantic.dismiss(from, to) ? "이 쌍은 다시 제안하지 않습니다." : "저장하지 못했습니다. 잠시 뒤에 다시 눌러 주세요."); }} />}
     {tool === "context" && <ContextPanel graph={graph} colorOf={colorOf} onPick={pick} onSpot={spot} onClose={() => openTool(null)}
       active={active ? visible.get(active) ?? null : null} query={contextQuery} onQuery={setContextQuery} seeds={seedsInGraph} onSeeds={setContextSeeds}
       budget={budget} onBudget={setBudget} result={context} onSaveHub={saveHub} />}
@@ -475,7 +481,7 @@ function ViewSwitch({ view, onChange }: { view: GraphView; onChange: (view: Grap
 /** 보일 연결과 점을 고르는 메뉴. */
 function FilterMenu() {
   const prefs = useNoteGraph();
-  const changed = !prefs.links.link || !prefs.links.mention || !prefs.links.similar || !prefs.folders || !prefs.tags || !prefs.orphans || prefs.labels || !prefs.sessions || prefs.colorBy !== "folder";
+  const changed = !prefs.links.link || !prefs.links.mention || !prefs.links.similar || !prefs.links.semantic || !prefs.folders || !prefs.tags || !prefs.orphans || prefs.labels || !prefs.sessions || prefs.colorBy !== "folder";
   return <Popover.Root>
     <Popover.Trigger asChild>
       <Button type="button" variant="ghost" size="icon-sm" className="graph-filter-button" aria-label="보일 연결과 점" title="보일 연결과 점" data-changed={changed ? "" : undefined}>
@@ -542,7 +548,7 @@ function NodeCard({ node, items, data, view, colorOf, session, canOpenSession, o
       if (!other) continue;
       byKind.set(edge.kind, [...(byKind.get(edge.kind) ?? []), { other, incoming }]);
     }
-    const order: EdgeKind[] = ["link", "mention", "chain", "tag", "similar", "folder"];
+    const order: EdgeKind[] = ["link", "mention", "chain", "semantic", "tag", "similar", "folder"];
     return order.filter((kind) => byKind.has(kind)).map((kind) => ({ kind, list: byKind.get(kind)! }));
   }, [node, data]);
   if (!node) return null;

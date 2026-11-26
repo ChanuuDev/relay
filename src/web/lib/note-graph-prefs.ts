@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { GRAPH_VIEWS, type GraphView } from "./graph-layout";
 
 /** 메모 그래프의 보기 설정. 보기 종류·보일 연결·점 종류·이름표는 이 브라우저에 남기고, 그래프를 연 상태는 남기지 않는다(다시 열면 편집기부터). */
-export type GraphLinkKind = "link" | "mention" | "similar";
+export type GraphLinkKind = "link" | "mention" | "similar" | "semantic";
 export type GraphPrefs = {
   view: GraphView;
   links: Record<GraphLinkKind, boolean>;
@@ -20,7 +20,7 @@ export type GraphPrefs = {
   colorBy: "folder" | "topic";
 };
 const KEY = "relay-notes-graph-v1";
-const DEFAULTS: GraphPrefs = { view: "network", links: { link: true, mention: true, similar: true }, folders: true, tags: true, orphans: true, labels: false, sessions: true, colorBy: "folder" };
+const DEFAULTS: GraphPrefs = { view: "network", links: { link: true, mention: true, similar: true, semantic: true }, folders: true, tags: true, orphans: true, labels: false, sessions: true, colorBy: "folder" };
 
 function load(): GraphPrefs {
   try {
@@ -30,7 +30,7 @@ function load(): GraphPrefs {
     const links = raw.links && typeof raw.links === "object" ? raw.links : DEFAULTS.links;
     return {
       view: GRAPH_VIEWS.includes(raw.view as GraphView) ? raw.view as GraphView : DEFAULTS.view,
-      links: { link: bool(links.link, true), mention: bool(links.mention, true), similar: bool(links.similar, true) },
+      links: { link: bool(links.link, true), mention: bool(links.mention, true), similar: bool(links.similar, true), semantic: bool(links.semantic, true) },
       folders: bool(raw.folders, DEFAULTS.folders), tags: bool(raw.tags, DEFAULTS.tags), orphans: bool(raw.orphans, DEFAULTS.orphans), labels: bool(raw.labels, DEFAULTS.labels),
       sessions: bool(raw.sessions, DEFAULTS.sessions), colorBy: raw.colorBy === "topic" ? "topic" : "folder",
     };

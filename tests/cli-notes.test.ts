@@ -168,10 +168,20 @@ describe("CLI notes for agents", () => {
       expect(missing.code).toBe(3); expect(missing.stdout).toBe(""); expect(missing.data.error.code).toBe("NOTE_NOT_FOUND");
 
       // 검색은 띄어 쓴 낱말이 모두 든 항목을 찾고 맞은 줄을 서식 없이 보인다. 메모는 최근에 고친 것부터.
-      expect(cli(dir, ["memo", "--search", "배포 금요일"]).data).toMatchObject({ query: "배포 금요일", total: 1, items: [{ id: "note-meeting", path: [{ name: "업무" }], lines: ["배포는 금요일"] }] });
-      expect(cli(dir, ["memo", "--search", "배포"]).data.items.map((hit: { id: string }) => hit.id)).toEqual(["note-todo", "note-meeting"]);
-      expect(cli(dir, ["memo", "--search", "설계"]).data.items.map((hit: { id: string; kind: string }) => [hit.id, hit.kind])).toEqual([["folder-design", "folder"], ["note-api", "note"]]);
-      expect(cli(dir, ["memo", "--search", "없는말"]).data.total).toBe(0);
+      const exact = (query: string) => cli(dir, ["memo", "--search", query, "--mode", "exact"]).data;
+      expect(exact("배포 금요일")).toMatchObject({ query: "배포 금요일", total: 1, items: [{ id: "note-meeting", path: [{ name: "업무" }], lines: ["배포는 금요일"] }] });
+      expect(exact("배포").items.map((hit: { id: string }) => hit.id)).toEqual(["note-todo", "note-meeting"]);
+      expect(exact("설계").items.map((hit: { id: string; kind: string }) => [hit.id, hit.kind])).toEqual([["folder-design", "folder"], ["note-api", "note"]]);
+      expect(exact("없는말").total).toBe(0);
+      // 기본은 관련 있는 순서로 찾는다: 낱말이 모두 들지 않아도 맞는 메모를 보이고, 맞은 줄을 함께 준다. 의미 색인이 없으면 낱말로만 찾고 그 까닭을 알린다.
+      const ranked = cli(dir, ["memo", "--search", "배포 금요일"]).data;
+      expect(ranked).toMatchObject({ schemaVersion: 1, query: "배포 금요일", searchMode: "lexical_fallback", fallbackReason: "no_index", modelKey: null });
+      expect(ranked.items[0]).toMatchObject({ id: "note-meeting", noteId: "note-meeting", label: "회의록", path: "업무", docType: "memo", staleIndex: false, matches: [{ snippet: "배포는 금요일" }] });
+      expect(ranked.items.map((hit: { id: string }) => hit.id)).toContain("note-todo");
+      expect(cli(dir, ["memo", "--search", "배포", "--mode", "keyword", "--limit", "1"]).data).toMatchObject({ searchMode: "keyword", items: [{}] });
+      expect(cli(dir, ["memo", "--search", "없는말"]).data).toMatchObject({ total: 0, items: [] });
+      expect(cli(dir, ["memo", "--search", "배포", "--mode", "fuzzy"]).code).toBe(2);
+      expect(cli(dir, ["memo", "--list", "--limit", "3"]).code).toBe(2);
       for (const args of [["--list", "--find", "x"], ["--find", "x", "--search", "y"], ["--find", "x", "--folder", "y"], ["--search", " "]]) {
         expect(cli(dir, ["memo", ...args]).data.error.code).toBe("INVALID_ARGUMENT");
       }
@@ -188,7 +198,11 @@ describe("CLI notes for agents", () => {
       const tree2 = plain(["memo", "--find", "folder-work"]).stdout.toString();
       expect(tree2).toStartWith("# 폴더: 업무\n\n- 폴더 ID: folder-work\n- 위치: 최상위\n- 담긴 것: 메모 2개 · 하위 폴더 1개\n\n## 목록\n\n- [폴더] 설계 · ID: folder-design\n  - API 설계 · ID: note-api\n- 회의록 · ID: note-meeting\n");
       expect(tree2).toContain("\n---\n\n## 회의록\n\n- 메모 ID: note-meeting\n");
-      expect(plain(["memo", "--search", "배포 금요일"]).stdout.toString()).toContain("- [메모] 회의록 · 업무 · ");
+      expect(plain(["memo", "--search", "배포 금요일", "--mode", "exact"]).stdout.toString()).toContain("- [메모] 회의록 · 업무 · ");
+      const shown = plain(["memo", "--search", "배포 금요일"]).stdout.toString();
+      expect(shown).toContain("‘배포 금요일’ 검색 결과");
+      expect(shown).toContain("- 회의록 · 업무 · 점수 1.00 · ID: note-meeting");
+      expect(shown).toContain("  > [결정] 배포는 금요일 (3줄)");
       expect(plain(["memo"]).stdout.toString()).toContain("Usage: relay memo");
 
       // 에이전트는 찾은 항목을 고쳐 메모 API로 보낸다. curl처럼 Origin과 JSON만 붙이고(브라우저의 Sec-Fetch-Site 없음), 새 메모는 새 ID로 넣는다.

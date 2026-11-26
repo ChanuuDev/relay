@@ -252,11 +252,13 @@ test("CLI install-hooks writes into RELAY_USER_HOME and --bin-dir", () => {
     "relay-session:claude", "relay-session:grok", "relay-session:codex", "relay-session:gemini",
     "relay-memo:claude", "relay-memo:grok", "relay-memo:codex", "relay-memo:gemini",
     "relay-graph:claude", "relay-graph:grok", "relay-graph:codex", "relay-graph:gemini",
+    "relay-embedding:claude", "relay-embedding:grok", "relay-embedding:codex", "relay-embedding:gemini",
   ]);
   for (const agent of ["claude", "grok", "codex", "gemini"]) {
     expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-session", "SKILL.md"), "utf8")).toContain("relay update");
     expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-memo", "SKILL.md"), "utf8")).toContain("relay memo --find <ID>");
     expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-graph", "SKILL.md"), "utf8")).toContain("relay graph context");
+    expect(readFileSync(path.join(home(), `.${agent}`, "skills", "relay-embedding", "SKILL.md"), "utf8")).toContain("relay embed cards");
   }
 });
 

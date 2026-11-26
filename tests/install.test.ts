@@ -31,6 +31,10 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   const graph = path.join(dir, ".agents/skills/relay-graph");
   expect(readFileSync(path.join(graph, "SKILL.md"), "utf8")).toBe(readFileSync(path.join(root, "skills/relay-graph/SKILL.md"), "utf8"));
   expect(readFileSync(path.join(graph, "agents/openai.yaml"), "utf8")).toBe(readFileSync(path.join(root, "skills/relay-graph/agents/openai.yaml"), "utf8"));
+  // relay-embedding too, so the agent can build the semantic index of the notes.
+  const embedding = path.join(dir, ".agents/skills/relay-embedding");
+  expect(readFileSync(path.join(embedding, "SKILL.md"), "utf8")).toBe(readFileSync(path.join(root, "skills/relay-embedding/SKILL.md"), "utf8"));
+  expect(readFileSync(path.join(embedding, "agents/openai.yaml"), "utf8")).toBe(readFileSync(path.join(root, "skills/relay-embedding/agents/openai.yaml"), "utf8"));
   expect(install("codex").exitCode).toBe(0);
   writeFileSync(target, original + "\nUser customization\n");
   expect(install("codex").exitCode).not.toBe(0);
@@ -46,6 +50,8 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
     .toBe(readFileSync(path.join(root, "skills/relay-memo/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: <memo-id|folder-id|query>\n"));
   expect(readFileSync(path.join(dir, ".claude/skills/relay-graph/SKILL.md"), "utf8"))
     .toBe(readFileSync(path.join(root, "skills/relay-graph/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: <query|memo-id>\n"));
+  expect(readFileSync(path.join(dir, ".claude/skills/relay-embedding/SKILL.md"), "utf8"))
+    .toBe(readFileSync(path.join(root, "skills/relay-embedding/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: [status|cards|run|setup|doctor]\n"));
   expect(install("grok").exitCode).toBe(0);
   const grokSkill = path.join(dir, ".grok/skills/relay-session/SKILL.md");
   expect(readFileSync(grokSkill, "utf8")).toBe(installed);

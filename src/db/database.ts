@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { ensureDataDirectory, type Config } from "../config";
 import { RelayError, storageError } from "../errors";
-import schema from "./migrations/010_init.sql" with { type: "text" };
+import schema from "./migrations/011_init.sql" with { type: "text" };
+import noteIndex from "./migrations/011_note_index.sql" with { type: "text" };
 
-export const DB_VERSION = 10;
+export const DB_VERSION = 11;
 
 export function checkVersion(db: Database) {
   const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -218,9 +219,19 @@ ALTER TABLE tasks_v10 RENAME TO tasks;
 `);
 }
 
+// v11 adds the semantic index next to the notes: document type and status, the cards an agent writes for a note, the embedding models,
+// each note's index state, its chunks with their vectors, the precomputed semantic links and the suggestions the user turned down.
+// Every row points at its note, so deleting a note removes them too. Sessions, notes and everything else are untouched.
+function migrateV10(db: Database) {
+  db.exec(noteIndex);
+}
+
+/** steps[n] takes a version n+1 store to version n+2. */
+const steps = [migrateV1, migrateV2, migrateV3, migrateV4, migrateV5, migrateV6, migrateV7, migrateV8, migrateV9, migrateV10];
+
 function initializeOrMigrate(db: Database) {
   const current = version(db);
-  if (current < 0 || current > 9) {
+  if (current < 0 || current >= DB_VERSION) {
     checkVersion(db);
     return;
   }
@@ -234,68 +245,8 @@ function initializeOrMigrate(db: Database) {
       if (tables(db).length) throw new RelayError("SCHEMA_MISMATCH", "버전 없는 기존 DB를 덮어쓰지 않습니다.", 5, 503);
       db.exec(schema);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 1) {
-      migrateV1(db);
-      migrateV2(db);
-      migrateV3(db);
-      migrateV4(db);
-      migrateV5(db);
-      migrateV6(db);
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 2) {
-      migrateV2(db);
-      migrateV3(db);
-      migrateV4(db);
-      migrateV5(db);
-      migrateV6(db);
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 3) {
-      migrateV3(db);
-      migrateV4(db);
-      migrateV5(db);
-      migrateV6(db);
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 4) {
-      migrateV4(db);
-      migrateV5(db);
-      migrateV6(db);
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 5) {
-      migrateV5(db);
-      migrateV6(db);
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 6) {
-      migrateV6(db);
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 7) {
-      migrateV7(db);
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 8) {
-      migrateV8(db);
-      migrateV9(db);
-      db.exec(`PRAGMA user_version = ${DB_VERSION}`);
-    } else if (observed === 9) {
-      migrateV9(db);
+    } else if (observed < DB_VERSION) {
+      for (let at = observed; at < DB_VERSION; at++) steps[at - 1]!(db);
       db.exec(`PRAGMA user_version = ${DB_VERSION}`);
     } else {
       checkVersion(db);

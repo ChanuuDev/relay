@@ -1,4 +1,4 @@
-import { RelayError, integer } from "@relay/core";
+import { RelayError, integer, parseEmbeddingConfig, type EmbeddingConfig } from "@relay/core";
 
 export interface ServerConfig {
   /** PostgreSQL 연결 문자열. 테스트는 비워 두고 PGlite를 쓴다. */
@@ -18,6 +18,9 @@ export interface ServerConfig {
   holidayApiKey?: string | null;
   /** 공휴일 API 주소(HOLIDAY_API_URL). 시험용이며 기본은 공공데이터포털 주소다. */
   holidayApiUrl?: string | null;
+  /** 서버가 검색 질의를 직접 임베딩할 임베딩 서버(RELAY_EMBED_URL·RELAY_EMBED_MODEL·RELAY_EMBED_DIMENSIONS, 선택: RELAY_EMBED_PROMPT·RELAY_EMBED_STYLE·RELAY_EMBED_NAME·RELAY_EMBED_API_KEY).
+   *  없어도 된다: 임베딩 서버가 있는 PC의 relay가 질의 벡터를 실어 보내고, 벡터가 없는 요청에는 낱말 검색으로 답한다. 사설망·터널로 임베딩 서버에 닿을 때만 둔다. */
+  embedding?: EmbeddingConfig | null;
 }
 
 /** RELAY_CORS_ORIGINS(쉼표로 구분). 출처 형식만 받고, http는 이 컴퓨터만 허용한다. */
@@ -53,5 +56,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     corsOrigins: parseCorsOrigins(env.RELAY_CORS_ORIGINS),
     holidayApiKey: env.HOLIDAY_API_KEY?.trim() || null,
     holidayApiUrl: env.HOLIDAY_API_URL?.trim() || null,
+    embedding: env.RELAY_EMBED_URL?.trim() ? parseEmbeddingConfig({ url: env.RELAY_EMBED_URL.trim(), model: env.RELAY_EMBED_MODEL?.trim(), dimensions: Number(env.RELAY_EMBED_DIMENSIONS),
+      ...(env.RELAY_EMBED_PROMPT?.trim() ? { prompt: env.RELAY_EMBED_PROMPT.trim() } : {}), ...(env.RELAY_EMBED_STYLE?.trim() ? { style: env.RELAY_EMBED_STYLE.trim() } : {}),
+      ...(env.RELAY_EMBED_NAME?.trim() ? { name: env.RELAY_EMBED_NAME.trim() } : {}), ...(env.RELAY_EMBED_API_KEY?.trim() ? { apiKey: env.RELAY_EMBED_API_KEY.trim() } : {}) }, { privateNetwork: true }) : null,
   };
 }

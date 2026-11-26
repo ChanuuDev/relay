@@ -12,7 +12,7 @@ import { HOOK_SUMMARY } from "../src/session/session.service";
 import { PlannerStore } from "../src/planner/planner.store";
 import { cleanup, fixture, input, temporary } from "./helpers";
 import v8Schema from "../src/db/migrations/008_init.sql" with { type: "text" };
-import v10Schema from "../src/db/migrations/010_init.sql" with { type: "text" };
+import latestSchema from "../src/db/migrations/011_init.sql" with { type: "text" };
 
 const task = (id: string, extra: Partial<Task> = {}): Task => ({ id, title: id, project: "", memo: "", provider: null, status: "todo", board: false, position: null, notes: [],
   createdAt: 1, updatedAt: 1, completedAt: null, ...extra });
@@ -335,7 +335,7 @@ describe("스키마 v8 → v9", () => {
     db.query("INSERT INTO session_updates (id, session_id, sequence, summary, created_at) VALUES (?, ?, ?, ?, ?)").run("u2", "ses_old", 2, "작업", at);
     db.close();
     const fresh = new Database(":memory:");
-    fresh.exec(v10Schema);
+    fresh.exec(latestSchema);
     const schemaOf = (target: Database) => (target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string | null }[])
       .map(row => ({ ...row, sql: row.sql?.replace(/^CREATE TABLE "([^"]+)"/, "CREATE TABLE $1") ?? null }));
     const writer = openDatabase(loadConfig(dir));

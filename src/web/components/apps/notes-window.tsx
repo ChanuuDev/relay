@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload, Waypoints, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload, Waypoints, X, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -12,6 +12,7 @@ import {
   childMap, exportNotes, importNotes, isWithin, labelOf, memoReference, noteCounts, pathOf, previewOf, search, targetFolder, useNotes, visibleRows,
   type Folder, type Item, type Items, type Note, type NotesStatus, type NotesSync, type Row,
 } from "../../lib/notes";
+import { FALLBACK_TEXT, useNoteSearch } from "../../lib/semantic";
 import { useNoteAlert } from "../../lib/note-images";
 import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 import { popoutApp } from "../../lib/popout";
@@ -603,18 +604,41 @@ function RenameField({ item }: { item: Item }) {
 
 function SearchResults({ items, query, selected, onOpen }: { items: Items; query: string; selected: string | null; onOpen: (id: string) => void }) {
   const results = useMemo(() => search(items, query), [items, query]);
-  if (!results.length) return <div className="notes-tree-empty" role="status">‘{query.trim()}’와 일치하는 메모가 없습니다.</div>;
-  return <ul className="notes-results" aria-label="검색 결과">
-    {results.map((item) => {
-      const path = pathOf(items, item.parentId).map((folder) => folder.name).join(" › ");
-      return <li key={item.id}>
-        <button type="button" className="notes-result" aria-current={item.id === selected || undefined} onClick={() => onOpen(item.id)}>
-          {item.kind === "folder" ? <FolderIcon className="tree-icon" data-kind="folder" aria-hidden="true" /> : <FileText className="tree-icon" aria-hidden="true" />}
-          <span className="notes-result-text"><span className="tree-label">{labelOf(item)}</span><span className="notes-result-path">{path || "최상위"}</span></span>
-        </button>
-      </li>;
-    })}
-  </ul>;
+  // 글자가 그대로 든 메모는 바로 보이고, 낱말 순위와 뜻으로 찾은 다른 메모는 입력이 멎으면 서버에 물어 그 아래에 보탠다.
+  const { result, loading } = useNoteSearch(query);
+  const found = useMemo(() => new Set(results.map((item) => item.id)), [results]);
+  const related = (result?.items ?? []).filter((item) => !found.has(item.noteId) && items[item.noteId]?.kind === "note");
+  return <>
+    {results.length > 0
+      ? <ul className="notes-results" aria-label="검색 결과">
+        {results.map((item) => {
+          const path = pathOf(items, item.parentId).map((folder) => folder.name).join(" › ");
+          return <li key={item.id}>
+            <button type="button" className="notes-result" aria-current={item.id === selected || undefined} onClick={() => onOpen(item.id)}>
+              {item.kind === "folder" ? <FolderIcon className="tree-icon" data-kind="folder" aria-hidden="true" /> : <FileText className="tree-icon" aria-hidden="true" />}
+              <span className="notes-result-text"><span className="tree-label">{labelOf(item)}</span><span className="notes-result-path">{path || "최상위"}</span></span>
+            </button>
+          </li>;
+        })}
+      </ul>
+      : !related.length && !loading && <div className="notes-tree-empty" role="status">‘{query.trim()}’와 일치하는 메모가 없습니다.</div>}
+    {related.length > 0 && <section className="notes-related" aria-label="관련 메모">
+      <h3><Sparkles aria-hidden="true" />{result!.searchMode === "hybrid" || result!.searchMode === "semantic" ? "뜻이 가까운 메모" : "관련 메모"}</h3>
+      <ul className="notes-results">
+        {related.map((item) => <li key={item.noteId}>
+          <button type="button" className="notes-result" data-related="" aria-current={item.noteId === selected || undefined} onClick={() => onOpen(item.noteId)}>
+            <FileText className="tree-icon" aria-hidden="true" />
+            <span className="notes-result-text">
+              <span className="tree-label">{item.title}</span>
+              <span className="notes-result-path">{item.path || "최상위"}{item.matches[0]?.headingPath ? ` · ${item.matches[0].headingPath.split(" > ").pop()}` : ""}</span>
+              {item.matches[0]?.snippet && <span className="notes-result-snippet">{item.matches[0].snippet}</span>}
+            </span>
+          </button>
+        </li>)}
+      </ul>
+    </section>}
+    {result?.searchMode === "lexical_fallback" && result.fallbackReason !== "no_index" && <p className="notes-related-note" role="status">{FALLBACK_TEXT[result.fallbackReason ?? ""] ?? "낱말로만 찾았습니다."}</p>}
+  </>;
 }
 
 /** 위치(폴더 경로) 표시. 누르면 그 폴더로 간다. */

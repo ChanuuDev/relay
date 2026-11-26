@@ -15,7 +15,7 @@ Relay는 **AI Agent 세션, 메모, 파일 탐색기, 뷰어, 계산기 등 업�
 Windows 10/11 x64에서 사용합니다. 설치한 앱을 실행할 때는 Node.js·Bun·관리자 권한이 필요 없습니다.
 
 1. 배포받은 `installer/Relay-Setup-1.0.0.exe`를 실행합니다. 기존 앱을 업데이트할 때도 최신 Setup EXE를 실행하세요.
-2. 설치가 끝나면 Relay를 엽니다. 첫 실행에서 CLI·Agent 훅·`relay-session`·`relay-memo`·`relay-graph` 스킬도 함께 구성됩니다.
+2. 설치가 끝나면 Relay를 엽니다. 첫 실행에서 CLI·Agent 훅·`relay-session`·`relay-memo`·`relay-graph`·`relay-embedding` 스킬도 함께 구성됩니다.
 3. 아래 안내에 따라 **로컬 서버** 또는 **원격 서버**를 고릅니다.
 
 설치 파일은 [installer 폴더 안내](installer/README.md)를 참고하세요. 소스에서 설치 EXE를 만들려면 [Windows 앱과 원격 서버](#windows-앱과-원격-서버)의 빌드 절차를 따릅니다. CLI만 설치하려면 같은 폴더의 `relay.exe`·`install-cli.ps1`·`install.cmd`를 함께 두고 `install.cmd`를 실행하세요.
@@ -110,7 +110,7 @@ npm run build
 .\scripts\install-cli.ps1
 ```
 
-설치 스크립트는 `%USERPROFILE%\.local\bin\relay.exe`를 설치하고 사용자 PATH, `relay://` 링크, Agent 훅과 `relay-session`·`relay-memo`·`relay-graph` 스킬을 구성합니다. 이미 빌드된 실행 파일이 있으면 설치 스크립트만 실행하면 됩니다. 설치 후 일반 실행에는 Node.js·Bun·관리자 권한이 필요 없습니다.
+설치 스크립트는 `%USERPROFILE%\.local\bin\relay.exe`를 설치하고 사용자 PATH, `relay://` 링크, Agent 훅과 `relay-session`·`relay-memo`·`relay-graph`·`relay-embedding` 스킬을 구성합니다. 이미 빌드된 실행 파일이 있으면 설치 스크립트만 실행하면 됩니다. 설치 후 일반 실행에는 Node.js·Bun·관리자 권한이 필요 없습니다.
 
 ```powershell
 relay --version
@@ -163,7 +163,7 @@ Dock에서 메모와 파일 탐색기, 계산기 등을 함께 열어 두고 창
 
 ### 메모로 정리하기
 
-메모와 폴더를 만들고, 끌어 놓기나 메뉴로 위치를 정리합니다. 제목·본문·폴더 이름을 검색하고, 체크리스트·표·링크·코드 블록을 넣어 할 일과 참고 내용을 남기세요.
+메모와 폴더를 만들고, 끌어 놓기나 메뉴로 위치를 정리합니다. 제목·본문·폴더 이름을 검색하고(글자가 그대로 든 것은 바로, 낱말이 달라도 [뜻이 가까운 메모](#낱말이-달라도-뜻으로-찾기)는 그 아래에), 체크리스트·표·링크·코드 블록을 넣어 할 일과 참고 내용을 남기세요.
 
 - **서식 / Markdown 전환**: 서식 도구와 Markdown 입력을 함께 지원하며 원문을 직접 고칠 수 있습니다.
 - **그림 넣기**: 화면 캡처나 복사한 그림을 `Ctrl+V`로 바로 붙여 넣거나, 파일을 끌어 놓거나, 서식 도구의 그림 단추로 고릅니다. PNG·JPEG·GIF·WebP·AVIF는 그대로, BMP·SVG는 PNG로 바꿔 장당 10MB까지 Relay DB에 저장하고, 본문에는 `![](/api/v1/notes/images/<id>)` 한 줄만 남습니다. 같은 그림은 한 번만 저장되고, 30일 넘게 어느 메모에도 쓰이지 않은 그림은 서버를 켤 때 정리됩니다. 엑셀·워드처럼 글과 그림을 함께 복사하면 글을 붙입니다.
@@ -187,13 +187,14 @@ Dock에서 메모와 파일 탐색기, 계산기 등을 함께 열어 두고 창
   바깥(https) 그림은 GitHub처럼 그 주소에서 바로 받습니다. 스크립트·인라인 스타일·틀(iframe)은 어디서도 실행하지 않습니다.
 - **자동 저장**: 메모는 Relay DB에 저장됩니다. 서버 연결이 끊긴 동안의 변경은 브라우저에 보관했다가 다시 연결되면 전송합니다.
 - **별도 창으로 열기**: 메모 창 오른쪽 위의 **새 창으로 열기**를 누르거나 Dock의 메모 아이콘을 우클릭해 **새 창으로 열기**를 고르면 메모만 담은 별도 창이 열려 다른 모니터로 옮길 수 있습니다. Windows 앱에서는 작업 표시줄에 Relay와 따로 메모 아이콘과 「메모」로 보입니다. 보던 메모가 그대로 열리고 Relay 안의 메모 창은 닫힙니다. 별도 창과 Relay 화면은 같은 메모를 저장하자마자 서로 맞추며, 테마·글자 크기·바탕화면도 따라갑니다. 다시 누르면 떠 있는 창을 앞으로 가져오고, 창을 닫으면 그 자리와 크기를 기억해 다음에 같은 곳에 엽니다. 브라우저가 팝업을 막으면 주소창의 팝업 차단 표시에서 허용하세요.
-- **지식 그래프**: 메모 창 오른쪽 위의 **그래프 보기**를 누르면 내용 자리에 메모 사이의 관계가 그래프로 그려집니다. 메모·폴더·태그가 점이고(폴더는 둥근 네모, 태그는 마름모, 색은 최상위 폴더), 메모와 이어진 **작업 세션**(에이전트가 Relay에 남긴 기록)은 육각형 점으로 함께 놓입니다. 선은 여섯 가지입니다.
+- **지식 그래프**: 메모 창 오른쪽 위의 **그래프 보기**를 누르면 내용 자리에 메모 사이의 관계가 그래프로 그려집니다. 메모·폴더·태그가 점이고(폴더는 둥근 네모, 태그는 마름모, 색은 최상위 폴더), 메모와 이어진 **작업 세션**(에이전트가 Relay에 남긴 기록)은 육각형 점으로 함께 놓입니다. 선은 일곱 가지입니다.
 
   | 선 | 생기는 때 |
   | --- | --- |
   | 링크(화살표) | 본문에 `[[다른 메모 제목]]`(`[[제목\|보일 이름]]`, `[[제목#절]]`도 됨)이나 메모·폴더 ID를 적음 |
   | 언급 | 다른 메모의 제목이 본문에 그대로 나옴(링크로 걸지 않아도) |
   | 태그(점선) | 본문에 `#태그`를 씀. 같은 태그를 쓴 메모가 그 태그 점에 모임 |
+  | 뜻이 가까움(쇄선) | 낱말이 달라도 같은 이야기를 함. 임베딩으로 재며 [의미 색인](#낱말이-달라도-뜻으로-찾기)이 있을 때만 생김. 메모마다 넷까지 |
   | 비슷한 내용(파선) | 드문 낱말을 여럿 함께 씀. 메모마다 가장 가까운 셋까지 |
   | 폴더 | 메모·폴더와 그것을 담은 폴더 |
   | 이어받음(긴 파선) | `relay continue`로 이어받은 작업 세션과 그 앞 세션 |
@@ -205,7 +206,7 @@ Dock에서 메모와 파일 탐색기, 계산기 등을 함께 열어 두고 창
 
   | 도구 | 하는 일 |
   | --- | --- |
-  | **발견** (`I`) | 그래프를 읽어 낸 것을 보입니다. **제안 연결**(제목이 본문에 나오는데 링크가 아닌 쌍, 드문 낱말을 함께 쓰는 쌍, 같은 점에 함께 이어진 쌍)은 「잇기」 한 번으로 앞 메모 본문 끝에 `- [[제목]]` 한 줄을 적습니다. **주제 사이의 틈**은 내용은 가까운데 선이 없는 주제 쌍과 「다리 놓기」, **중심 메모**는 선이 모이는 메모(PageRank), **다리 메모**는 서로 다른 주제를 잇는 메모(매개 중심성)입니다. 맨 위의 **그래프 상태**는 직접 링크로 이어진 메모의 비율·가장 큰 덩어리·주제 나뉨(모듈성)·이웃 수를 고리로 보이고 먼저 손볼 곳을 알립니다. 줄에 마우스를 올리면 그래프에서 그 점들만 밝아집니다 |
+  | **발견** (`I`) | 그래프를 읽어 낸 것을 보입니다. **제안 연결**(제목이 본문에 나오는데 링크가 아닌 쌍, 드문 낱말을 함께 쓰는 쌍, 같은 점에 함께 이어진 쌍, 뜻이 가까운 쌍과 그 근거가 된 절)은 「잇기」 한 번으로 앞 메모 본문 끝에 `- [[제목]]` 한 줄을 적습니다. 뜻이 가깝다는 제안이 맞지 않으면 「관련 없음」으로 물리며, 물린 쌍은 다시 제안하지 않습니다. 패널의 **의미 색인** 줄은 색인이 어디까지 됐는지와 색인 워커가 켜져 있는지를 알립니다. **주제 사이의 틈**은 내용은 가까운데 선이 없는 주제 쌍과 「다리 놓기」, **중심 메모**는 선이 모이는 메모(PageRank), **다리 메모**는 서로 다른 주제를 잇는 메모(매개 중심성)입니다. 맨 위의 **그래프 상태**는 직접 링크로 이어진 메모의 비율·가장 큰 덩어리·주제 나뉨(모듈성)·이웃 수를 고리로 보이고 먼저 손볼 곳을 알립니다. 줄에 마우스를 올리면 그래프에서 그 점들만 밝아집니다 |
   | **에이전트 맥락** (`C`) | 하려는 일을 낱말로 적거나 점을 중심에 더하면, 그래프를 따라 관련 메모와 작업 세션을 골라 AI 에이전트에 건넬 묶음을 미리 보입니다. 씨앗에서 이웃으로 빛이 번져 가고, 관련이 큰 점일수록 밝게 빛납니다. **참조 줄 복사**는 Agent 대화창에 붙여 넣을 한 줄(`Relay 그래프 맥락을 참조해 주세요. …`)을, **명령**은 같은 묶음을 내는 `relay graph context …`를, **내용**은 묶음 전체(Markdown)를 복사합니다. **허브 메모로 저장**은 고른 메모와 세션으로 가는 링크를 이유와 함께 모은 메모(`맥락: …`)를 만들어, 다음부터 그 메모 하나를 중심으로 주면 같은 묶음이 따라오게 합니다 |
   | **경로** (`P`) | 두 점을 고르면 어떤 메모를 거쳐 이어지는지 가장 가까운 길이 한 구간씩 그어지고, 그 위로 빛이 달립니다 |
   | **시간 흐름 재생** (`R`) | 만든 순서대로 점이 하나씩 다시 나타나 메모가 쌓여 온 과정을 보입니다 |
@@ -230,17 +231,19 @@ relay memo --list                      # 폴더 트리와 메모 ID (본문 없�
 relay memo --list --folder <폴더 ID>    # 그 폴더 아래만
 relay memo --find <메모 ID>             # 제목·위치·수정 시각과 Markdown 본문
 relay memo --find <폴더 ID>             # 폴더 목록과 그 아래 모든 메모의 본문
-relay memo --search "배포 일정"          # 폴더 이름·제목·본문 검색(낱말이 모두 든 항목과 맞은 줄)
+relay memo --search "배포 일정"          # 낱말과 뜻으로 찾아 관련 있는 순서대로, 맞은 절과 함께
+relay memo --search "배포 일정" --mode exact   # 띄어 쓴 낱말이 글자 그대로 모두 든 메모·폴더
 ```
 
 - ID는 앞 6자 이상만 줘도 겹치지 않으면 찾습니다. 순서는 메모 앱 트리와 같습니다.
+- `--search`는 낱말이 모두 들어 있지 않아도 관련 있는 메모를 찾고, 의미 색인이 있으면 낱말이 달라도 찾습니다. `--mode keyword|semantic|exact`, `--type design,decision`, `--status adopted`, `--project <이름>`, `--history`, `--limit <수>`로 좁히거나 넓힙니다. 자세한 것은 [낱말이 달라도 뜻으로 찾기](#낱말이-달라도-뜻으로-찾기)에 있습니다.
 - `--json`이면 `item`이 메모 API와 같은 모양이라 고쳐서 그대로 다시 보낼 수 있습니다. 한글은 `\uXXXX`로 적혀 Windows PowerShell 5.1에서 읽어도 깨지지 않습니다. `api`는 쓰기에 쓸 이 PC의 Relay 웹 서버 주소입니다.
 - 쓰기·고치기는 `POST /api/v1/notes`에 `{"upserts": [항목], "deletes": [ID]}`를 `Content-Type: application/json`, `Origin: http://127.0.0.1:<포트>` 헤더와 함께 보냅니다. 열어 둔 메모 앱은 3초 안팎으로 바뀐 내용을 그립니다.
 - 원격 모드로 설정한 PC에서는 원격 서버의 메모를 읽고, 쓰기도 이 PC의 Relay 웹 서버를 거쳐 원격 서버에 저장됩니다.
 
 #### 그래프에서 맥락 고르기
 
-`relay graph`는 메모 그래프에서 **지금 하는 일에 관련 있는 것만** 골라 Agent의 작업 맥락으로 건넵니다. 메모 앱의 그래프와 같은 계산을 쓰고 LLM이나 임베딩을 부르지 않아, 같은 질의는 늘 같은 결과를 냅니다. 방법은 [skills/relay-graph](skills/relay-graph/SKILL.md) 스킬에 있으며, 그래프의 「에이전트 맥락」에서 복사한 한 줄을 붙여 넣으면 Agent가 스스로 스킬을 따릅니다.
+`relay graph`는 메모 그래프에서 **지금 하는 일에 관련 있는 것만** 골라 Agent의 작업 맥락으로 건넵니다. 메모 앱의 그래프와 같은 계산을 씁니다. 의미 색인이 있으면 질의를 낱말과 뜻으로 함께 찾아 씨앗을 고르고, 없으면 낱말로만 찾습니다(`--lexical`을 붙여도 같습니다). 방법은 [skills/relay-graph](skills/relay-graph/SKILL.md) 스킬에 있으며, 그래프의 「에이전트 맥락」에서 복사한 한 줄을 붙여 넣으면 Agent가 스스로 스킬을 따릅니다.
 
 ```powershell
 relay graph context "서버 배포 순서"            # 질의에 맞는 메모와 그래프로 이어진 메모·작업 세션 묶음
@@ -250,7 +253,7 @@ relay graph context --project --brief           # 지금 작업 폴더에서 돈
 relay graph map                                 # 상태 지표·주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결
 relay graph neighbors <ID> --depth 2            # 어떤 점에 이어진 점들
 relay graph path <ID> <ID>                      # 두 점이 어떤 메모를 거쳐 이어지는지
-relay graph suggest                             # 이으면 좋을 메모 쌍과 이유
+relay graph suggest                             # 이으면 좋을 메모 쌍과 이유 (--semantic: 뜻이 가까워서 나온 것만)
 relay graph link <from 메모> <to> --why "이유"  # from 본문 끝에 링크 한 줄을 적음
 relay graph export --format graphml             # Gephi용 GraphML (json·mermaid도 됨)
 ```
@@ -259,10 +262,10 @@ relay graph export --format graphml             # Gephi용 GraphML (json·mermai
 
 | 단계 | 방법 |
 | --- | --- |
-| 씨앗 | 질의를 BM25로 찾습니다(제목·폴더 경로·태그를 본문보다 무겁게 색인). `--from`으로 준 점은 그대로 씨앗입니다 |
-| 퍼뜨리기 | 씨앗에서 Personalized PageRank를 돌립니다(되돌아올 확률 0.5). 선의 세기는 링크 > 언급·이어받음 > 비슷함·태그 > 폴더 순입니다 |
+| 씨앗 | 질의를 BM25로 찾습니다(제목·폴더 경로·태그를 본문보다 무겁게 색인). 의미 색인이 있으면 서버의 검색(낱말 + 의미)이 찾은 메모가 씨앗이 되어, 낱말이 달라도 뜻이 가까운 메모에서 시작합니다. `--from`으로 준 점은 그대로 씨앗입니다 |
+| 퍼뜨리기 | 씨앗에서 Personalized PageRank를 돌립니다(되돌아올 확률 0.5). 선의 세기는 링크 > 언급·이어받음 > 뜻이 가까움 > 비슷함·태그 > 폴더 순입니다 |
 | 고르기 | 점수가 낮으면 한도가 남아도 싣지 않고, 서로 겹치는 메모는 뒤로 밉니다(MMR) |
-| 담기 | 핵심 메모는 본문을(길면 첫 문단과 질의 낱말이 든 문단만), 주변 메모는 제목과 한 줄을, 그리고 실은 글 사이의 관계·이어진 작업 세션·주제 지도를 토큰 한도 안에 담습니다. 관련이 큰 것이 맨 앞, 더 읽는 법이 맨 뒤입니다 |
+| 담기 | 핵심 메모는 본문을(길면 첫 문단과 질의 낱말이 든 문단, 의미 검색이 짚은 절만), 주변 메모는 제목과 한 줄을, 그리고 실은 글 사이의 관계·이어진 작업 세션·주제 지도를 토큰 한도 안에 담습니다. 관련이 큰 것이 맨 앞, 더 읽는 법이 맨 뒤입니다 |
 | 지키기 | 메모 본문은 `<memo>` 안에 넣어 지시가 아닌 자료임을 가르고, 비밀번호·토큰처럼 보이는 값은 `[가림]`으로 바꿉니다(`--raw`로 원문). 보이는 것만 가리므로 비밀을 메모에 둘 때는 조심합니다 |
 
 - 왜 따라왔는지가 메모마다 적힙니다(`질의와 맞음(낱말…)`, `‘출시 계획’ →링크`). ID는 겹치지 않는 앞 8자로 적어 토큰을 아낍니다.
@@ -276,6 +279,69 @@ relay graph export --format graphml             # Gephi용 GraphML (json·mermai
 - 그래프 검색: [GraphRAG](https://arxiv.org/abs/2404.16130)(지역 검색의 본문·주제 요약 배분, 주제 묶음), [HippoRAG](https://arxiv.org/abs/2405.14831)·[HippoRAG 2](https://arxiv.org/abs/2502.14802)(씨앗에서 퍼뜨리는 Personalized PageRank), [Zep/Graphiti](https://arxiv.org/abs/2501.13956)(낡은 사실을 지우지 않고 더 새로운 것을 표시), [A-MEM](https://arxiv.org/abs/2502.12110)(메모끼리 잇는 기억)
 - 맥락 설계: Anthropic의 [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)·[Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)·[Writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents), [Lost in the Middle](https://arxiv.org/abs/2307.03172), Chroma의 [Context Rot](https://www.trychroma.com/research/context-rot)
 - 그래프 읽기: [Louvain](https://arxiv.org/abs/0803.0476) 묶음 나누기와 모듈성, Brandes의 매개 중심성, Adamic–Adar 공통 이웃 점수([Liben-Nowell & Kleinberg](https://www.cs.cornell.edu/home/kleinber/link-pred.pdf)), [InfraNodus](https://infranodus.com/docs/structural-gaps)의 주제 사이의 틈, [Obsidian 그래프](https://obsidian.md/help/plugins/graph)의 시간 흐름 재생
+
+#### 낱말이 달라도 뜻으로 찾기
+
+「절전 복귀 후 메모 갱신이 늦다」로 찾으면 「증분 동기화 설계」의 「누락된 작업 재처리」 절이 나옵니다. 낱말은 하나도 겹치지 않아도 뜻이 가깝기 때문입니다. 이 **의미 검색**은 메모에서 만든 색인 두 겹을 씁니다. 색인은 메모에서 언제든 다시 만들 수 있는 파생 자료이고, 메모 원문은 건드리지 않습니다.
+
+| 겹 | 만드는 쪽 | 되는 일 | 임베딩 서버 |
+| --- | --- | --- | --- |
+| **의미 카드** | AI 에이전트(`/relay-embedding`) | 메모마다 한 줄 요약·같은 뜻의 다른 말(동의어·영문·줄임말)·그 메모가 답하는 질문을 적어 둡니다. 본문에 없는 말로도 찾힙니다 | 필요 없음. PC가 꺼져 있어도, 휴대폰에서도 듣습니다 |
+| **벡터 색인** | 임베딩 모델 | 메모를 절로 나눠 벡터로 바꿉니다. 뜻으로 찾기, 그래프의 「뜻이 가까움」 선과 연결 제안이 됩니다 | 필요함 |
+
+**쓰는 곳**
+
+- 메모 검색 창: 글자가 그대로 든 메모는 바로 뜨고, 입력이 멎으면 그 아래에 **뜻이 가까운 메모**가 맞은 절·발췌와 함께 뜹니다.
+- `relay memo --search`, `relay graph context`: 낱말 순위(BM25)와 의미 순위를 RRF로 합쳐 관련 있는 순서대로 냅니다. 경로(`/api/v1/notes`)·오류 코드(`PARENT_CONFLICT`)·파일 이름(`compose.yml`)처럼 글자 그대로를 찾는 질의는 낱말 순위를 더 무겁게 칩니다.
+- 그래프: 뜻이 가까운 메모가 선으로 이어지고, 「발견」이 근거 절과 함께 연결을 제안합니다.
+
+**임베딩 서버 잇기** — 임베딩은 이 PC에서 합니다. 권장 구성은 llama.cpp의 `llama-server`와 한국어 모델 [KURE-v3](https://huggingface.co/nlpai-lab/KURE-v3)(GGUF `Q8_0` 1.2GB, VRAM 약 2.5GB)입니다.
+
+```powershell
+relay embed setup --url http://127.0.0.1:18434 --model kure-v3 --dimensions 1024 --prompt e5 -- `
+  "C:\path\llama-server.exe" -m "C:\path\KURE-v3.Q8_0.gguf" --embeddings --pooling mean -c 8192 -b 8192 -ub 8192 -ngl 99 --host 127.0.0.1 --port 18434
+relay web --reload      # 로컬 서버가 색인 워커를 돌립니다
+relay embed status      # 준비·대기·실패한 메모 수, 쓰는 모델, 의미 카드
+```
+
+- `--` 뒤는 서버를 띄우는 명령입니다. Relay가 필요할 때 띄우고 10분(`--idle`) 쉬면 꺼서 VRAM을 비웁니다. 이미 떠 있는 서버를 쓰려면 `--` 뒤를 생략합니다.
+- `setup`은 **자가 진단**을 거쳐 저장합니다: 같은 뜻의 질의와 글(한국어끼리, 영어 질의와 한국어 글) 10쌍이 다른 주제의 글보다 가깝게 나오는지 잽니다. 모델과 실행 프로그램의 짝이 맞지 않으면 벡터는 나오지만 뜻을 담지 못하는데(오류가 나지 않습니다), 그런 설정은 저장하지 않습니다. `relay embed doctor`로 언제든 다시 잽니다.
+- KURE-v3는 Ollama가 아니라 `llama-server`로 띄웁니다. 같은 모델을 Ollama 0.24로 띄우면 맞는 글과 틀린 글의 유사도 차이가 +0.03(llama-server는 +0.18)에 그쳤습니다. 머리말은 `--prompt e5`(`query: `/`passage: `)이고, `-c 8192`를 주지 않으면 모델 기본 컨텍스트(26만)로 뜨려다 VRAM이 모자랍니다.
+- 다른 선택: Ollama의 EmbeddingGemma(`--style ollama --url http://127.0.0.1:11434 --model embeddinggemma --dimensions 768 --prompt gemma`), OpenAI 호환 호스팅 서비스(`--url https://api.openai.com --model text-embedding-3-large --dimensions 1024 --prompt plain --api-key-env OPENAI_API_KEY`). 호스팅 서비스를 쓰면 메모 내용(비밀로 보이는 값은 가린 뒤)이 그 서비스로 나갑니다.
+- 설정은 저장소 폴더의 `embedding.json`에 둡니다(`relay embed setup --remove`로 지움).
+
+**색인이 도는 방식**
+
+- `relay web`이 떠 있는 동안 색인 워커가 함께 돕니다. 메모를 고치면 몇 초 안에 그 메모를 다시 색인하고, PC가 꺼져 있던 동안 바뀐 메모는 다시 켜지면 따라잡습니다. 지금 돌리려면 `relay embed run`.
+- 메모는 소제목 계층을 따라 절로 나눕니다(코드 울타리 안의 `#`은 소제목이 아닙니다). 긴 절은 문단·줄·문장 순으로 더 나누고 조금 겹치며, 짧은 절은 다음 절과 묶습니다. 절마다 앞에 문서 유형·프로젝트·폴더·제목·소제목 경로(와 의미 카드의 요약)를 붙여 임베딩합니다.
+- 고친 절만 다시 임베딩합니다. 순서를 끌어 바꾸거나 폴더를 옮긴 것만으로는 다시 하지 않습니다. 메모를 지우면 그 메모의 조각·벡터·의미 연결·카드가 함께 지워집니다.
+- 비밀번호·토큰처럼 보이는 값은 `[가림]`으로 바꾼 뒤에 임베딩 서버로 보냅니다. 조각 나누기와 가리기는 서버가 하고 워커는 받은 글을 벡터로 바꿀 뿐이라, 가리지 않은 본문은 임베딩 서버로 가지 않습니다. 검색 결과의 발췌도 가립니다.
+- 원격 저장을 쓰면 색인은 원격 서버에 있고, 임베딩은 임베딩 서버가 있는 PC가 맡습니다: 워커가 서버에서 일을 받아 가 벡터를 올리고, 검색할 때는 그 PC의 Relay가 질의 벡터를 계산해 실어 보냅니다. 그 PC가 꺼져 있거나 다른 기기(휴대폰의 브라우저)에서 찾으면 서버가 곧바로 낱말 검색(의미 카드 포함)으로 답하고, 미리 계산해 둔 의미 연결은 그대로 보입니다.
+
+**의미 카드 쓰기** — Claude Code·Codex·Antigravity 같은 Agent에서 `/relay-embedding`(Codex는 `$relay-embedding`)을 부르면, Agent가 `relay embed cards`로 카드가 없는 메모를 받아 읽고 카드를 써서 `relay embed cards --save`로 저장합니다. 본문에 없는 말을 떠올리는 일이라 성능 좋은 모델일수록 잘합니다. 카드에는 메모에 없는 사실을 적지 않고, 비밀로 보이는 값은 저장할 때 한 번 더 가립니다.
+
+**Git 설계서와 결정 기록** — Markdown 파일을 메모로 등록해 함께 찾습니다.
+
+```powershell
+relay memo register docs\adr\007-sync.md --type decision --status adopted --project relay --supersedes <옛 결정의 메모 ID>
+relay memo --search "동기화 방식" --type decision      # 채택한 결정이 앞에, 대체된 결정은 새 결정을 알림
+relay memo meta <메모 ID> --type knowledge --project relay
+```
+
+- 같은 저장소의 같은 경로를 다시 올리면 같은 메모를 고칩니다(그 메모를 가리키던 링크와 그래프 연결이 끊기지 않습니다). 본문은 파일 그대로 두고, 문서 유형(`memo`·`knowledge`·`design`·`decision`)·상태(`draft`·`adopted`·`superseded`)·프로젝트·출처(저장소 이름·경로·커밋)는 메모 옆에 따로 둡니다. 파일 머리의 YAML 머리말(`type`·`status`·`project`·`title`)이 있으면 기본값으로 읽습니다.
+- 검색은 채택한 문서를 앞에 두고 대체된 문서는 뒤로 미루며 새 문서를 함께 알립니다. `--history`를 붙이면 감점 없이 봅니다.
+
+**찾는 방법과 참고한 것**
+
+| 단계 | 방법 |
+| --- | --- |
+| 낱말 순위 | BM25(k1 1.2, b 0.75). 제목 ×3, 폴더 경로·프로젝트 ×1.5, 태그·의미 카드 ×2. 질의 낱말이 제목·본문에 글자 그대로 나오면 점수를 보탭니다 |
+| 의미 순위 | 질의 벡터와 절 벡터의 코사인 유사도. 같은 메모의 절이 여럿 맞아도 가장 가까운 절이 점수를 정하고 나머지는 조금만 보탭니다(1 + 0.15 + 0.05) |
+| 버리기 | 모델마다 잰 바닥값(자가 진단의 「다른 주제」 평균 + 표준편차)과, 그 질의의 배경 유사도(아래쪽 80%의 평균 + 3σ)보다 뚜렷이 높은 절만 남깁니다. 관련 없는 질의에는 아무것도 내지 않습니다 |
+| 합치기 | 두 순위를 RRF(k 60)로 합칩니다. 글자 그대로를 찾는 질의는 낱말 순위를 1.4배로 칩니다. 채택한 문서 ×1.15, 대체된 문서 ×0.6 |
+| 의미 연결 | 메모의 제목·요약·첫머리를 질의로 임베딩해 다른 메모의 절과 견줍니다(두 방향 가운데 큰 값). 조각끼리 견주면 길이와 말투가 닮은 메모가 붙기 때문입니다. 근거가 된 두 절을 함께 남깁니다 |
+
+벡터는 Relay DB의 표에 float32 바이트로 두고, 검색할 때 메모리에서 전부 견줍니다. 개인 메모 규모(조각 수만 개까지)에서는 이쪽이 벡터 확장을 두는 것보다 단순하고 정확합니다(재현율 100%). 참고한 자료: [Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)(조각 앞에 문맥 붙이기), [RRF](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf), [doc2query](https://arxiv.org/abs/1904.08375)(문서에 예상 질의를 덧붙이는 색인: 의미 카드), [Matryoshka 표현 학습](https://arxiv.org/abs/2205.13147)(앞쪽 차원만 쓰기), [KURE-v3](https://huggingface.co/nlpai-lab/KURE-v3), [llama.cpp 서버의 임베딩](https://github.com/ggml-org/llama.cpp/tree/master/tools/server).
 
 ### 파일을 찾고 내용 확인하기
 
@@ -439,7 +505,7 @@ CLI 설치 또는 `relay install-hooks`로 스킬·세션 훅·시작 안내를 
 
 ### 스킬 설치
 
-[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를, [skills/relay-memo](skills/relay-memo/SKILL.md)는 메모 앱에서 복사한 ID로 메모를 읽고 메모 API로 쓰는 방법을, [skills/relay-graph](skills/relay-graph/SKILL.md)는 메모 지식 그래프에서 하려는 일에 맞는 맥락을 골라 읽는 방법을 담은 스킬입니다. `relay install-skills`가 세 스킬을 네 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
+[skills/relay-session](skills/relay-session/SKILL.md)은 Agent가 Relay를 기록·조회·이어받는 절차를, [skills/relay-memo](skills/relay-memo/SKILL.md)는 메모 앱에서 복사한 ID로 메모를 읽고 메모 API로 쓰는 방법을, [skills/relay-graph](skills/relay-graph/SKILL.md)는 메모 지식 그래프에서 하려는 일에 맞는 맥락을 골라 읽는 방법을, [skills/relay-embedding](skills/relay-embedding/SKILL.md)은 메모의 의미 검색 색인을 만들고 돌보는 방법(의미 카드 쓰기, 임베딩 서버 잇기)을 담은 스킬입니다. `relay install-skills`가 네 스킬을 네 도구의 사용자 스킬 폴더에 실제 사본으로 설치하므로 모든 프로젝트에서 바로 쓸 수 있습니다. `install-cli.ps1`이 설치 끝에 한 번 실행하며, 스킬이 바뀐 뒤에는 직접 실행합니다.
 
 ```powershell
 relay install-skills
@@ -448,10 +514,10 @@ relay install-skills --force
 
 | 도구 | 설치 위치 | 비고 |
 | --- | --- | --- |
-| Claude Code | `~/.claude/skills/relay-session`, `~/.claude/skills/relay-memo`, `~/.claude/skills/relay-graph` | `argument-hint` 포함 |
+| Claude Code | `~/.claude/skills/relay-session`, `~/.claude/skills/relay-memo`, `~/.claude/skills/relay-graph`, `~/.claude/skills/relay-embedding` | `argument-hint` 포함 |
 | Grok | `$GROK_HOME/skills/<스킬>` (기본 `~/.grok/skills/<스킬>`) | `argument-hint` 포함 |
-| Codex | `~/.codex/skills/<스킬>` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `agents/openai.yaml` 포함. `relay-memo`·`relay-graph`는 Codex가 스스로 불러 쓸 수 있음 |
-| Antigravity (Gemini) | `~/.gemini/skills/relay-session`, `~/.gemini/skills/relay-memo`, `~/.gemini/skills/relay-graph` | `argument-hint` 포함 |
+| Codex | `~/.codex/skills/<스킬>` (`CODEX_HOME`이 설정돼 있으면 그 폴더에도) | `agents/openai.yaml` 포함. `relay-memo`·`relay-graph`·`relay-embedding`은 Codex가 스스로 불러 쓸 수 있음 |
+| Antigravity (Gemini) | `~/.gemini/skills/relay-session`, `~/.gemini/skills/relay-memo`, `~/.gemini/skills/relay-graph`, `~/.gemini/skills/relay-embedding` | `argument-hint` 포함 |
 | Cursor | 별도 사본 없음 | Cursor가 `~/.claude/skills`와 `~/.codex/skills`를 함께 읽으므로 위 사본을 그대로 씁니다 |
 
 스킬 폴더는 심볼릭 링크나 정션으로 연결하지 않습니다. 링크는 가리키던 폴더가 옮겨지거나 지워지면 끊어지고, 그러면 Agent가 "심볼릭 링크 문제로 스킬을 못 쓴다"고 보고합니다. `install-skills`는 설치 위치에 링크가 있으면 링크 항목만 지우고 실제 사본으로 바꾸며, 링크가 가리키던 폴더는 건드리지 않습니다. 기존 사본의 내용이 다르면 덮어쓰지 않고 `건너뜀`으로 알리므로 확인한 뒤 `--force`로 교체합니다. Claude Code는 `~/.agents/skills`를 읽지 않으므로 그 폴더에 복사하거나 연결하는 방식은 쓰지 않습니다.
@@ -465,7 +531,7 @@ relay install-skills --force
 .\scripts\install-skill.ps1 -Agent gemini -ProjectDirectory "C:\workspace\my-project"
 ```
 
-각각 `.agents/skills/`, `.claude/skills/`, `.grok/skills/`, `.gemini/skills/` 아래 `relay-session`·`relay-memo`·`relay-graph`로 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code·Grok·Antigravity에서는 `/relay-session grok`으로 Grok 기록을 조회하고, `$relay-memo <메모 ID>`·`/relay-memo <메모 ID>`로 메모를 읽힐 수 있습니다.
+각각 `.agents/skills/`, `.claude/skills/`, `.grok/skills/`, `.gemini/skills/` 아래 `relay-session`·`relay-memo`·`relay-graph`·`relay-embedding`으로 배치됩니다. 프로젝트 사본은 사용자 스킬보다 우선하므로 스킬을 갱신하면 프로젝트 사본도 다시 설치합니다. 스킬을 인식한 Codex에서는 `$relay-session grok`, Claude Code·Grok·Antigravity에서는 `/relay-session grok`으로 Grok 기록을 조회하고, `$relay-memo <메모 ID>`·`/relay-memo <메모 ID>`로 메모를 읽힐 수 있습니다.
 
 ### 프로젝트 지침
 
@@ -550,16 +616,22 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay delete <ID> [--provider] [--force]` | 기록과 이력 삭제. 이어받은 세션이 있으면 `--force`로 연결을 끊고 삭제 |
 | `relay memo --list [--folder <폴더 ID>]` | 메모 폴더 트리와 메모·폴더 ID(본문 없음). AI 에이전트가 메모를 찾을 때 |
 | `relay memo --find <ID>` | 메모의 제목·위치·본문, 폴더면 그 아래 모든 메모. ID 앞 6자 이상도 받음 |
-| `relay memo --search <낱말>` | 폴더 이름·메모 제목·본문 검색(띄어 쓴 낱말이 모두 든 항목과 맞은 줄) |
-| `relay graph context [질의] [--from <ID>]… [--project [경로]] [--budget <토큰>] [--brief] [--raw]` | 질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음(핵심 메모 본문·주변 메모·관계·이어진 작업 세션) |
+| `relay memo --search <찾는 말> [--mode hybrid\|keyword\|semantic\|exact] [--type <유형,…>] [--status <상태,…>] [--project <이름>] [--history] [--limit <수>]` | 메모 검색. 낱말과 뜻으로 찾아 관련 있는 순서대로 맞은 절과 함께(의미 색인이 없으면 낱말로만). `exact`는 띄어 쓴 낱말이 글자 그대로 모두 든 메모·폴더 |
+| `relay memo register <파일> [--type] [--status] [--project] [--title] [--supersedes <ID>] [--folder <ID>] [--note <ID>]` | Git 설계서·결정 기록(Markdown)을 메모로 등록·갱신. 같은 저장소·경로는 같은 메모를 고침 |
+| `relay memo meta [<ID>] [--type] [--status] [--project] [--superseded-by <ID\|none>]` | 메모의 문서 유형·상태·프로젝트·대체 관계 보기·고치기 |
+| `relay embed status [--note <ID>]` | 의미 색인 상태: 준비·대기·실패한 메모 수, 쓰는 모델, 색인 워커, 의미 카드 |
+| `relay embed setup --url <주소> --model <이름> --dimensions <수> [--prompt e5\|gemma\|plain] [--style openai\|ollama] [--api-key-env <변수>] [--idle <분>] [--no-auto] [-- <서버를 띄우는 명령>]` / `relay embed doctor` | 임베딩 서버를 잇고 자가 진단을 거쳐 저장(`--remove`로 지움) / 자가 진단만 |
+| `relay embed run [--limit <수>] [--note <ID>] [--watch]` / `relay embed reindex --failed\|--note <ID>\|--all` / `relay embed activate <모델 키>` | 대기 중인 메모를 지금 색인 / 다시 색인하게 함 / 검색에 쓸 모델 바꾸기 |
+| `relay embed cards [--limit <수>]` / `relay embed cards --save <파일>` | 의미 카드가 필요한 메모 보기 / Agent가 쓴 카드 저장 |
+| `relay graph context [질의] [--from <ID>]… [--project [경로]] [--budget <토큰>] [--brief] [--raw] [--lexical]` | 질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음(핵심 메모 본문·주변 메모·관계·이어진 작업 세션) |
 | `relay graph map [--limit <수>]` | 그래프 지도: 주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결·연결 없는 메모 |
 | `relay graph neighbors <ID> [--depth <1~3>]` / `relay graph path <ID> <ID>` | 어떤 점의 이웃, 두 점을 잇는 가장 가까운 길 |
-| `relay graph suggest [--for <ID>] [--limit <수>]` / `relay graph link <from> <to> [--why <글>]` | 이으면 좋을 메모 쌍, 메모 본문 끝에 링크 한 줄 적기 |
+| `relay graph suggest [--for <ID>] [--limit <수>] [--semantic]` / `relay graph link <from> <to> [--why <글>]` | 이으면 좋을 메모 쌍, 메모 본문 끝에 링크 한 줄 적기 |
 | `relay graph export [--format json\|graphml\|mermaid]` | 점마다 주제·연결 수·중요도·매개 중심성을 붙여 내보내기 |
 | `relay notes export <파일>` / `relay notes import <파일>` | 모든 메모·폴더를 JSON 파일로 내보내기, 내보낸 파일을 합치기(없는 항목은 넣고 같은 항목은 더 최근 쪽을 남김, 지우지 않음). 다른 PC·저장소로 메모를 옮길 때 |
 | `relay version` | 실행 파일의 버전·커밋·빌드 시각. `--json`이면 `{ version, revision, builtAt }`(소스 실행은 `null`) |
 | `relay install-hooks [--bin-dir <경로>]` | SessionStart·SessionEnd 훅·시작 안내 등록 및 스킬 설치 |
-| `relay install-skills [--force]` | `relay-session`·`relay-memo`·`relay-graph` 스킬을 네 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
+| `relay install-skills [--force]` | `relay-session`·`relay-memo`·`relay-graph`·`relay-embedding` 스킬을 네 도구의 사용자 스킬 폴더에 실제 사본으로 설치. 링크는 사본으로 교체 |
 | `relay web [--open] [--port <번호>] [--headless] [--close] [--reload] [--free-port]` | 업무 화면의 로컬 서버 실행, 백그라운드 실행, 종료, 다시 시작, 예약된 포트 풀기 |
 | `relay open-url <relay://web?port=번호>` | 브라우저가 연 `relay://` 링크 처리(설치 스크립트가 Windows에 등록). 그 포트에 백그라운드 서버를 켬 |
 
@@ -603,6 +675,8 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | --- | --- |
 | 세션·요약 이력·연결 관계 | Relay DB. 세션 기록에는 기본 30일 보관 정책 적용 |
 | 메모·폴더·메모 그림·계산 이력 | Relay DB. 세션 보관 기간과 별개로 유지되며 계산 이력은 최근 500개, 어느 메모도 쓰지 않는 그림은 30일 보관 |
+| 의미 색인(조각·벡터·의미 연결)·의미 카드·문서 유형과 상태·물린 제안 | Relay DB. 메모를 지우면 그 메모의 것이 함께 지워짐. 색인은 메모에서 다시 만들 수 있음(`relay embed reindex --all`) |
+| 임베딩 서버 설정 | 저장소 폴더의 `embedding.json`(이 PC만의 설정. 호스팅 서비스의 API 키가 들어갈 수 있어 본인만 읽게 둠) |
 | 공휴일(공공 API로 받은 것) | 로컬 모드는 저장소 폴더의 `holidays.json`, 원격 모드는 원격 서버. 매일 서울 00:00에 올해·내년을 다시 받음 |
 | 실제 파일 | PC의 원래 경로. 파일 탐색기와 뷰어가 그 경로에 접근 |
 | 테마·창 배치·글자 크기·바탕화면·내 사진·탐색기 보기 설정 | 브라우저의 localStorage·IndexedDB. 브라우저 사이트 데이터를 지우면 초기화 |
@@ -661,7 +735,7 @@ relay web --reload
 
 설치 위치는 `-InstallDirectory <절대경로>`, PATH 등록 생략은 `-NoPath`로 지정합니다. `-Force`는 바뀐 스킬 사본도 교체합니다.
 
-제거하려면 서버를 종료하고 설치된 `relay.exe`·`relay-hook-*.cmd`, 각 도구 설정의 Relay 훅, 사용자 스킬 폴더의 `relay-session`·`relay-memo`·`relay-graph`를 삭제합니다. 설치 스크립트가 등록한 사용자 프로토콜 키 `HKCU\Software\Classes\relay`와 사용자 PATH의 설치 경로도 정리합니다. 설치형 앱은 앱 창이나 브라우저의 앱 관리 메뉴에서 제거합니다. 저장 데이터까지 지우려면 별도로 Relay 저장소 폴더와 브라우저 사이트 데이터를 삭제합니다.
+제거하려면 서버를 종료하고 설치된 `relay.exe`·`relay-hook-*.cmd`, 각 도구 설정의 Relay 훅, 사용자 스킬 폴더의 `relay-session`·`relay-memo`·`relay-graph`·`relay-embedding`를 삭제합니다. 설치 스크립트가 등록한 사용자 프로토콜 키 `HKCU\Software\Classes\relay`와 사용자 PATH의 설치 경로도 정리합니다. 설치형 앱은 앱 창이나 브라우저의 앱 관리 메뉴에서 제거합니다. 저장 데이터까지 지우려면 별도로 Relay 저장소 폴더와 브라우저 사이트 데이터를 삭제합니다.
 
 ## 문제 해결
 
@@ -677,6 +751,9 @@ relay web --reload
 | 세션이 사라짐 | 훅 자동 기록만 남은 세션의 종료 정리 또는 30일 보관 정책 확인. 오래 남길 세션은 `pin` |
 | `relay-session` 스킬이 없거나 링크 오류 | `relay install-skills`로 실제 사본 설치. 프로젝트 사본은 `scripts/install-skill.ps1` 사용 |
 | Agent가 그래프 맥락 줄을 못 읽음 | `relay graph context "<낱말>"`이 되는지 확인하고, `relay-graph` 스킬이 없으면 `relay install-skills`. 맞는 메모가 없다고 나오면 낱말을 줄이거나 `relay graph map`으로 주제를 먼저 확인 |
+| 검색에 `낱말(…) 검색`이라고 나오거나 뜻으로 찾지 못함 | `relay embed status`로 모델·준비된 메모 수 확인. 임베딩 설정이 없으면 `relay embed setup`, 임베딩 서버가 꺼져 있으면 `relay embed doctor`. 설정을 바꾼 뒤에는 `relay web --reload`. 그동안에도 낱말 검색과 의미 카드는 듣습니다 |
+| 의미 색인의 `대기`가 줄지 않음 | 임베딩 서버가 있는 PC에서 `relay web`이 떠 있는지 확인하고 `relay embed run`으로 직접 돌려 오류를 봅니다. `실패`는 `relay embed reindex --failed` |
+| 자가 진단 실패 | 머리말(`--prompt`)이 모델과 맞는지, llama-server에 `--embeddings --pooling mean`을 줬는지 확인. KURE-v3는 Ollama로 띄우지 않습니다 |
 | Agent가 복사한 메모 ID를 못 읽음 | `relay memo --find <ID>`가 되는지 확인하고, `relay-memo` 스킬이 없으면 `relay install-skills`. 쓰기가 403이면 `Origin` 헤더가 서버 주소와 같은지 확인 |
 | Codex 훅이 실행되지 않음 | `/hooks`에서 시작·종료·압축 훅 신뢰. 별도 `CODEX_HOME`을 쓰면 그 환경에서 `relay install-hooks` 실행 |
 | Cursor 세션이 기록되지 않음 | `~/.cursor/hooks.json`의 Relay 항목 확인. 클라우드 Agent는 세션 훅을 실행하지 않음 |
@@ -687,7 +764,7 @@ relay web --reload
 
 ## 개발과 API
 
-저장소의 기본 검증은 타입 검사 → 단위 테스트 → 실행 파일 빌드 → Playwright 브라우저 테스트 순서입니다.
+저장소의 기본 검증은 타입 검사 → 단위 테스트 → 실행 파일 빌드 → Playwright 브라우저 테스트 순서입니다. 단위 테스트는 파일끼리 8개까지, 브라우저 테스트는 파일끼리 4개까지 함께 돕니다(테스트마다 저장소·포트·서버·클립보드가 따로입니다). 느린 PC에서 브라우저 테스트가 흔들리면 `RELAY_TEST_WORKERS=1`로 차례로 돌립니다. `npm run check`·`npm test`·`npm run test:web`은 `scripts/full-speed.ts`를 거쳐 돕니다. Windows 11은 사용자가 한동안 입력하지 않으면 창이 없는 프로세스를 효율 코어에만 올려, 자리를 비운 사이 돌린 검증이 코어 몇 개를 두고 줄을 서다 제한 시간에 걸립니다. 이 스크립트는 검증 명령 아래에 생기는 프로세스마다 그 전원 조절을 꺼서 모든 코어를 쓰게 합니다(시스템 설정은 바꾸지 않고, Windows가 아니면 명령만 돌립니다).
 
 ```powershell
 npm run check
@@ -707,6 +784,11 @@ npm run check
 | `GET /api/v1/notes` · `POST /api/v1/notes` | 메모 트리 조회·변경 묶음 저장(`{ "upserts": [항목], "deletes": [ID] }`). AI 에이전트의 쓰기·고치기도 이 API를 씁니다 |
 | `GET /api/v1/notes/export` · `POST /api/v1/notes/import` | 메모·폴더(쓰는 그림 포함) 내보내기·합치기 |
 | `POST /api/v1/notes/images` · `GET /api/v1/notes/images/:id` | 메모 그림 올리기(`{ "data": base64 }`, 장당 10MB)·보기. `id`는 내용의 sha256 |
+| `POST /api/v1/notes/search` | 메모 검색(`{ query, mode?, filters?: { project?, docType?, docStatus?, folderId?, includeHistory? }, limit?, queryVector?, modelKey? }`). 응답의 `searchMode`가 `lexical_fallback`이면 `fallbackReason`에 뜻으로 찾지 못한 까닭 |
+| `GET /api/v1/notes/index-status[?noteId=]` · `POST /api/v1/notes/reindex` | 의미 색인 상태(내용이 같으면 304) · 다시 색인(`{ scope: "failed"\|"note"\|"all", noteId? }`) |
+| `POST /api/v1/notes/index-jobs/lease` · `/commit` · `/fail` · `POST /api/v1/notes/index-models/activate` | 색인 워커: 일 받아 가기(임베딩할 글) → 벡터 올리기 / 실패 알리기 · 검색에 쓸 모델 바꾸기 |
+| `GET /api/v1/notes/semantic-links` · `GET /api/v1/notes/:id/suggestions` · `POST /api/v1/notes/:id/suggestions/:target/dismiss` | 그래프에 그릴 의미 연결 · 메모 하나의 연결 제안과 근거 절 · 제안 물리기 |
+| `GET /api/v1/notes/cards[?limit=]` · `POST /api/v1/notes/cards` · `GET`·`POST /api/v1/notes/meta` · `POST /api/v1/notes/register-doc` | 의미 카드가 필요한 메모·카드 저장 · 문서 유형과 상태 · Git 문서 등록 |
 | `GET /api/v1/calculator/history` · `POST /api/v1/calculator/history` | 계산 이력 조회·추가·삭제·전체 삭제 |
 | `GET /api/v1/tasks[?status=&provider=&project=&board=]` · `POST /api/v1/tasks` | Task 조회(`status`는 쉼표 목록, `provider=none`은 지정 안 함)·변경 묶음 저장(`{ "upserts": [Task], "deletes": [ID] }`). 고칠 때는 받은 항목 전체를 보냅니다 |
 | `GET /api/v1/board` · `POST /api/v1/board` | 업무 보드(칸 4개와 인벤토리)·보드 동작(`{"action":"place","id","status","index?"}` · `{"action":"remove","id"}` · `{"action":"clear-done"}`) |

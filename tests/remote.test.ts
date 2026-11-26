@@ -13,6 +13,7 @@ import { errorBody, RelayError } from "../src/errors";
 let f: ReturnType<typeof fixture>;
 let server: ReturnType<typeof Bun.serve>;
 let unavailable = false, reject = false, slow = false, clockSkew = 0;
+let searchApi = false;
 let received: { route: string; body: any; key: string | null }[];
 let responses: Map<string, unknown>;
 beforeEach(() => {
@@ -45,6 +46,12 @@ beforeEach(() => {
       else if (route === "/api/v1/notes" && request.method === "GET") result = { schemaVersion: 1, revision: 7, items: [
         { id: "remote-folder", kind: "folder", parentId: null, name: "원격 폴더", position: null, createdAt: 1, updatedAt: 1 },
         { id: "remote-note", kind: "note", parentId: "remote-folder", title: "원격 메모", body: "서버에 있는 본문", position: null, createdAt: 2, updatedAt: 3 }] };
+      else if (route === "/api/v1/notes/search") {
+        // 검색 API를 모르는 옛 서버는 404로 답한다.
+        if (!searchApi) throw new RelayError("NOT_FOUND", "요청한 경로가 없습니다.", 3, 404);
+        result = { schemaVersion: 1, query: body.query, searchMode: "lexical_fallback", fallbackReason: "embedder_offline", modelKey: null, total: 1, items: [{ noteId: "remote-note", title: "원격 메모", path: "원격 폴더", updatedAt: 3,
+          docType: "memo", docStatus: null, project: "", score: 1, scores: { keyword: 1 }, terms: ["본문"], staleIndex: false, matches: [{ headingPath: "", lineStart: 1, lineEnd: 1, snippet: "서버에 있는 본문" }] }] };
+      }
       else if (route.startsWith("/api/v1/notes/images/")) return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable", ETag: '"x"' } });
       else result = { schemaVersion: 1, ok: true };
       if (key) responses.set(key, result);
@@ -122,7 +129,15 @@ test("relay memo는 원격 모드에서 원격 서버의 메모를 읽는다", a
   expect(found.code).toBe(0);
   expect(found.data).toMatchObject({ revision: 7, item: { id: "remote-note", body: "서버에 있는 본문" }, path: [{ id: "remote-folder", name: "원격 폴더" }] });
   expect(received.at(-1)).toMatchObject({ route: "/api/v1/notes" });
+  // 검색은 원격 서버의 검색 API에 맡긴다. 읽기 요청이라 멱등 키를 붙이지 않는다.
+  searchApi = true;
+  const ranked = await cliAsync(f.dir, ["memo", "--search", "본문"]);
+  expect(ranked.data).toMatchObject({ searchMode: "lexical_fallback", fallbackReason: "embedder_offline", items: [{ id: "remote-note", label: "원격 메모", noteId: "remote-note", matches: [{ snippet: "서버에 있는 본문" }] }] });
+  expect(received.at(-1)).toMatchObject({ route: "/api/v1/notes/search", body: { query: "본문", mode: "hybrid", limit: 10 }, key: null });
+  // 옛 서버(검색 API 없음)면 메모를 받아 글자 그대로 찾는다.
+  searchApi = false;
   expect((await cliAsync(f.dir, ["memo", "--search", "본문"])).data.items.map((hit: { id: string }) => hit.id)).toEqual(["remote-note"]);
+  expect((await cliAsync(f.dir, ["memo", "--search", "본문", "--mode", "exact"])).data).toMatchObject({ total: 1, items: [{ id: "remote-note", lines: ["서버에 있는 본문"] }] });
   unavailable = true;
   expect((await cliAsync(f.dir, ["memo", "--list"])).code).not.toBe(0);
 });

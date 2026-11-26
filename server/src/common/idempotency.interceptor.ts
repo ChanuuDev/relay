@@ -1,10 +1,11 @@
 import { type CallHandler, type ExecutionContext, Inject, Injectable, type NestInterceptor } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import { and, eq, lt } from "drizzle-orm";
 import type { Response } from "express";
 import { IDEMPOTENCY_HEADER, RelayError } from "@relay/core";
 import { from, of, tap, switchMap, type Observable } from "rxjs";
 import { DB, schema, type Db } from "../db/database.js";
-import type { AuthedRequest } from "./decorators.js";
+import { SKIP_IDEMPOTENCY_KEY, type AuthedRequest } from "./decorators.js";
 
 const KEY = /^[A-Za-z0-9_-]{8,128}$/;
 /** 같은 키의 첫 응답을 보관하는 시간. outbox 재전송은 길어야 며칠이지만 표는 하루면 충분하다. */
@@ -16,7 +17,7 @@ export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
  */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(@Inject(DB) private readonly db: Db, private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<AuthedRequest>();
@@ -24,6 +25,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const raw = request.headers[IDEMPOTENCY_HEADER];
     const auth = request.relayAuth;
     if (!auth || typeof raw !== "string" || !raw || !["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) return next.handle();
+    if (this.reflector.getAllAndOverride<boolean>(SKIP_IDEMPOTENCY_KEY, [context.getHandler(), context.getClass()])) return next.handle();
     if (!KEY.test(raw)) throw new RelayError("INVALID_ARGUMENT", "Idempotency-Key는 8~128자의 영문·숫자·-_ 이어야 합니다.");
     const key = `${auth.userId}:${raw}`;
     return from(this.db.select({ status: schema.idempotencyKeys.status, body: schema.idempotencyKeys.body }).from(schema.idempotencyKeys)

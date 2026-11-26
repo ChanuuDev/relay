@@ -37,7 +37,8 @@ relay memo --find <ID>
 |---|---|
 | `relay memo --list` | 폴더 트리와 모든 메모의 이름·수정 시각·ID (본문 없음) |
 | `relay memo --list --folder <폴더 ID>` | 그 폴더 아래만 |
-| `relay memo --search "<낱말 …>"` | 폴더 이름·메모 제목·본문 검색. 띄어 쓴 낱말이 모두 든 항목과 맞은 줄을 보인다 |
+| `relay memo --search "<찾는 말>"` | 메모 검색. 낱말과 뜻으로 찾아 관련 있는 순서대로, 맞은 절(소제목·줄 번호)과 함께 보인다. 낱말이 모두 들어 있지 않아도 찾고, 의미 색인이 있으면 낱말이 달라도 찾는다 |
+| `relay memo --search "<낱말 …>" --mode exact` | 띄어 쓴 낱말이 글자 그대로 모두 든 메모와 폴더(폴더 이름을 찾을 때, 정확히 그 글자를 찾을 때) |
 | `relay memo --find <ID>` | 메모 본문, 또는 폴더와 그 아래 모든 메모 |
 
 ID를 모르면 `--search`나 `--list`로 찾은 뒤 `--find`로 읽는다. 순서는 메모 앱 트리와 같다(끌어 정한 순서, 그다음 폴더 먼저·이름 순).
@@ -46,7 +47,14 @@ ID를 모르면 `--search`나 `--list`로 찾은 뒤 `--find`로 읽는다. 순�
 
 - `--find --json`: `item`(메모 API와 같은 모양), `path`(최상위부터 `{ id, name }`), 폴더면 `items`(`{ item, path, depth }`를 트리 순서로).
 - `--list --json`: `items`(`{ id, kind, parentId, label, path, depth, updatedAt, notes? }`, 본문 없음), `notes`·`folders` 개수.
-- `--search --json`: `query`, `total`, `items`(`{ id, kind, label, path, updatedAt, lines }`).
+- `--search --json`: `query`, `searchMode`(`hybrid`·`keyword`·`semantic`·`lexical_fallback`), `fallbackReason`(뜻으로 찾지 못한 까닭), `total`, `items`(`{ id, label, path, score, docType, docStatus, supersededBy?, staleIndex, matches: [{ headingPath, lineStart, lineEnd, snippet }] }`).
+- `--search --mode exact --json`: `query`, `total`, `items`(`{ id, kind, label, path, updatedAt, lines }`).
+
+검색을 좁히거나 넓히는 옵션: `--mode keyword|semantic`(낱말만·뜻만), `--type design,decision`(문서 유형), `--status adopted`(문서 상태), `--project <이름>`, `--history`(대체된 문서도 감점 없이), `--limit <N>`(기본 10).
+
+- 결과에 `! 대체된 문서입니다. 새 문서: …`가 붙으면 그 문서는 옛 결정이다. 새 문서를 읽는다.
+- `낱말(…) 검색`이라고 나오면 뜻으로 찾지 못한 것이다(의미 색인이 없거나 임베딩 서버가 꺼져 있다). 낱말을 바꿔 다시 찾는다. 색인은 relay-embedding 스킬이 만든다.
+- 발췌(`>` 줄)의 `[가림]`은 비밀로 보여 가린 값이다. 전체 본문은 `--find`로 읽는다.
 - 모두 `revision`(저장 번호)과 `api`(쓰기에 쓸 이 PC Relay 웹 서버 주소, 설정 기준이며 기본 `http://127.0.0.1:7474`)를 담는다.
 
 저장소를 따로 쓰면 `--data-dir <절대경로>`를 붙인다. 원격 모드로 설정된 PC에서는 원격 서버의 메모를 읽는다.

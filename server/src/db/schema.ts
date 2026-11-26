@@ -89,6 +89,8 @@ export const notes = pgTable("notes", {
   position: doublePrecision("position"),
 }, (t) => [
   index("notes_user_parent_idx").on(t.userId, t.parentId),
+  // 색인 표들이 (user_id, id)로 가리킨다(다른 사용자의 메모를 가리키지 못하게).
+  uniqueIndex("notes_user_id_id_uniq").on(t.userId, t.id),
   check("notes_kind_check", sql`${t.kind} IN ('folder', 'note')`),
   check("notes_parent_check", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`),
 ]);
@@ -105,6 +107,113 @@ export const noteImages = pgTable("note_images", {
   primaryKey({ columns: [t.userId, t.id] }),
   check("note_images_id_check", sql`length(${t.id}) = 64`),
 ]);
+
+// ── 메모 의미 검색(파생 색인과 문서 정보) ─────────────────
+// 줄마다 (user_id, note_id)로 메모를 가리키는 복합 외래 키가 걸려 있어(마이그레이션 0005), 메모를 지우면 함께 지워지고 다른 사용자의 메모를 가리킬 수 없다.
+// 벡터는 float32 바이트(bytea)로 둔다. 개인 메모 규모에서는 앱이 메모리에서 전부 견주는 쪽이 벡터 확장(pgvector)을 두는 것보다 단순하고 정확하다.
+
+/** 문서 유형·상태·출처. 원본 본문에 머리말을 끼워 넣지 않고 메모 옆에 둔다. */
+export const noteMeta = pgTable("note_meta", {
+  userId: text("user_id").notNull(),
+  noteId: text("note_id").notNull(),
+  docType: text("doc_type").notNull().default("memo"),
+  docStatus: text("doc_status"),
+  project: text("project").notNull().default(""),
+  sourceRepo: text("source_repo"),
+  sourcePath: text("source_path"),
+  sourceCommit: text("source_commit"),
+  supersededBy: text("superseded_by"),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+}, (t) => [primaryKey({ columns: [t.userId, t.noteId] })]);
+
+/** 에이전트가 쓴 의미 카드(요약·같은 뜻의 말·답하는 질문). */
+export const noteCards = pgTable("note_cards", {
+  userId: text("user_id").notNull(),
+  noteId: text("note_id").notNull(),
+  contentHash: text("content_hash").notNull(),
+  summary: text("summary").notNull(),
+  terms: jsonb("terms").$type<string[]>().notNull().default([]),
+  questions: jsonb("questions").$type<string[]>().notNull().default([]),
+  author: text("author").notNull().default(""),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+}, (t) => [primaryKey({ columns: [t.userId, t.noteId] })]);
+
+/** 임베딩 모델. 사용자마다 검색에 쓰는 모델(active)은 하나다. */
+export const embeddingModels = pgTable("embedding_models", {
+  userId: text("user_id").notNull().references(() => users.id),
+  modelKey: text("model_key").notNull(),
+  name: text("name").notNull(),
+  dimensions: integer("dimensions").notNull(),
+  prompt: text("prompt").notNull(),
+  chunkVersion: integer("chunk_version").notNull(),
+  floor: doublePrecision("floor").notNull().default(0),
+  active: boolean("active").notNull().default(false),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+}, (t) => [primaryKey({ columns: [t.userId, t.modelKey] })]);
+
+/** 메모마다의 색인 상태와 임대. */
+export const noteIndex = pgTable("note_index", {
+  userId: text("user_id").notNull(),
+  noteId: text("note_id").notNull(),
+  modelKey: text("model_key").notNull(),
+  inputHash: text("input_hash").notNull(),
+  contentHash: text("content_hash").notNull(),
+  chunkCount: integer("chunk_count").notNull(),
+  status: text("status").notNull(),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(0),
+  retryAt: bigint("retry_at", { mode: "number" }).notNull().default(0),
+  leaseToken: text("lease_token"),
+  leaseUntil: bigint("lease_until", { mode: "number" }).notNull().default(0),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+}, (t) => [primaryKey({ columns: [t.userId, t.noteId, t.modelKey] }), index("note_index_model_idx").on(t.userId, t.modelKey)]);
+
+/** 메모의 절(조각)과 그 벡터. chunk_index가 -1인 줄은 그 메모의 질의 벡터다. 원문은 싣지 않고 위치만 둔다. */
+export const noteChunks = pgTable("note_chunks", {
+  userId: text("user_id").notNull(),
+  noteId: text("note_id").notNull(),
+  modelKey: text("model_key").notNull(),
+  chunkIndex: integer("chunk_index").notNull(),
+  headingPath: text("heading_path").notNull().default(""),
+  lineStart: integer("line_start").notNull(),
+  lineEnd: integer("line_end").notNull(),
+  charStart: integer("char_start").notNull(),
+  charEnd: integer("char_end").notNull(),
+  chunkHash: text("chunk_hash").notNull(),
+  tokenCount: integer("token_count").notNull(),
+  embedding: bytea("embedding").notNull(),
+}, (t) => [primaryKey({ columns: [t.userId, t.noteId, t.modelKey, t.chunkIndex] }), index("note_chunks_model_idx").on(t.userId, t.modelKey)]);
+
+/** 미리 계산해 둔 의미 연결과 근거 절. */
+export const noteSemanticLinks = pgTable("note_semantic_links", {
+  userId: text("user_id").notNull(),
+  modelKey: text("model_key").notNull(),
+  sourceNoteId: text("source_note_id").notNull(),
+  targetNoteId: text("target_note_id").notNull(),
+  score: doublePrecision("score").notNull(),
+  strength: doublePrecision("strength").notNull(),
+  sourceHeading: text("source_heading").notNull().default(""),
+  sourceStart: integer("source_start").notNull(),
+  sourceEnd: integer("source_end").notNull(),
+  targetHeading: text("target_heading").notNull().default(""),
+  targetStart: integer("target_start").notNull(),
+  targetEnd: integer("target_end").notNull(),
+}, (t) => [primaryKey({ name: "note_semantic_links_pk", columns: [t.userId, t.modelKey, t.sourceNoteId, t.targetNoteId] }), index("note_semantic_links_target_idx").on(t.userId, t.modelKey, t.targetNoteId)]);
+
+/** 사용자가 「관련 없음」으로 물린 제안. 색인을 다시 만들어도 남는 원본 자료다. a < b로 넣는다. */
+export const noteLinkDismissals = pgTable("note_link_dismissals", {
+  userId: text("user_id").notNull(),
+  aNoteId: text("a_note_id").notNull(),
+  bNoteId: text("b_note_id").notNull(),
+  dismissedAt: bigint("dismissed_at", { mode: "number" }).notNull(),
+}, (t) => [primaryKey({ name: "note_link_dismissals_pk", columns: [t.userId, t.aNoteId, t.bNoteId] })]);
+
+/** 문서 정보·카드(docs)와 색인(idx)이 바뀔 때마다 올리는 번호. 서버가 쥔 캐시를 버릴 때를 안다. */
+export const noteIndexMeta = pgTable("note_index_meta", {
+  userId: text("user_id").primaryKey().references(() => users.id),
+  docs: integer("docs").notNull().default(0),
+  idx: integer("idx").notNull().default(0),
+});
 
 export const notesMeta = pgTable("notes_meta", {
   userId: text("user_id").primaryKey().references(() => users.id),

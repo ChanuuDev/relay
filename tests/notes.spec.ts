@@ -616,7 +616,7 @@ test("메모 창: 메모·폴더 ID를 복사해 AI 에이전트에 넘기고, �
   expect(found.item).toMatchObject({ id: "n-weekly", kind: "note", parentId: "f-meet", title: "주간 회의" });
   expect(found.path.map((folder: { name: string }) => folder.name)).toEqual(["업무", "회의"]);
   expect(cli(["memo", "--find", "f-meet"]).items.map((entry: { item: { id: string } }) => entry.item.id).sort()).toEqual(["n-retro", "n-weekly"]);
-  expect(cli(["memo", "--search", "세션 인계"]).items.map((hit: { id: string }) => hit.id)).toEqual(["n-retro"]);
+  expect(cli(["memo", "--search", "세션 인계", "--mode", "exact"]).items.map((hit: { id: string }) => hit.id)).toEqual(["n-retro"]);
   // relay-memo 스킬이 안내하는 요청 그대로 고친다. 열어 둔 편집기는 저장 번호를 보고 몇 초 안에 새 본문을 그린다.
   const response = await request.post(`${env.url}/api/v1/notes`, { headers: { Origin: env.url, "Content-Type": "application/json" },
     data: JSON.stringify({ upserts: [{ ...found.item, body: `${found.item.body}\n- 에이전트가 더한 줄`, updatedAt: Date.now() }], deletes: [] }) });

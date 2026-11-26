@@ -12,6 +12,8 @@ import v6Schema from "../src/db/migrations/006_init.sql" with { type: "text" };
 import v7Schema from "../src/db/migrations/007_init.sql" with { type: "text" };
 import v9Schema from "../src/db/migrations/009_init.sql" with { type: "text" };
 import v10Schema from "../src/db/migrations/010_init.sql" with { type: "text" };
+import latestSchema from "../src/db/migrations/011_init.sql" with { type: "text" };
+import noteIndexSchema from "../src/db/migrations/011_note_index.sql" with { type: "text" };
 import { CalculatorStore } from "../src/calculator/calculator.store";
 import { NoteStore } from "../src/notes/notes.store";
 import { SessionRepository } from "../src/session/session.repository";
@@ -155,6 +157,38 @@ describe("Database record migration", () => {
     } finally { db.close(); }
   });
 
+  test("v10 databases gain the semantic index tables in place, keep their notes, and a deleted note takes its index with it", () => {
+    // 새로 만드는 저장소의 스키마는 v10 스키마에 색인 표를 붙인 것과 같다(두 파일이 어긋나지 않게 한다).
+    expect(latestSchema.replaceAll("\r\n", "\n")).toBe(`${v10Schema.replaceAll("\r\n", "\n").replace(/\n*$/, "\n")}${noteIndexSchema.replaceAll("\r\n", "\n")}`);
+    const db = new Database(path.join(dir, "relay.db"));
+    db.exec(v10Schema);
+    db.exec("PRAGMA user_version = 10");
+    db.query("INSERT INTO notes (id, kind, parent_id, name, title, body, created_at, updated_at, revision, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("n1", "note", null, "", "기존 메모", "본문", 1, 1, 1, null);
+    const before = db.query("SELECT * FROM notes").all();
+    db.close();
+    const fresh = new Database(":memory:");
+    fresh.exec(latestSchema);
+    const schemaOf = (target: Database) => target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all();
+    const writer = openDatabase(loadConfig(dir));
+    try {
+      expect(writer.query("PRAGMA user_version").get()).toEqual({ user_version: DB_VERSION });
+      expect(writer.query("SELECT * FROM notes").all()).toEqual(before);
+      expect(schemaOf(writer)).toEqual(schemaOf(fresh));
+      expect(writer.query("SELECT key, value FROM note_index_meta ORDER BY key").all()).toEqual([{ key: "docs", value: 0 }, { key: "index", value: 0 }]);
+      writer.query("INSERT INTO embedding_models (model_key, name, dimensions, prompt, chunk_version, floor, active, created_at) VALUES ('m', 'm', 4, 'plain', 1, 0, 1, 1)").run();
+      writer.query("INSERT INTO note_index (note_id, model_key, input_hash, content_hash, chunk_count, status, updated_at) VALUES ('n1', 'm', 'a', 'b', 1, 'ready', 1)").run();
+      writer.query("INSERT INTO note_chunks (note_id, model_key, chunk_index, line_start, line_end, char_start, char_end, chunk_hash, token_count, embedding) VALUES ('n1', 'm', 0, 1, 1, 0, 2, 'h', 1, x'00000000')").run();
+      writer.query("INSERT INTO note_cards (note_id, content_hash, summary, updated_at) VALUES ('n1', 'b', '요약', 1)").run();
+      writer.query("INSERT INTO note_meta (note_id, doc_type, updated_at) VALUES ('n1', 'design', 1)").run();
+      // 쓰는 모델은 하나뿐이고, 없는 메모의 색인은 넣을 수 없다.
+      expect(() => writer.query("INSERT INTO embedding_models (model_key, name, dimensions, prompt, chunk_version, floor, active, created_at) VALUES ('m2', 'm2', 4, 'plain', 1, 0, 1, 2)").run()).toThrow();
+      expect(() => writer.query("INSERT INTO note_cards (note_id, content_hash, summary, updated_at) VALUES ('missing', 'b', '요약', 1)").run()).toThrow();
+      writer.query("DELETE FROM notes WHERE id = 'n1'").run();
+      for (const table of ["note_index", "note_chunks", "note_cards", "note_meta"]) expect(writer.query(`SELECT count(*) AS total FROM ${table}`).get()).toEqual({ total: 0 });
+      expect(writer.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    } finally { writer.close(); fresh.close(); }
+  });
+
   test("v9 databases gain google as a Task provider in place and keep existing tasks", () => {
     const db = new Database(path.join(dir, "relay.db"));
     db.exec(v9Schema);
@@ -164,7 +198,7 @@ describe("Database record migration", () => {
     const before = db.query("SELECT * FROM tasks").all();
     db.close();
     const fresh = new Database(":memory:");
-    fresh.exec(v10Schema);
+    fresh.exec(latestSchema);
     const schemaOf = (target: Database) => (target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string | null }[])
       .map(row => ({ ...row, sql: row.sql?.replace(/^CREATE TABLE "([^"]+)"/, "CREATE TABLE $1") ?? null }));
     const writer = openDatabase(loadConfig(dir));
@@ -188,7 +222,7 @@ describe("Database record migration", () => {
     const before = db.query("SELECT * FROM notes").all();
     db.close();
     const fresh = new Database(":memory:");
-    fresh.exec(v10Schema);
+    fresh.exec(latestSchema);
     const schemaOf = (target: Database) => (target.query("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string; sql: string | null }[])
       .map(row => ({ ...row, sql: row.sql?.replace(/^CREATE TABLE "([^"]+)"/, "CREATE TABLE $1") ?? null }));
     const writer = openDatabase(loadConfig(dir));

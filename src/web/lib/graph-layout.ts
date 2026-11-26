@@ -54,7 +54,7 @@ export type SimLink = { source: SimNode; target: SimNode; distance: number; stre
 
 const LINK: Record<EdgeKind, { distance: number; strength: number }> = {
   folder: { distance: 46, strength: 0.55 }, link: { distance: 64, strength: 0.8 }, mention: { distance: 74, strength: 0.6 },
-  similar: { distance: 92, strength: 0.32 }, tag: { distance: 52, strength: 0.5 }, chain: { distance: 58, strength: 0.7 },
+  similar: { distance: 92, strength: 0.32 }, tag: { distance: 52, strength: 0.5 }, chain: { distance: 58, strength: 0.7 }, semantic: { distance: 84, strength: 0.38 },
 };
 
 type Quad = { x0: number; y0: number; size: number; cx: number; cy: number; charge: number; node: SimNode | null; kids: Array<Quad | undefined> | null };
@@ -288,7 +288,7 @@ export function focusLayout(input: LayoutInput): Layout {
   const positions = new Map<string, Vec>(), hidden = new Set<string>(), labelAngle = new Map<string, number>();
   if (!center) return { view: "focus", positions, hidden, decor: { kind: "none" }, labelAngle, center };
   // 링크 → 언급 → 태그 → 폴더 → 비슷함 순서로 먼저 찾은 쪽을 부모로 삼는다.
-  const order: Record<EdgeKind, number> = { link: 0, mention: 1, chain: 2, tag: 3, folder: 4, similar: 5 };
+  const order: Record<EdgeKind, number> = { link: 0, mention: 1, chain: 2, semantic: 3, tag: 4, folder: 5, similar: 6 };
   const around = new Map<string, Array<{ id: string; rank: number }>>();
   for (const edge of edges) for (const [a, b] of [[edge.source, edge.target], [edge.target, edge.source]] as const) {
     if (!byId.has(a) || !byId.has(b)) continue;

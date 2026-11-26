@@ -88,6 +88,7 @@ const EDGE_LOOK: Record<EdgeKind, { alpha: number; width: number; dash: number[]
   folder: { alpha: 0.3, width: 1, dash: [] },
   tag: { alpha: 0.3, width: 1, dash: [1.2, 3.4] },
   chain: { alpha: 0.5, width: 1.35, dash: [7, 3] },
+  semantic: { alpha: 0.5, width: 1.15, dash: [1.5, 3.5, 6, 3.5] },
 };
 /** 맥락이 씨앗에서 한 단계 퍼지는 데 걸리는 시간(ms)과 한 점이 밝아지는 시간. */
 const WAVE_STEP = 150, WAVE_RISE = 420;
@@ -1303,8 +1304,8 @@ export class GraphScene {
       // 맥락에 든 두 점 사이의 선은 맥락 색으로 밝힌다.
       const warm = overlay && this.heat ? Math.min(this.heat.scores.get(state.s.node.id) ?? 0, this.heat.scores.get(state.t.node.id) ?? 0) : 0;
       const color = isLit ? (focus === state.s.node.id ? state.s.color : state.t.color)
-        : warm > 0.05 ? accent : state.edge.kind === "folder" ? state.t.color : state.edge.kind === "similar" ? accent : state.edge.kind === "chain" ? state.s.color : fg;
-      const alpha = base * dim * (isLit ? 0.9 : warm > 0.05 ? 0.4 + 0.5 * Math.sqrt(warm) : look.alpha * (state.edge.kind === "similar" ? 0.55 + state.edge.weight * 0.6 : 1));
+        : warm > 0.05 ? accent : state.edge.kind === "folder" ? state.t.color : state.edge.kind === "similar" || state.edge.kind === "semantic" ? accent : state.edge.kind === "chain" ? state.s.color : fg;
+      const alpha = base * dim * (isLit ? 0.9 : warm > 0.05 ? 0.4 + 0.5 * Math.sqrt(warm) : look.alpha * (state.edge.kind === "similar" || state.edge.kind === "semantic" ? 0.55 + state.edge.weight * 0.6 : 1));
       if (alpha < 0.008) continue;
       ctx.strokeStyle = rgba(color, alpha);
       ctx.lineWidth = (look.width + (isLit ? 0.7 : 0)) * widthScale;

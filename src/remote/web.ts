@@ -1,7 +1,8 @@
 import type { Config } from "../config";
 import { errorBody, RelayError } from "../errors";
 import { RemoteClient } from "./client";
-import { MAX_IMAGE_UPLOAD_BYTES } from "@relay/core";
+import { INDEX_API, MAX_IMAGE_UPLOAD_BYTES, MAX_INDEX_BODY_BYTES, parseSearch } from "@relay/core";
+import type { EmbedderHost } from "../notes/embed";
 import { checkRequest, checkWrite, MAX_IMPORT_BYTES, securityHeaders } from "../web/security";
 import { PID_HEADER } from "../web/control";
 import { places } from "../files/files.service";
@@ -13,7 +14,8 @@ import { paths, REMOTE_PREFIX, remotePath } from "./paths";
 export { REMOTE_PREFIX };
 
 /** 로컬 보안 검사를 유지하고 허용한 API만 서버 간 중계한다. 인증·토큰은 브라우저로 보내지 않는다. */
-export function remoteHandler(config: Config, fallback: (request: Request) => Response | Promise<Response>) {
+/** host는 이 PC의 임베딩 서버다. 있으면 검색 요청에 질의 벡터를 실어 보내, 원격 서버가 이 PC로 되물을 길(터널)이 없어도 의미 검색이 된다. */
+export function remoteHandler(config: Config, fallback: (request: Request) => Response | Promise<Response>, host?: EmbedderHost) {
   const localHeaders = { ...securityHeaders(config.webPort), [PID_HEADER]: String(process.pid) };
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -41,14 +43,15 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
       let body: unknown;
       const fileApi = url.pathname === "/api/v1/files" || url.pathname.startsWith("/api/v1/files/");
       const explicitFiles = url.pathname === "/api/v1/remote/files" || url.pathname.startsWith("/api/v1/remote/files/");
-      const dataApi = /^\/api\/v1\/(sessions(?:\/[^/]+(?:\/(?:updates|children|chain|actions))?)?|notes(?:\/export|\/import|\/images(?:\/[0-9a-f]{64})?)?|calculator\/history|tasks|board|events|holidays(?:\/sync)?|activity(?:\/day)?)$/.test(url.pathname);
+      const indexApi = INDEX_API.test(url.pathname);
+      const dataApi = indexApi || /^\/api\/v1\/(sessions(?:\/[^/]+(?:\/(?:updates|children|chain|actions))?)?|notes(?:\/export|\/import|\/images(?:\/[0-9a-f]{64})?)?|calculator\/history|tasks|board|events|holidays(?:\/sync)?|activity(?:\/day)?)$/.test(url.pathname);
       if (!["GET", "POST", "PUT"].includes(request.method)) throw new RelayError("METHOD_NOT_ALLOWED", "지원하지 않는 HTTP 메서드입니다.", 2, 405);
       if ((fileApi || explicitFiles || image) && request.method === "GET") {
         const site = request.headers.get("sec-fetch-site");
         if (site !== null && site !== "same-origin" && site !== "none") throw new RelayError("FORBIDDEN", "이 화면에서 보낸 파일 조회만 받습니다.", 2, 403);
       }
       if (request.method === "POST" && (fileApi || explicitFiles || dataApi)) {
-        const limit = /\/(import|save)$/.test(url.pathname) ? MAX_IMPORT_BYTES : image ? MAX_IMAGE_UPLOAD_BYTES : 8 * 1024 * 1024;
+        const limit = /\/(import|save)$/.test(url.pathname) ? MAX_IMPORT_BYTES : image ? MAX_IMAGE_UPLOAD_BYTES : indexApi ? MAX_INDEX_BODY_BYTES : 8 * 1024 * 1024;
         checkWrite(request, config.webPort, limit);
         const reader = request.body?.getReader();
         const chunks: Uint8Array[] = []; let total = 0;
@@ -65,6 +68,8 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
         }
         try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new RelayError("INVALID_ARGUMENT", "JSON 본문을 읽을 수 없습니다."); }
       }
+      // 검색: 이 PC에서 질의를 임베딩해 벡터를 싣는다. 임베딩하지 못하면 그대로 보내고, 서버가 낱말 검색으로 답한다.
+      if (host && request.method === "POST" && url.pathname === "/api/v1/notes/search") body = await host.attach(parseSearch(body));
       if (fileApi && !explicitFiles) {
         const value = body as { path?: string; paths?: string[]; parent?: string; destination?: string; sources?: string[] } | undefined;
         if (url.pathname === "/api/v1/files/transfer" || (url.pathname.endsWith("/paste") && value?.sources?.some(source => remotePath(source) !== remotePath(value.destination)))) {
@@ -86,7 +91,9 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
       const headers = new Headers();
       for (const name of ["content-type", "range", "if-none-match"]) { const value = request.headers.get(name); if (value) headers.set(name, value); }
       const response = await client.fetch(route, { method: request.method, headers,
-        ...(request.method === "POST" ? { body: JSON.stringify(body) } : request.method === "PUT" ? { body: request.body } : {}) }, request.method === "POST" ? crypto.randomUUID() : undefined);
+        ...(request.method === "POST" ? { body: JSON.stringify(body) } : request.method === "PUT" ? { body: request.body } : {}) },
+        // 색인 API는 읽기이거나 워커가 스스로 다시 시도하는 요청이라 멱등 키를 붙이지 않는다(붙이면 검색 결과와 벡터가 서버에 하루 보관된다).
+        request.method === "POST" && !indexApi ? crypto.randomUUID() : undefined);
       const outgoing = new Headers(localHeaders);
       for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "etag", "content-disposition", "x-file-modified", "retry-after"]) {
         const value = response.headers.get(name); if (value) outgoing.set(name, value);

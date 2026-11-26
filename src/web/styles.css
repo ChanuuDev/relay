@@ -1240,7 +1240,7 @@ canvas.md-stl:active { cursor: grabbing; }
 .notes-tools .notes-graph-toggle[aria-pressed="true"]:hover { background: color-mix(in srgb, var(--notes-accent) 25%, transparent); color: var(--notes-accent); }
 .notes-graph { --graph-base: #f6f7f9; --graph-glass: rgba(255, 255, 255, .72); --graph-glass-strong: rgba(255, 255, 255, .86); --graph-edge: rgba(0, 0, 0, .08);
   --graph-shadow: 0 10px 30px -8px rgba(20, 24, 40, .18), 0 1px 2px rgba(20, 24, 40, .06); --graph-thumb: #ffffff;
-  position: relative; flex: 1; min-height: 0; overflow: hidden; isolation: isolate; color: var(--foreground);
+  position: relative; flex: 1; min-height: 0; overflow: hidden; overflow: clip; isolation: isolate; color: var(--foreground);
   background: radial-gradient(70% 55% at 12% -5%, color-mix(in srgb, var(--notes-accent) 12%, transparent), transparent 72%),
     radial-gradient(55% 45% at 102% 104%, rgba(139, 92, 246, .08), transparent 70%), var(--graph-base);
   animation: graph-in .42s cubic-bezier(.2, .8, .2, 1) both; }
@@ -1331,6 +1331,7 @@ canvas.md-stl:active { cursor: grabbing; }
 .graph-sample { width: 28px; height: 10px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .graph-sample[data-kind="mention"] { opacity: .55; }
 .graph-sample[data-kind="similar"] { color: var(--notes-accent); stroke-dasharray: 3 3; }
+.graph-sample[data-kind="semantic"] { color: var(--notes-accent); stroke-dasharray: 1 3 5 3; }
 .graph-sample[data-kind="folder"] { opacity: .45; }
 .graph-sample[data-kind="tag"] { stroke-dasharray: 1 3; opacity: .7; }
 .graph-sample-head { stroke-width: 1.4; }
@@ -2725,3 +2726,21 @@ form.files-path { flex: 1; min-width: 0; }
   .board-card, .activity-cell, .cal-chip, .planner-switch span::after { transition: none; }
   .activity-grid[data-loading] .activity-cell { animation: none; }
 }
+
+/* ── 메모 의미 검색: 검색 결과 아래의 관련 메모, 그래프 「발견」의 의미 색인 줄 ── */
+.notes-related { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.notes-related h3 { display: flex; align-items: center; gap: 6px; margin: 0 10px 4px; font-size: var(--fs-10); font-weight: 600; letter-spacing: 0; color: var(--muted-foreground); }
+.notes-related h3 svg { width: 12px; height: 12px; color: var(--notes-accent, var(--primary)); }
+.notes-result[data-related] { align-items: flex-start; }
+.notes-result[data-related] .tree-icon { margin-top: 2px; }
+.notes-result-snippet { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; font-size: var(--fs-10); line-height: 1.5; color: var(--muted-foreground); overflow-wrap: anywhere; white-space: normal; }
+.notes-related-note { margin: 8px 12px 4px; font-size: var(--fs-10); line-height: 1.5; color: var(--muted-foreground); }
+.graph-suggest-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.graph-suggest-actions > [data-slot="button"]:not(.graph-suggest-link) { height: 22px; margin: 2px -2px -2px 0; padding: 0 7px; gap: 4px; border-radius: 999px; font-size: 10.5px; color: var(--glass-text-muted); }
+.graph-suggest-actions > [data-slot="button"]:not(.graph-suggest-link):hover { color: var(--foreground); }
+.graph-suggest-actions > [data-slot="button"]:not(.graph-suggest-link) svg { width: 11px; height: 11px; }
+.graph-index h4 span { font-variant-numeric: tabular-nums; }
+.graph-index-bar { height: 4px; margin: 2px 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 10%, transparent); overflow: hidden; }
+.graph-index-bar span { display: block; height: 100%; width: calc(var(--v, 0) * 100%); border-radius: inherit; background: var(--notes-accent, var(--primary)); transition: width .5s cubic-bezier(.2, .7, .2, 1); }
+.graph-index[data-state="failed"] .graph-index-bar span { background: var(--destructive); }
+@media (prefers-reduced-motion: reduce) { .graph-index-bar span { transition: none; } }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { ArrowLeftRight, BookmarkPlus, Check, Copy, FileText, History, Lightbulb, Link2, Plus, Route, Sparkles, Terminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, BookmarkPlus, Check, Copy, EyeOff, FileText, History, Lightbulb, Link2, Plus, Route, Sparkles, Terminal, X, type LucideIcon } from "lucide-react";
+import type { IndexStatus } from "@relay/core";
 import { Button } from "../ui/button";
 import type { GraphEdge, GraphNode, NoteGraph } from "../../lib/note-graph";
 import { healthNotes, type GraphPath, type Insight, type Suggestion } from "../../lib/graph-insight";
@@ -18,7 +19,7 @@ export const TOOLS: Array<{ id: GraphTool; label: string; icon: LucideIcon; hint
 ];
 export const BUDGETS = [2000, 4000, 8000, 12000] as const;
 const budgetLabel = (value: number) => (value >= 10000 ? `${value / 10000}만` : `${value / 1000}천`);
-const EDGE_WORD: Record<GraphEdge["kind"], string> = { link: "링크", mention: "언급", similar: "비슷함", tag: "태그", folder: "폴더", chain: "이어받음" };
+const EDGE_WORD: Record<GraphEdge["kind"], string> = { link: "링크", mention: "언급", similar: "비슷함", tag: "태그", folder: "폴더", chain: "이어받음", semantic: "뜻이 가까움" };
 
 export function ToolRail({ tool, onTool, replaying, onReplay, badge }: {
   tool: GraphTool | null; onTool: (tool: GraphTool | null) => void; replaying: boolean; onReplay: () => void; badge: number;
@@ -63,6 +64,26 @@ function Row({ ids, onSpot, onClick, children, index = 0, className }: {
 }
 
 /** 0..1 값을 고리로 보인다(열릴 때 0에서 차오른다). text를 주면 가운데에 백분율 대신 적는다. */
+/** 의미 색인이 어디까지 됐는지 한 줄로. 색인이 없으면 무엇을 하면 되는지 알린다. */
+function IndexLine({ status }: { status: IndexStatus }) {
+  const { summary, cards } = status;
+  if (!summary.total) return null;
+  const done = summary.total ? summary.ready / summary.total : 0;
+  return <section className="graph-index" aria-label="의미 색인" data-state={!status.activeModelKey ? "none" : summary.pending ? "pending" : summary.failed ? "failed" : "ready"}>
+    <h4>의미 색인{status.activeModelKey && <span>{summary.ready}/{summary.total}</span>}</h4>
+    {status.activeModelKey
+      ? <>
+        <div className="graph-index-bar" role="img" aria-label={`메모 ${summary.total}개 가운데 ${summary.ready}개 색인됨`}><span style={{ "--v": done } as CSSProperties} /></div>
+        <p className="graph-panel-note">
+          {summary.pending ? `대기 ${summary.pending}개 · ` : ""}{summary.failed ? `실패 ${summary.failed}개 · ` : ""}색인 워커 {status.embedderOnline ? "켜짐" : "꺼짐"}
+          {summary.pending > 0 && !status.embedderOnline ? " — 임베딩 PC가 켜지면 이어서 계산합니다." : ""}
+        </p>
+      </>
+      : <p className="graph-panel-note">아직 없습니다. 임베딩 서버를 잇면 낱말이 달라도 뜻이 가까운 메모를 찾고 잇습니다(relay-embedding 스킬).</p>}
+    {cards.fresh > 0 && <p className="graph-panel-note">에이전트가 쓴 의미 카드 {cards.fresh}/{cards.total}{cards.stale ? ` · 낡음 ${cards.stale}` : ""}</p>}
+  </section>;
+}
+
 function Gauge({ value, label, text, hint }: { value: number; label: string; text?: string; hint: string }) {
   const share = Math.max(0, Math.min(1, value));
   return <div className="graph-gauge" title={hint}>
@@ -73,10 +94,14 @@ function Gauge({ value, label, text, hint }: { value: number; label: string; tex
 
 type Common = { graph: NoteGraph; colorOf: (node: GraphNode) => string; onPick: (id: string) => void; onSpot: (ids: string[] | null) => void; onClose: () => void };
 
-export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onSpot, onClose, onLink, visible }: Common & {
+export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onSpot, onClose, onLink, onDismiss, index, visible }: Common & {
   insight: Insight; suggestions: Suggestion[]; visible: ReadonlyMap<string, GraphNode>;
   /** from 메모에 to로 가는 링크를 적는다. */
   onLink: (from: string, to: string) => void;
+  /** 뜻이 가깝다는 제안을 「관련 없음」으로 물린다(다시 제안하지 않는다). */
+  onDismiss: (from: string, to: string) => void;
+  /** 의미 색인의 상태(서버가 알려 주지 않으면 null). */
+  index: IndexStatus | null;
 }) {
   const [gapAt, setGapAt] = useState(0);
   const label = (id: string) => graph.byId.get(id)?.label ?? id;
@@ -102,6 +127,7 @@ export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onS
       </div>
       {hints.map((hint) => <p key={hint} className="graph-panel-note">{hint}</p>)}
     </section>}
+    {index && <IndexLine status={index} />}
     {shown.length > 0 && <section>
       <h4>제안 연결<span>{shown.length}</span></h4>
       <p className="graph-panel-note">아직 링크로 잇지 않았지만 이으면 좋을 메모입니다. 「잇기」를 누르면 앞 메모 본문 끝에 링크 한 줄을 적습니다.</p>
@@ -114,8 +140,12 @@ export function InsightPanel({ graph, insight, suggestions, colorOf, onPick, onS
             <button type="button" onClick={() => onPick(entry.to)} title={`${label(entry.to)}로 가기`}><Dot node={graph.byId.get(entry.to)} colorOf={colorOf} /><span>{label(entry.to)}</span></button>
           </div>
           <p>{entry.reasons[0]!.text}{entry.reasons.length > 1 ? ` 외 ${entry.reasons.length - 1}가지` : ""}</p>
-          <Button type="button" size="xs" variant="outline" className="graph-suggest-link" onClick={() => onLink(entry.from, entry.to)}
-            aria-label={`${label(entry.from)}에서 ${label(entry.to)}로 잇기`}><Link2 aria-hidden="true" />잇기</Button>
+          <div className="graph-suggest-actions">
+            {entry.reasons.some((reason) => reason.kind === "semantic") && <Button type="button" size="xs" variant="ghost" onClick={() => onDismiss(entry.from, entry.to)}
+              aria-label={`${label(entry.from)}와(과) ${label(entry.to)}는 관련 없음`} title="이 쌍을 다시 제안하지 않습니다"><EyeOff aria-hidden="true" />관련 없음</Button>}
+            <Button type="button" size="xs" variant="outline" className="graph-suggest-link" onClick={() => onLink(entry.from, entry.to)}
+              aria-label={`${label(entry.from)}에서 ${label(entry.to)}로 잇기`}><Link2 aria-hidden="true" />잇기</Button>
+          </div>
         </li>)}
       </ul>
     </section>}
@@ -287,7 +317,7 @@ export function PathPanel({ graph, colorOf, onPick, onSpot, onClose, from, to, p
           const node = graph.byId.get(id);
           const edge = index ? path.edges[index - 1]! : null;
           return <li key={id} style={{ "--i": index } as CSSProperties}>
-            {edge && <span className="graph-path-edge">{edge.kind === "similar" ? `비슷함 ${edge.weight.toFixed(2)}` : edge.kind === "link" ? (edge.source === path.nodes[index - 1] ? "링크" : "링크 받음") : EDGE_WORD[edge.kind]}</span>}
+            {edge && <span className="graph-path-edge">{edge.kind === "similar" ? `비슷함 ${edge.weight.toFixed(2)}` : edge.kind === "semantic" ? `뜻이 가까움 ${edge.weight.toFixed(2)}` : edge.kind === "link" ? (edge.source === path.nodes[index - 1] ? "링크" : "링크 받음") : EDGE_WORD[edge.kind]}</span>}
             <button type="button" className="graph-row" onClick={() => onPick(id)} onPointerEnter={() => onSpot([id])} onPointerLeave={() => onSpot(null)}>
               <Dot node={node} colorOf={colorOf} /><span className="graph-row-label">{node?.label ?? id}</span>
             </button>

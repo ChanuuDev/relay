@@ -1,4 +1,4 @@
-import { labelOf as coreLabel, plainLine } from "@relay/core";
+import { estimateTokens, labelOf as coreLabel, lexicalIndex, lexicalRank, lowerText as lower, plainLine, redactSecrets, type LexicalDoc, type LexicalHit, type LexicalIndex } from "@relay/core";
 import { isContainer, isDoc, tokenize, type EdgeKind, type GraphEdge, type GraphNode, type NoteGraph } from "./note-graph";
 import { analyze, pageRank, spread, strengthOf, type Insight } from "./graph-insight";
 import type { Item, Items, Note } from "./notes";
@@ -36,7 +36,11 @@ export type ContextOptions = {
   insight?: Insight;
   /** 중심을 하나하나 적는 대신 보일 한마디(작업 폴더 기준처럼 중심이 여럿일 때). */
   basis?: string;
+  /** 서버의 검색(낱말 + 의미)이 질의로 찾은 메모. 주면 낱말만으로 찾은 것 대신 이것을 씨앗으로 삼아, 낱말이 달라도 뜻이 가까운 메모에서 그래프를 따라간다. */
+  hits?: ContextHit[];
 };
+/** score는 0..1(가장 잘 맞은 것이 1에 가깝다). semantic은 뜻으로 맞았다는 표시, heading·lines는 맞은 절이다(본문을 줄일 때 그 절을 남긴다). */
+export type ContextHit = { id: string; score: number; terms?: string[]; semantic?: boolean; heading?: string; lines?: [number, number] };
 export type ContextNote = {
   id: string; ref: string; label: string; path: string; updatedAt: number; score: number; why: string; tags: string[];
   text: string; tokens: number; /** 본문 일부만 실었다 */ clipped: boolean;
@@ -61,73 +65,12 @@ export type ContextPack = {
 };
 export type ContextResult = { pack: ContextPack; /** 점마다 0..1 점수(화면의 빛 세기) */ scores: Map<string, number> };
 
-// ── 토큰 어림과 가리기 ─────────────────────────────────────
-
-/** 토큰 수 어림. 영문·숫자·기호는 네 글자에 하나, 한글 등은 1.5글자에 하나로 본다(모델마다 다르므로 넉넉하게 잡은 값이다). */
-export function estimateTokens(text: string): number {
-  let ascii = 0;
-  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) < 128) ascii++;
-  return Math.ceil(ascii / 4 + (text.length - ascii) / 1.5);
-}
-
-const PASS_KEYS = "password|passwd|passphrase|pwd|비밀번호|비번|암호|패스워드";
-const SOFT_KEYS = "secret|token|api[ _-]?key|access[ _-]?key|secret[ _-]?key|client[ _-]?secret|private[ _-]?key|auth[ _-]?key|토큰|인증 ?키|시크릿|비밀 ?키|접속 ?키";
-const KEY_CELL = new RegExp(`^[\\s*_\`]*(?:${PASS_KEYS}|${SOFT_KEYS}|pw)[\\s*_\`]*$`, "i");
-const KEY_VALUE = new RegExp(`((?:${PASS_KEYS}|${SOFT_KEYS})[^\\S\\n]{0,3}(?:[:=：]|\\|)[^\\S\\n]*)([^\\s|]+)`, "gi");
-const PASS_KEY = new RegExp(`^(?:${PASS_KEYS})`, "i");
-const MASK = "[가림]";
-/** 값이 비밀처럼 생겼는가: 숫자나 기호가 섞인 6자 이상 덩어리. 「토큰: 입력」 같은 설명 글은 가리지 않는다. */
-const secretish = (value: string) => value.length >= 6 && /[0-9!@#$%^&*+=~_\-]/.test(value) && /[A-Za-z\p{L}]/u.test(value) && !/^https?:\/\//i.test(value);
-const SHAPES: Array<[RegExp, string]> = [
-  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, "[가림: 개인 키]"],
-  [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, MASK],
-  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, MASK],
-  [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, MASK],
-  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, MASK],
-  [/\bAIza[0-9A-Za-z_-]{30,}/g, MASK],
-  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}/g, MASK],
-];
-
-/** 비밀번호·토큰·키처럼 보이는 값을 가린다. 알려진 토큰 모양, `비밀번호: 값` 꼴, 비밀번호 열이 있는 표, 주소에 든 암호, 길고 뒤섞인 문자열을 본다.
- *  보이는 것만 가리므로 모든 비밀을 막는다고 보지 않는다. */
-export function redactSecrets(text: string): { text: string; count: number } {
-  let count = 0;
-  const mask = (value: string) => { count++; return value; };
-  let out = text;
-  for (const [pattern, to] of SHAPES) out = out.replace(pattern, () => mask(to));
-  out = out.replace(/(\bBearer\s+)[A-Za-z0-9._~+/=-]{16,}/gi, (_match, head: string) => mask(`${head}${MASK}`));
-  out = out.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+(@)/gi, (_match, head: string, at: string) => mask(`${head}${MASK}${at}`));
-  out = out.replace(KEY_VALUE, (match, head: string, value: string) => (value === MASK || value.startsWith("[가림") ? match
-    : PASS_KEY.test(head) || secretish(value) ? mask(`${head}${MASK}`) : match));
-  // 표: 머리 칸이 비밀번호·토큰이면 그 열의 값을 가린다.
-  const lines = out.split("\n");
-  for (let i = 0; i + 1 < lines.length; i++) {
-    if (!/^\s*\|.*\|\s*$/.test(lines[i]!) || !/^\s*\|?\s*:?-{2,}/.test(lines[i + 1]!)) continue;
-    const cells = (line: string) => line.trim().replace(/^\||\|$/g, "").split("|");
-    const columns = cells(lines[i]!).map((cell, at) => (KEY_CELL.test(cell) ? at : -1)).filter((at) => at >= 0);
-    let row = i + 2;
-    for (; row < lines.length && /^\s*\|.*\|\s*$/.test(lines[row]!); row++) {
-      if (!columns.length) continue;
-      const parts = cells(lines[row]!);
-      for (const at of columns) if (parts[at]?.trim() && parts[at]!.trim() !== MASK) { parts[at] = ` ${MASK} `; count++; }
-      lines[row] = `|${parts.join("|")}|`;
-    }
-    i = row - 1;
-  }
-  out = lines.join("\n");
-  // 대소문자와 숫자가 뒤섞인 긴 문자열(해시·UUID는 소문자와 숫자뿐이라 걸리지 않는다).
-  out = out.replace(/(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{32,}={0,2}(?![A-Za-z0-9+/_-])/g, (value) =>
-    (/[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value) && !value.includes("/api/") ? mask(MASK) : value));
-  return { text: out, count };
-}
+// 토큰 어림과 가리기는 서버의 의미 검색도 쓰므로 공용 코어에 있다. 이 모듈에서 쓰던 이름 그대로 내보낸다.
+export { estimateTokens, redactSecrets };
 
 // ── 낱말 색인(BM25) ───────────────────────────────────────
 
-type Doc = { id: string; kind: "note" | "session"; title: string; text: string; lower: string; lowerTitle: string; tf: Map<string, number>; length: number };
-type Index = { docs: Map<string, Doc>; df: Map<string, number>; average: number };
-const INDEXES = new WeakMap<NoteGraph, Index>();
-const K1 = 1.2, B = 0.75;
-const lower = (text: string) => text.normalize("NFC").toLocaleLowerCase("ko-KR");
+const INDEXES = new WeakMap<NoteGraph, LexicalIndex>();
 const labelOf = (item: Item) => coreLabel(item);
 const IMAGE = /!\[([^\]\n]*)\]\(\/api\/v1\/notes\/images\/[0-9a-f]{64}\)/g;
 
@@ -143,82 +86,42 @@ export function pathText(items: Items, parentId: string | null): string {
   return names.join(" › ");
 }
 
-function indexOf(graph: NoteGraph, items: Items): Index {
+/** 그래프의 글(메모와 세션)로 낱말 색인을 만든다. 제목·폴더 경로·태그를 본문보다 무겁게 센다. 계산은 코어의 lexicalIndex가 한다(서버의 검색과 같다). */
+function indexOf(graph: NoteGraph, items: Items): LexicalIndex {
   const cached = INDEXES.get(graph);
   if (cached) return cached;
-  const docs = new Map<string, Doc>(), df = new Map<string, number>();
   const tagsOf = new Map<string, string[]>();
   for (const edge of graph.edges) if (edge.kind === "tag") tagsOf.set(edge.source, [...(tagsOf.get(edge.source) ?? []), graph.byId.get(edge.target)?.label.slice(1) ?? ""]);
-  let total = 0;
+  const docs: LexicalDoc[] = [];
   for (const node of graph.nodes) {
     if (!isDoc(node)) continue;
-    const tf = new Map<string, number>();
-    const add = (text: string, by: number) => { for (const word of tokenize(text)) tf.set(word, (tf.get(word) ?? 0) + by); };
-    let title = node.label, text = "";
     if (node.kind === "note") {
       const item = items[node.id];
       if (item?.kind !== "note") continue;
-      title = labelOf(item);
-      text = item.body;
-      add(item.title, 3);
-      add(pathText(items, item.parentId), 1.5);
-      add((tagsOf.get(node.id) ?? []).join(" "), 2);
-      add(item.body.split("\n").map(plainLine).join("\n"), 1);
+      docs.push({ id: node.id, title: labelOf(item), text: item.body, fields: [[item.title, 3], [pathText(items, item.parentId), 1.5], [(tagsOf.get(node.id) ?? []).join(" "), 2],
+        [item.body.split("\n").map(plainLine).join("\n"), 1]] });
     } else {
       const session = graph.sessions.get(node.id);
       if (!session) continue;
-      title = session.name ?? node.label;
-      text = session.summary;
-      add(session.name ?? "", 3);
-      add(session.summary, 1);
+      docs.push({ id: node.id, title: session.name ?? node.label, text: session.summary, fields: [[session.name ?? "", 3], [session.summary, 1]] });
     }
-    let length = 0;
-    for (const value of tf.values()) length += value;
-    for (const word of tf.keys()) df.set(word, (df.get(word) ?? 0) + 1);
-    total += length;
-    docs.set(node.id, { id: node.id, kind: node.kind as Doc["kind"], title, text, lower: lower(text), lowerTitle: lower(title), tf, length });
   }
-  const index = { docs, df, average: docs.size ? total / docs.size : 1 };
+  const index = lexicalIndex(docs);
   INDEXES.set(graph, index);
   return index;
 }
 
 /** 질의와 맞는 글. 점수(가장 높은 것이 1)와 맞은 낱말을 돌려준다. 낱말 색인(BM25)에 더해, 질의 낱말이 제목·본문에 그대로 나오면 점수를 보탠다
  *  (짧은 영문 약어나 조사가 붙은 낱말처럼 색인이 놓치는 것을 잡는다). */
-export function lexicalSearch(graph: NoteGraph, items: Items, query: string): Map<string, { score: number; terms: string[] }> {
-  const index = indexOf(graph, items);
-  const words = [...new Set(tokenize(query))];
-  const raw = [...new Set(lower(query).split(/[\s,.;:!?()[\]{}"'`“”‘’]+/).filter((term) => term.length >= 2))];
-  const out = new Map<string, { score: number; terms: string[] }>();
-  if (!words.length && !raw.length) return out;
-  const n = index.docs.size;
-  let top = 0;
-  for (const doc of index.docs.values()) {
-    let score = 0;
-    const terms: string[] = [];
-    for (const word of words) {
-      const tf = doc.tf.get(word);
-      if (!tf) continue;
-      const seen = index.df.get(word) ?? 0;
-      const idf = Math.log(1 + (n - seen + 0.5) / (seen + 0.5));
-      score += idf * (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * doc.length / (index.average || 1)));
-      terms.push(word);
-    }
-    for (const term of raw) {
-      if (doc.lowerTitle.includes(term)) { score += term.length >= 3 ? 1.6 : 0.9; if (!terms.some((word) => term.includes(word) || word.includes(term))) terms.push(term); }
-      else if (doc.lower.includes(term)) { score += 0.45; if (!terms.some((word) => term.includes(word) || word.includes(term))) terms.push(term); }
-    }
-    if (score > 0) { out.set(doc.id, { score, terms }); top = Math.max(top, score); }
-  }
-  for (const entry of out.values()) entry.score /= top;
-  return out;
+export function lexicalSearch(graph: NoteGraph, items: Items, query: string): Map<string, LexicalHit> {
+  return lexicalRank(indexOf(graph, items), query);
 }
 
 // ── 고르기 ────────────────────────────────────────────────
 
 const pad = (value: number) => String(value).padStart(2, "0");
 const day = (time: number) => { const date = new Date(time); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`; };
-const EDGE_WORD: Record<EdgeKind, string> = { link: "링크", mention: "언급", similar: "비슷함", tag: "태그", folder: "같은 폴더", chain: "이어받음" };
+const EDGE_WORD: Record<EdgeKind, string> = { link: "링크", mention: "언급", similar: "비슷함", tag: "태그", folder: "같은 폴더", chain: "이어받음", semantic: "뜻이 가까움" };
 
 /** 겹치지 않는 가장 짧은 ID 앞부분(8자 이상). `relay memo --find`가 앞부분을 받으므로 토큰을 아낀다. */
 export function shortRefs(ids: string[]): Map<string, string> {
@@ -252,22 +155,26 @@ function seedWeights(graph: NoteGraph, seeds: string[]): Map<string, number> {
   return out;
 }
 
-/** 본문을 한도에 맞춰 줄인다. 빈 줄로 나뉜 덩어리 가운데 첫 덩어리와 질의 낱말이 든 덩어리를 먼저 남기고, 원래 순서대로 잇는다. */
-export function excerpt(body: string, tokens: number, terms: string[] = []): { text: string; clipped: boolean } {
+/** 본문을 한도에 맞춰 줄인다. 빈 줄로 나뉜 덩어리 가운데 첫 덩어리와 질의 낱말이 든 덩어리를 먼저 남기고, 원래 순서대로 잇는다.
+ *  focus(줄 범위, 1부터)를 주면 그 줄에 걸친 덩어리를 낱말이 든 덩어리보다 먼저 남긴다(의미 검색이 짚은 절). */
+export function excerpt(body: string, tokens: number, terms: string[] = [], focus?: [number, number]): { text: string; clipped: boolean } {
   const whole = body.replace(/\s+$/, "");
   if (estimateTokens(whole) <= tokens) return { text: whole, clipped: false };
-  const blocks: string[] = [];
-  let current: string[] = [], fenced = false;
+  const blocks: string[] = [], starts: number[] = [];
+  let current: string[] = [], fenced = false, lineNo = 0, startedAt = 1;
   for (const line of whole.split("\n")) {
+    lineNo++;
     if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
-    if (!line.trim() && !fenced) { if (current.length) { blocks.push(current.join("\n")); current = []; } continue; }
+    if (!line.trim() && !fenced) { if (current.length) { blocks.push(current.join("\n")); starts.push(startedAt); current = []; } continue; }
+    if (!current.length) startedAt = lineNo;
     current.push(line);
   }
-  if (current.length) blocks.push(current.join("\n"));
+  if (current.length) { blocks.push(current.join("\n")); starts.push(startedAt); }
   const wanted = terms.map(lower);
   const scored = blocks.map((block, at) => {
     const text = lower(block);
     let score = at === 0 ? 1000 : 0;
+    if (focus && starts[at]! <= focus[1] && starts[at]! + block.split("\n").length - 1 >= focus[0]) score += 100;
     for (const term of wanted) if (text.includes(term)) score += 10;
     if (/^#{1,6}\s/.test(block)) score += 1;
     return { at, block, score: score - at * 0.01 };
@@ -330,6 +237,17 @@ export function buildContext(graph: NoteGraph, items: Items, options: ContextOpt
   const brief = options.brief === true, hide = options.redact !== false;
   const explicit = seedWeights(graph, (options.seeds ?? []).filter((id) => graph.byId.has(id)));
   const lexical = query ? lexicalSearch(graph, items, query) : new Map<string, { score: number; terms: string[] }>();
+  // 서버의 검색 결과가 있으면 메모는 그 순위를 따른다(낱말 + 의미). 거기에 들지 못한 메모의 낱말 점수는 낮추고, 세션은 낱말 점수를 그대로 쓴다.
+  const found = new Map<string, ContextHit>();
+  if (query && options.hits?.length) {
+    const best = Math.max(...options.hits.map((hit) => hit.score)) || 1;
+    for (const [id, hit] of lexical) if (graph.byId.get(id)?.kind === "note") hit.score *= 0.35;
+    for (const hit of options.hits) {
+      if (graph.byId.get(hit.id)?.kind !== "note") continue;
+      found.set(hit.id, hit);
+      lexical.set(hit.id, { score: Math.max(0.3, hit.score / best), terms: hit.terms?.length ? hit.terms : lexical.get(hit.id)?.terms ?? [] });
+    }
+  }
   const queryTerms = [...new Set([...tokenize(query), ...lower(query).split(/\s+/).filter((term) => term.length >= 2)])];
   const refs = shortRefs(Object.keys(items));
   const refOf = (id: string) => refs.get(id) ?? id;
@@ -358,6 +276,7 @@ export function buildContext(graph: NoteGraph, items: Items, options: ContextOpt
 
   const { prev } = spread(graph, [...seeds].filter(([, weight]) => weight >= 0.2).map(([id]) => id));
   const why = (id: string) => (explicit.get(id) === 1 ? "중심으로 지정"
+    : found.get(id)?.semantic && !lexical.get(id)!.terms.length ? `질의와 뜻이 가까움${found.get(id)!.heading ? `(${found.get(id)!.heading!.split(" > ").pop()})` : ""}`
     : lexical.has(id) && lexical.get(id)!.score >= 0.25 ? `질의와 맞음(${lexical.get(id)!.terms.slice(0, 4).join(", ")})`
       : trail(graph, id, prev) || (explicit.has(id) ? "지정한 묶음에 속함" : "간접 연결"));
 
@@ -409,7 +328,7 @@ export function buildContext(graph: NoteGraph, items: Items, options: ContextOpt
       const remaining = coreWanted.length - core.length;
       const allowance = Math.max(150, Math.min(coreLeft, remaining <= 1 ? coreLeft : Math.max(coreCap * 0.45, coreLeft / remaining)));
       const body = clean(item.body);
-      const { text, clipped } = excerpt(body, Math.floor(allowance), queryTerms);
+      const { text, clipped } = excerpt(body, Math.floor(allowance), queryTerms, found.get(node.id)?.lines);
       const tokens = estimateTokens(text) + 30;
       core.push({ id: node.id, ref: refOf(node.id), label, path, updatedAt: item.updatedAt, score: scores.get(node.id)!, why: why(node.id), tags: tagsOf(node.id), text, tokens, clipped });
       coreLeft -= tokens;
