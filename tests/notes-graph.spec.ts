@@ -117,14 +117,84 @@ test("메모 그래프: 점을 누르면 카드가 열리고, 연결을 눌러 �
   expect(errors).toEqual([]);
 });
 
+test("메모 그래프: 두 번 눌러 연 메모의 「그래프」를 누르면 떠나기 직전의 그래프(카메라·고른 점·찾기·도구)로 돌아간다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await seed(page, SAMPLE, { expanded: ["f-work", "f-meet"] });
+  const notes = page.locator(win("notes"));
+  await notes.locator(".titlebar").dblclick({ position: { x: 200, y: 20 } });
+  // 그래프에서 연 메모가 아니면 넓은 창에 뒤로 가기가 없다.
+  await notes.getByRole("treeitem", { name: "회고", exact: true }).click();
+  await expect(notes.getByRole("button", { name: "그래프", exact: true })).toHaveCount(0);
+  await openGraph(page);
+
+  // 찾기어를 적고, 발견 패널을 열고, 확대해 둔 뒤 메모 하나를 두 번 눌러 연다.
+  const search = notes.getByLabel("그래프에서 찾기");
+  await search.fill("회의");
+  await page.locator(".graph-stage").focus();
+  await page.keyboard.press("i");
+  await expect(graph(page)).toHaveAttribute("data-tool", "insight");
+  await settled(page);
+  await page.keyboard.press("+");
+  await settled(page);
+  const camera = () => page.evaluate(() => (document.querySelector(".notes-graph") as HTMLElement & { relayGraph: GraphApi }).relayGraph.camera);
+  const before = await camera();
+  const weekly = (await pointOf(page, "n-weekly"))!;
+  await page.mouse.dblclick(weekly.x, weekly.y);
+  await expect(graph(page)).toHaveCount(0);
+  await expect(notes.locator("#note-title")).toHaveValue("주간 회의");
+
+  // 「그래프」로 돌아가면 같은 카메라·찾기어·도구·고른 점으로 열린다.
+  const back = notes.getByRole("button", { name: "그래프", exact: true });
+  await expect(back).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("note-back-to-graph.png") });
+  await back.click();
+  await expect(graph(page)).toBeVisible();
+  await settled(page);
+  await expect(graph(page)).toHaveAttribute("data-active", "n-weekly");
+  await expect(graph(page)).toHaveAttribute("data-tool", "insight");
+  await expect(search).toHaveValue("회의");
+  const after = await camera();
+  expect(after.k).toBeCloseTo(before.k, 2);
+  expect(Math.abs(after.x - before.x)).toBeLessThan(2);
+  expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+  await page.screenshot({ path: test.info().outputPath("graph-return.png") });
+
+  // 트리에서 다른 메모로 옮겨 가면 「그래프」는 사라지고, 그래프 단추로 열면 처음처럼 전체에 맞춰 열린다.
+  const again = (await pointOf(page, "n-weekly"))!;
+  await page.mouse.dblclick(again.x, again.y);
+  await expect(notes.locator("#note-title")).toHaveValue("주간 회의");
+  await notes.getByRole("treeitem", { name: "회고", exact: true }).click();
+  await expect(notes.locator("#note-title")).toHaveValue("회고");
+  await expect(back).toHaveCount(0);
+  await openGraph(page);
+  await expect(graph(page)).not.toHaveAttribute("data-tool", /.+/);
+  await expect(search).toHaveValue("");
+
+  // 좁은 창에서도 「그래프」가 「목록」 자리에 놓여 그래프로 돌아간다(카드의 「메모 열기」도 두 번 누르기와 같은 길로 연다).
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settled(page);
+  await expect(notes.locator(".graph-card-title")).toHaveText("회고");
+  await notes.locator(".graph-card").getByRole("button", { name: "메모 열기" }).click();
+  await expect(notes.locator("#note-title")).toHaveValue("회고");
+  await expect(notes.getByRole("button", { name: "목록", exact: true })).toHaveCount(0);
+  await back.click();
+  await expect(graph(page)).toBeVisible();
+  await expect(graph(page)).toHaveAttribute("data-active", "n-retro");
+  expect(errors).toEqual([]);
+});
+
 test("메모 그래프: 찾기·보일 연결 고르기·집중 보기 다시 가운데 두기, 고른 설정은 새로 고쳐도 남는다", async ({ page }) => {
   await seed(page, SAMPLE, { expanded: ["f-work"] });
   const notes = page.locator(win("notes"));
   await notes.locator(".titlebar").dblclick({ position: { x: 200, y: 20 } });
   await openGraph(page);
 
-  // 찾기: 제목·본문과 태그(그 태그를 쓴 메모 포함)를 밝힌다. Enter는 가장 많이 이어진 것을 고른다.
+  // 찾기: 위쪽 가운데에 넓게 놓인다.
   const search = notes.getByLabel("그래프에서 찾기");
+  const field = (await notes.locator(".graph-search").boundingBox())!, area = (await graph(page).boundingBox())!;
+  expect(field.width).toBeGreaterThanOrEqual(360);
+  expect(Math.abs(field.x + field.width / 2 - (area.x + area.width / 2))).toBeLessThan(24);
+  // 제목·본문과 태그(그 태그를 쓴 메모 포함)를 밝힌다. Enter는 가장 많이 이어진 것을 고른다.
   await search.fill("여행");
   await expect(notes.locator(".graph-search-count")).toHaveText("3");
   await search.press("Enter");
@@ -219,6 +289,15 @@ test("메모 그래프: 닫으면 물러나고 편집기가 떠오르며, 움직
   for (const id of await page.evaluate(() => (document.querySelector(".notes-graph") as HTMLElement & { relayGraph: GraphApi }).relayGraph.visibleIds())) {
     expect((await pointOf(page, id))!.y).toBeLessThan(sheet.y);
   }
+  // 찾기는 보기 바꾸기 아래 줄을 통째로 쓰고, 눌러서 바로 쓸 수 있다.
+  const field = (await notes.locator(".graph-search").boundingBox())!, wide = (await graph(page).boundingBox())!;
+  expect(field.width).toBeGreaterThan(wide.width * 0.85);
+  expect(field.y).toBeGreaterThan((await notes.getByRole("radio", { name: "관계망" }).boundingBox())!.y + 20);
+  await notes.locator(".graph-search").click();
+  await expect(notes.getByLabel("그래프에서 찾기")).toBeFocused();
+  await page.keyboard.type("회의");
+  await expect(notes.locator(".graph-search-count")).toBeVisible();
+  await notes.getByRole("button", { name: "검색어 지우기" }).click();
   await page.locator(".graph-stage").focus();
   await page.keyboard.press("Escape");
   await expect(notes.locator(".graph-card")).toHaveCount(0);

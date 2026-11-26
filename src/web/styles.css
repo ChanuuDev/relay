@@ -901,6 +901,9 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-content-bar { display: flex; align-items: center; gap: 12px; min-height: calc(1em + 23px); padding: 0 20px; flex-shrink: 0; font-size: var(--fs-11); color: var(--glass-text-muted); }
 .notes-back { display: none; margin-left: -8px; }
 .notes-back svg { width: 14px; height: 14px; }
+/* 그래프에서 연 메모의 「그래프」는 넓은 창에서도 보인다(목록은 옆에 늘 있지만 그래프는 닫혀 있으므로). */
+.notes-back.notes-back-graph { display: inline-flex; flex-shrink: 0; color: var(--notes-accent); }
+.notes-back.notes-back-graph:hover { color: var(--notes-accent); background: color-mix(in srgb, var(--notes-accent) 12%, transparent); }
 .notes-crumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; white-space: nowrap; }
 .notes-crumbs button { padding: 2px 5px; border-radius: 4px; color: inherit; transition: background-color .12s ease-out, color .12s ease-out; }
 .notes-crumbs button:hover { background: var(--glass-control-fill); color: var(--foreground); }
@@ -1267,11 +1270,14 @@ canvas.md-stl:active { cursor: grabbing; }
   background: var(--graph-glass); border: .5px solid var(--graph-edge); box-shadow: var(--graph-shadow), var(--glass-highlight);
   backdrop-filter: blur(22px) saturate(180%); -webkit-backdrop-filter: blur(22px) saturate(180%); }
 
-.graph-bar { position: absolute; z-index: 3; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; gap: 10px; pointer-events: none;
-  animation: graph-drop .5s .06s cubic-bezier(.2, .8, .2, 1) both; }
+/* 위쪽 막대: 보기 바꾸기 | 찾기(가운데) | 거르기. 양옆 칸이 같은 몫을 나눠 찾기가 가운데에 오고,
+   왼쪽이 넓어 자리가 모자라면 찾기가 오른쪽으로 비켜 가며 좁아진다. */
+.graph-bar { position: absolute; z-index: 3; top: 12px; left: 12px; right: 12px; display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(180px, 460px) minmax(max-content, 1fr);
+  grid-template-areas: "start search end"; align-items: center; gap: 10px; pointer-events: none; animation: graph-drop .5s .06s cubic-bezier(.2, .8, .2, 1) both; }
 .graph-bar > * { pointer-events: auto; }
 .graph-back { display: none; }
-.graph-bar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.graph-bar-start { grid-area: start; justify-self: start; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.graph-bar-end { grid-area: end; justify-self: end; display: flex; align-items: center; gap: 8px; min-width: 0; }
 
 .graph-views { position: relative; display: inline-flex; padding: 3px; border-radius: 999px; }
 .graph-views button { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px 0 10px; border-radius: 999px;
@@ -1285,12 +1291,22 @@ canvas.md-stl:active { cursor: grabbing; }
   transform: translateX(var(--thumb-x, 0)); box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 0 0 .5px var(--graph-edge); }
 .graph-views[data-ready] .graph-views-thumb { opacity: 1; transition: transform .46s cubic-bezier(.32, 1.32, .5, 1), width .46s cubic-bezier(.32, 1.32, .5, 1), opacity .2s; }
 
-.graph-search { display: flex; align-items: center; gap: 6px; height: 34px; width: 188px; padding: 0 10px 0 11px; border-radius: 999px; cursor: text;
-  transition: width .32s cubic-bezier(.2, .8, .2, 1), background-color .2s; }
-.graph-search:focus-within, .graph-search[data-filled] { width: 248px; background: var(--graph-glass-strong); }
+.graph-search { grid-area: search; display: flex; align-items: center; gap: 8px; height: 38px; width: 100%; min-width: 0; padding: 0 12px 0 14px; border-radius: 999px; cursor: text;
+  transition: background-color .2s, box-shadow .2s; }
+.graph-search:hover { background: var(--graph-glass-strong); }
+.graph-search:focus-within, .graph-search[data-filled] { background: var(--graph-glass-strong); }
 .graph-search:focus-within { box-shadow: var(--graph-shadow), 0 0 0 3px color-mix(in srgb, var(--notes-accent) 22%, transparent); }
-.graph-search > svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--glass-text-muted); }
-.graph-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: var(--fs-12); }
+.graph-search > svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--glass-text-muted); }
+.graph-search:focus-within > svg { color: var(--notes-accent); }
+.graph-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--foreground); font-size: var(--fs-13); }
+.graph-search-key { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 6px; font: 600 11px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--glass-text-muted); border: .5px solid var(--graph-edge); background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+.graph-search:focus-within .graph-search-key { display: none; }
+/* 터치 화면: 단축키 표시는 감추고, 16px 아래 글자는 iOS가 누를 때 화면을 확대하므로 16px로 둔다. */
+@media (hover: none) {
+  .graph-search input { font-size: 16px; }
+  .graph-search-key { display: none; }
+}
 .graph-search input::placeholder { color: var(--glass-text-muted); }
 .graph-search-count { min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; display: inline-grid; place-items: center; font-size: 10.5px; font-weight: 650;
   font-variant-numeric: tabular-nums; color: var(--notes-accent); background: color-mix(in srgb, var(--notes-accent) 15%, transparent); animation: graph-icon-pop .35s cubic-bezier(.34, 1.56, .64, 1); }
@@ -1629,11 +1645,12 @@ canvas.md-stl:active { cursor: grabbing; }
   .notes-graph[data-tool] .graph-card { display: none; }
 }
 @container graph (max-width: 40em) {
-  .graph-rail { flex-direction: row; top: 56px; }
+  .graph-bar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "start end" "search search"; row-gap: 8px; }
+  .graph-rail { flex-direction: row; top: 104px; }
   .graph-rail-sep { width: .5px; height: auto; margin: 7px 3px; }
   .graph-panel { top: auto; left: 10px; right: 10px; bottom: 56px; width: auto; height: 48%; max-height: 420px; animation-name: graph-sheet-in; }
   .graph-panel.material-chrome, .graph-card.material-chrome { background: color-mix(in srgb, var(--graph-base) 90%, transparent); }
-  .graph-hint, .graph-notice { top: 100px; max-width: calc(100% - 24px); }
+  .graph-hint, .graph-notice { top: 148px; max-width: calc(100% - 24px); }
 }
 
 /* 닫기: 살짝 줄며 흐려진다. 메모를 열 때는 점 속으로 파고든 뒤 사라진다. */
@@ -1660,16 +1677,8 @@ canvas.md-stl:active { cursor: grabbing; }
   .graph-back[data-slot="button"] { width: 34px; height: 34px; border-radius: 50%; background: var(--graph-glass); border: .5px solid var(--graph-edge); box-shadow: var(--graph-shadow); }
   .graph-views button { padding: 0 9px; }
   .graph-views button span { display: none; }
-  .graph-search { width: 132px; }
-  .graph-search:focus-within, .graph-search[data-filled] { width: 168px; }
   .graph-card { top: auto; left: 10px; right: 10px; bottom: 56px; width: auto; max-height: 48%; animation-name: graph-sheet-in; }
   .graph-legend > .graph-chip { display: none; }
-}
-@container notes (max-width: 30em) {
-  .graph-search { width: 34px; padding: 0 9px; }
-  .graph-search input, .graph-search-count { display: none; }
-  .graph-search:focus-within, .graph-search[data-filled] { width: 150px; }
-  .graph-search:focus-within input, .graph-search[data-filled] input { display: block; }
 }
 @media (prefers-reduced-motion: reduce) {
   .notes-graph, .notes-graph::before, .notes-graph *, .notes-content[data-arrive] > *, .graph-filters { animation: none !important; transition: none !important; }

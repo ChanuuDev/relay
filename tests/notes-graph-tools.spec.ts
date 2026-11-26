@@ -8,25 +8,32 @@ useRelayServer();
 /** 점을 누른다. 메모가 늘거나 보기가 바뀐 직후에는 점이 아직 움직이므로 자리가 멎은 뒤에 누르고,
  *  점이 패널·카드 밑에 가렸거나 화면 밖이면(확대해 다른 점을 보고 있을 때) 전체가 보이게 맞춘 뒤에 누른다. */
 async function clickNode(page: Page, id: string) {
+  // 멈춘 뒤에 누른다. 화면 맞추기는 처음에 천천히 움직이므로 한 번이 아니라 세 번 잇달아 멈춰 있어야 멈춘 것으로 본다.
   const rest = async () => {
-    let at = await pointOf(page, id);
-    for (let attempt = 0; attempt < 60; attempt++) {
+    let at = await pointOf(page, id), still = 0;
+    for (let attempt = 0; attempt < 80 && still < 3; attempt++) {
       await page.waitForTimeout(80);
       const next = await pointOf(page, id);
-      const still = Boolean(at && next && Math.hypot(next.x - at.x, next.y - at.y) < 0.5);
+      still = at && next && Math.hypot(next.x - at.x, next.y - at.y) < 0.5 ? still + 1 : 0;
       at = next;
-      if (still) break;
     }
     return at;
   };
-  const reachable = (at: { x: number; y: number } | null) => (at ? page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest(".graph-stage")), [at.x, at.y]) : false);
+  // 패널·카드(DOM) 밑이나 캔버스에 그린 미니맵 밑에 있으면 누를 수 없다.
+  const reachable = (at: { x: number; y: number } | null) => (at ? page.evaluate(([x, y]) => {
+    if (!document.elementFromPoint(x!, y!)?.closest(".graph-stage")) return false;
+    const host = document.querySelector(".notes-graph") as HTMLElement & { relayGraph: { miniBox: { x: number; y: number; w: number; h: number } | null } };
+    const mini = host.relayGraph.miniBox, rect = host.querySelector(".graph-canvas")!.getBoundingClientRect();
+    return !mini || !(x! - rect.left >= mini.x - 4 && x! - rect.left <= mini.x + mini.w + 4 && y! - rect.top >= mini.y - 4 && y! - rect.top <= mini.y + mini.h + 4);
+  }, [at.x, at.y]) : false);
+  // 가려져 있으면 전체가 보이게 맞추고, 맞춘 뒤에도 누를 수 있는지 다시 본다.
   let at = await rest();
-  if (!(await reachable(at))) {
+  for (let attempt = 0; attempt < 3 && !(await reachable(at)); attempt++) {
     await page.locator(".graph-stage").focus();
     await page.keyboard.press("0");
     at = await rest();
   }
-  expect(at).not.toBeNull();
+  expect(await reachable(at)).toBe(true);
   await page.mouse.click(at!.x, at!.y);
 }
 /** 서버에 저장된 메모 본문(화면이 고친 것이 저장소까지 갔는지 본다). */
@@ -300,6 +307,12 @@ test("메모 그래프 도구: 주제로 색 나누기, 시간 흐름 재생, �
   for (let i = 0; i < 5; i++) await page.keyboard.press("+");
   await expect.poll(miniShown).toBe(true);
   await settled(page);
+  // 미니맵은 왼쪽 아래, 범례 줄 위에 놓인다.
+  const mini = (await page.evaluate(() => (document.querySelector(".notes-graph") as HTMLElement & { relayGraph: { miniBox: { x: number; y: number; w: number; h: number } | null } }).relayGraph.miniBox))!;
+  const stageArea = (await stage.boundingBox())!;
+  expect(mini).toMatchObject({ w: 222, h: 150 });
+  expect(mini.x).toBeLessThan(stageArea.width / 4);
+  expect(mini.y + mini.h).toBeGreaterThan(stageArea.height - 90);
   await page.screenshot({ path: test.info().outputPath("tools-minimap-dark.png") });
   await page.keyboard.press("0");
   await expect.poll(miniShown).toBe(false);

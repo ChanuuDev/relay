@@ -815,11 +815,16 @@ test("Dock: 메모 아이콘을 우클릭하면 Relay 안에서 열기·새 창�
   await expect(notes).toBeHidden();
   await expect(icon).toHaveAttribute("aria-haspopup", "menu");
 
-  // 우클릭하면 아이콘 바로 위에 메뉴가 열린다.
+  // 우클릭하면 아이콘 바로 위에 메뉴가 열린다. 아이콘이 커지는 중에 눌러도 다 커진 아이콘 위로 따라 올라간다.
   await icon.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText(["Relay 안에서 열기", "새 창으로 열기"]);
+  const gap = async () => { const [m, i] = [await menu.boundingBox(), await icon.boundingBox()]; return i!.y - (m!.y + m!.height); };
+  await expect.poll(gap, { timeout: 2000 }).toBeGreaterThanOrEqual(0);
+  // 따라가기가 멈춘 뒤에도 겹치지 않고, 아이콘에서 멀리 떨어지지 않는다.
+  await page.waitForTimeout(300);
+  expect(await gap()).toBeGreaterThanOrEqual(0);
+  expect(await gap()).toBeLessThan(24);
   const [menuBox, iconBox] = [await menu.boundingBox(), await icon.boundingBox()];
-  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(iconBox!.y);
   expect(Math.abs(menuBox!.x + menuBox!.width / 2 - (iconBox!.x + iconBox!.width / 2))).toBeLessThan(menuBox!.width / 2);
   await page.screenshot({ path: test.info().outputPath("dock-menu.png"), clip: { x: iconBox!.x - 240, y: menuBox!.y - 40, width: 560, height: iconBox!.y + iconBox!.height - menuBox!.y + 60 } });
   await menu.getByRole("menuitem", { name: "Relay 안에서 열기" }).click();

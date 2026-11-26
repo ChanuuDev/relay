@@ -19,7 +19,7 @@ import { popoutApp } from "../../lib/popout";
 import { popOut } from "../../lib/popout-open";
 import { reduced } from "../../lib/motion";
 import { useNoteGraph } from "../../lib/note-graph-prefs";
-import { NotesGraph } from "./notes-graph";
+import { NotesGraph, type GraphReturn } from "./notes-graph";
 import { useDesktop } from "../../lib/desktop-store";
 import { navigate, sessionUrl } from "../../lib/store";
 
@@ -67,6 +67,9 @@ export function NotesWindow() {
   const [graphLeaving, setGraphLeaving] = useState(false);
   const [arrive, setArrive] = useState(false);
   const graphTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // 그래프에서 연 메모·폴더라면 「그래프」 단추로 떠나기 직전의 그래프(카메라·고른 점·찾기·도구)로 돌아간다.
+  // 그래프를 다시 여는 동안에는 그 상태로 열도록 넘겨 주고, 다른 항목으로 옮겨 가면 버린다.
+  const [graphReturn, setGraphReturn] = useState<GraphReturn | null>(null);
   // 닫히는 메뉴의 종료 트윈이 끝나기 전에 새 메뉴를 열면, 늦게 오는 종료 알림은 무시한다.
   const leavingRef = useRef(false);
   const menuNext = useRef<{ focus: string | null | false; then?: Menu }>({ focus: null });
@@ -113,12 +116,24 @@ export function NotesWindow() {
     graphTimer.current = setTimeout(() => { useNoteGraph.getState().setOpen(false); setGraphLeaving(false); setArrive(true); }, 230);
   }
   function toggleGraph() {
+    setGraphReturn(null);
     if (graphOpen && !graphLeaving) { closeGraph(); return; }
     clearTimeout(graphTimer.current);
     setGraphLeaving(false);
     useNoteGraph.getState().setOpen(true);
     setPane("content");
   }
+  /** 그래프에서 연 메모에서 그 그래프로 돌아간다. */
+  function backToGraph() {
+    clearTimeout(graphTimer.current);
+    setGraphLeaving(false);
+    useNoteGraph.getState().setOpen(true);
+    setPane("content");
+  }
+  useEffect(() => {
+    if (graphReturn && !graphOpen && selected !== graphReturn.node) setGraphReturn(null);
+  }, [graphReturn, graphOpen, selected]);
+  const toGraph = graphReturn && !graphOpen && selected === graphReturn.node ? backToGraph : undefined;
 
   function newNote(parentId = targetFolder(items, selected)) {
     closeGraph(true);
@@ -320,13 +335,13 @@ export function NotesWindow() {
       </aside>} main={
       <section className="notes-content" aria-label={graphOpen ? "메모 그래프" : current?.kind === "note" ? "메모 편집" : "폴더 내용"} data-arrive={arrive ? "" : undefined}>
         {graphOpen
-          ? <NotesGraph items={items} selected={selected} leaving={graphLeaving} onSelect={select} onBack={() => setPane("tree")}
-              onOpen={(id) => { closeGraph(true); open(id); setArrive(true); }}
+          ? <NotesGraph items={items} selected={selected} leaving={graphLeaving} resume={graphReturn} onSelect={select} onBack={() => setPane("tree")}
+              onOpen={(id, back) => { closeGraph(true); open(id); setGraphReturn(back ?? null); setArrive(true); }}
               onOpenSession={popoutApp ? undefined : (id) => { navigate(sessionUrl(id)); useDesktop.getState().open("sessions"); }} />
           : current?.kind === "note"
-          ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onOpen={open}
+          ? <NoteEditor key={current.id} note={current} items={items} onBack={() => setPane("tree")} onGraph={toGraph} onOpen={open}
               onCopyId={() => void copyReference(current.id)} onMenu={(left, top) => openMenu("item", current.id, left, top)} />
-          : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")}
+          : <FolderView folder={current?.kind === "folder" ? current : null} items={items} map={tree.map} counts={tree.notes} onOpen={open} onBack={() => setPane("tree")} onGraph={toGraph}
               onCopyId={(id) => void copyReference(id)} onMenu={(id, left, top) => openMenu("item", id, left, top)}
               onNewNote={(id) => newNote(id)} onNewFolder={(id) => newFolder(id)} onImport={() => fileRef.current?.click()}
               empty={counts.notes + counts.folders === 0} loading={status !== "ready"} />}
@@ -662,12 +677,21 @@ function CopyIdButton({ kind, onCopy }: { kind: Item["kind"]; onCopy: () => void
 /** 내용 막대를 우클릭하면 트리의 항목 메뉴(ID 복사 포함)를 그 자리에 연다. 단추·경로 위에서는 브라우저 메뉴를 두지 않는다. */
 const barMenu = (open: (left: number, top: number) => void) => (event: ReactMouseEvent) => { event.preventDefault(); open(event.clientX, event.clientY); };
 
-function NoteEditor({ note, items, onBack, onOpen, onCopyId, onMenu }: {
-  note: Note; items: Items; onBack: () => void; onOpen: (id: string) => void; onCopyId: () => void; onMenu: (left: number, top: number) => void;
+/** 내용 막대 왼쪽의 뒤로 가기. 그래프에서 열었으면 그 그래프로(모든 너비), 아니면 좁은 창에서 목록으로 돌아간다. */
+function BackButton({ onBack, onGraph }: { onBack: () => void; onGraph?: () => void }) {
+  return onGraph
+    ? <Button type="button" variant="ghost" size="xs" className="notes-back notes-back-graph" title="그래프로 돌아가기: 이 메모를 열기 직전의 그래프로 돌아갑니다" onClick={onGraph}>
+        <ChevronLeft aria-hidden="true" />그래프
+      </Button>
+    : <Button type="button" variant="ghost" size="xs" className="notes-back" onClick={onBack}><ChevronLeft aria-hidden="true" />목록</Button>;
+}
+
+function NoteEditor({ note, items, onBack, onGraph, onOpen, onCopyId, onMenu }: {
+  note: Note; items: Items; onBack: () => void; onGraph?: () => void; onOpen: (id: string) => void; onCopyId: () => void; onMenu: (left: number, top: number) => void;
 }) {
   return <div className="note-editor">
     <div className="notes-content-bar" onContextMenu={barMenu(onMenu)}>
-      <Button type="button" variant="ghost" size="xs" className="notes-back" onClick={onBack}><ChevronLeft aria-hidden="true" />목록</Button>
+      <BackButton onBack={onBack} onGraph={onGraph} />
       <Crumbs items={items} parentId={note.parentId} onOpen={onOpen} />
       <time className="note-time" dateTime={new Date(note.updatedAt).toISOString()}>{dateFormat.format(note.updatedAt)}</time>
       <CopyIdButton kind="note" onCopy={onCopyId} />
@@ -676,8 +700,9 @@ function NoteEditor({ note, items, onBack, onOpen, onCopyId, onMenu }: {
   </div>;
 }
 
-function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onNewNote, onNewFolder, onImport, onCopyId, onMenu }: {
+function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack, onGraph, onNewNote, onNewFolder, onImport, onCopyId, onMenu }: {
   folder: Folder | null; items: Items; map: Map<string | null, Item[]>; counts: Map<string, number>; empty: boolean; loading: boolean; onOpen: (id: string) => void; onBack: () => void;
+  onGraph?: () => void;
   onCopyId: (id: string) => void; onMenu: (id: string, left: number, top: number) => void;
   onNewNote: (parentId: string | null) => void; onNewFolder: (parentId: string | null) => void; onImport: () => void;
 }) {
@@ -700,7 +725,7 @@ function FolderView({ folder, items, map, counts, empty, loading, onOpen, onBack
   </div>;
   return <div className="folder-view">
     <div className="notes-content-bar" onContextMenu={folder ? barMenu((left, top) => onMenu(folder.id, left, top)) : undefined}>
-      <Button type="button" variant="ghost" size="xs" className="notes-back" onClick={onBack}><ChevronLeft aria-hidden="true" />목록</Button>
+      <BackButton onBack={onBack} onGraph={onGraph} />
       {folder && <Crumbs items={items} parentId={folder.parentId} onOpen={onOpen} current={folder.name} />}
       {folder && <CopyIdButton kind="folder" onCopy={() => onCopyId(folder.id)} />}
     </div>

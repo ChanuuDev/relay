@@ -37,7 +37,7 @@ type EdgeState = {
   draw: number; drawAt: number;
   styleFrom: EdgeStyle; styleTo: EdgeStyle; removed: boolean;
 };
-type Camera = { x: number; y: number; k: number };
+export type Camera = { x: number; y: number; k: number };
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -160,7 +160,8 @@ export class GraphScene {
     const wide = this.w > 640;
     // 카드와 패널이 함께 들어가지 못하는 너비에서는 패널이 열린 동안 카드가 접힌다.
     const card = this.card && !(this.panel && this.w < 896);
-    return { top: wide ? 64 : 104, left: this.panel && wide ? 364 : wide ? 64 : 24, right: card && wide ? 304 : 24,
+    // 좁은 너비에서는 위쪽 막대가 두 줄(보기 바꾸기·찾기)이고 그 아래에 도구 레일이 가로로 놓인다.
+    return { top: wide ? 64 : 150, left: this.panel && wide ? 364 : wide ? 64 : 24, right: card && wide ? 304 : 24,
       bottom: (card || this.panel) && !wide ? Math.min(this.h * 0.48, 420) + 66 : 60 };
   }
   labelsAlways = false;
@@ -238,7 +239,49 @@ export class GraphScene {
 
   private begin() {
     this.started = true;
-    this.relayout("enter");
+    const back = this.returning;
+    this.returning = null;
+    if (back) this.resume(back.camera, back.from);
+    else this.relayout("enter");
+  }
+
+  /** 메모를 열었다가 돌아올 때 쓸 자리: 처음 들어오는 움직임 대신 떠나기 직전의 카메라로 돌아간다. 데이터를 넣기 전에 부른다. */
+  returnTo(camera: Camera, from: string | null) {
+    if ([camera.x, camera.y, camera.k].every(Number.isFinite) && camera.k > 0) this.returning = { camera: { ...camera }, from };
+  }
+  private returning: { camera: Camera; from: string | null } | null = null;
+
+  /** 점과 선을 피어나게 하지 않고 바로 제자리에 두고, 열었던 점 속에서 물러나듯 떠나기 직전의 카메라로 돌아간다. */
+  private resume(camera: Camera, from: string | null) {
+    this.live = false;
+    this.layout = this.computeLayout();
+    this.prevDecor = null;
+    const layout = this.layout;
+    for (const state of this.nodes.values()) {
+      const target = layout.positions.get(state.node.id);
+      const shown = target && !layout.hidden.has(state.node.id) ? 1 : 0;
+      const at = target ?? { x: 0, y: 0 };
+      state.x = at.x; state.y = at.y; state.from = { ...at }; state.to = { ...at };
+      state.vis = state.visFrom = state.visTo = shown; state.appear = shown;
+      state.angleFrom = state.angleTo = layout.labelAngle.get(state.node.id) ?? null;
+      state.morph = 1; state.delay = 0;
+    }
+    for (const state of this.edges.values()) {
+      state.styleFrom = state.styleTo = edgeStyle(layout.view, state.edge.kind);
+      state.vis = state.visFrom = state.visTo = state.s.visTo > 0 && state.t.visTo > 0 ? 1 : 0;
+      state.draw = 1;
+    }
+    // 길이 0인 전환: 다음 프레임에 끝나며 관계망이면 시뮬레이션을 이어 받는다.
+    this.transition = { start: performance.now(), duration: 0, spread: 0 };
+    const origin = from ? layout.positions.get(from) : undefined;
+    if (origin && !this.reduced) {
+      this.cam = { x: origin.x, y: origin.y, k: Math.max(3.2, camera.k * 2.6) };
+      this.camTarget = { ...this.cam };
+      this.flyTo(camera, 560);
+    } else {
+      this.cam = { ...camera }; this.camTarget = { ...camera }; this.fly = null;
+      this.kick();
+    }
   }
 
   private sync(data: SceneData) {
@@ -511,6 +554,8 @@ export class GraphScene {
   get isReplaying() { return this.replaying !== null; }
   /** 미니맵이 떠 있는가(테스트가 본다). */
   get miniShown() { return this.miniAlpha > 0.5; }
+  /** 미니맵이 놓인 자리(그래프 영역 기준, 테스트가 본다). */
+  get miniBox() { return this.mini && this.miniAlpha > 0.5 ? { x: this.mini.x, y: this.mini.y, w: this.mini.w, h: this.mini.h } : null; }
   /** 도구가 가리킨 점이 있는가(테스트가 본다). */
   get spotted() { return this.spot !== null; }
 
@@ -526,6 +571,8 @@ export class GraphScene {
   visibleIds() { return [...this.nodes.values()].filter((state) => state.visTo > 0).map((state) => state.node.id); }
   get settled() { return this.raf === 0; }
   get camera() { return { ...this.cam }; }
+  /** 움직이는 중이면 가려던 자리, 아니면 지금 자리(메모를 열기 직전에 남겨 돌아올 때 쓴다). */
+  get restingCamera(): Camera { return { ...(this.fly ? this.camTarget : this.cam) }; }
 
   destroy() { cancelAnimationFrame(this.raf); this.raf = 0; }
 
@@ -873,9 +920,11 @@ export class GraphScene {
     if (this.ripples.length) busy = true;
     // 고른 점의 선 위로 흐르는 입자와 검색에 걸린 점의 깜빡임은 그동안 계속 움직인다.
     if (!reduced && !document.hidden && ((focus && lit && lit.size) || this.matches?.size || this.route || this.heat || this.linkFrom)) this.ambient = true;
-    // 미니맵은 보이는 점 가운데 화면 밖으로 나간 것이 있을 때만 떠오른다.
+    // 미니맵은 보이는 점 가운데 화면 밖으로 나간 것이 있을 때만 떠오른다. 화면 맞추기·보기 바꾸기로 카메라와 점이
+    // 저절로 움직이는 동안에는 잠깐 밖에 나간 점 때문에 떠올라 누르기를 가로채지 않게 지금 상태를 그대로 둔다.
     let outside = false;
-    if (this.w > 640 && this.nodes.size >= 8 && !this.replaying) {
+    if ((this.fly || this.transition) && this.miniDrag === null) outside = this.miniAlpha > 0.5;
+    else if (this.w > 640 && this.nodes.size >= 8 && !this.replaying) {
       for (const state of this.nodes.values()) {
         if (state.visTo === 0) continue;
         const [x, y] = this.project(state.x, state.y);
@@ -951,10 +1000,13 @@ export class GraphScene {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const state of this.nodes.values()) { if (state.visTo === 0) continue; x0 = Math.min(x0, state.x); y0 = Math.min(y0, state.y); x1 = Math.max(x1, state.x); y1 = Math.max(y1, state.y); }
     if (!Number.isFinite(x0)) return;
-    const w = 148, h = 100, pad = 10;
-    const { right } = this.insets;
-    // 카드가 열려 있으면 그 왼쪽에, 아니면 오른쪽 가장자리에 붙인다(아래의 확대 단추 위).
-    const x = this.w - right - w + (right > 24 ? 0 : 12), y = this.h - 62 - h;
+    const w = 222, h = 150, pad = 14;
+    const { left, bottom } = this.insets;
+    // 왼쪽 아래(범례 줄 위)에 붙인다. 넓은 화면에서 도구 패널이 열려 있으면 그 오른쪽에, 세로로 놓인 레일과 겹칠 만큼
+    // 낮은 창이면 레일 오른쪽에 둔다. 좁은 화면에서 카드·패널이 아래에서 올라와 있으면 그 위로 비킨다.
+    const wide = this.w > 640;
+    const y = this.h - Math.max(62, bottom + 6) - h;
+    const x = wide && (this.panel || y < 232) ? left : 12;
     const scale = Math.min((w - pad * 2) / Math.max(1, x1 - x0), (h - pad * 2) / Math.max(1, y1 - y0));
     // 세계 좌표 (ox, oy)가 미니맵의 왼쪽 위 모서리에 온다.
     const ox = (x0 + x1) / 2 - w / 2 / scale, oy = (y0 + y1) / 2 - h / 2 / scale;
@@ -963,7 +1015,7 @@ export class GraphScene {
     ctx.save();
     ctx.shadowColor = `rgba(0,0,0,${(dark ? 0.45 : 0.16) * alpha})`; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
     ctx.fillStyle = rgba(bg, (dark ? 0.82 : 0.9) * alpha);
-    this.roundRect(x, y + (1 - alpha) * 8, w, h, 14);
+    this.roundRect(x, y + (1 - alpha) * 8, w, h, 16);
     ctx.fill();
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     ctx.lineWidth = 1; ctx.strokeStyle = rgba(fg, 0.12 * alpha); ctx.stroke();
@@ -972,7 +1024,7 @@ export class GraphScene {
     for (const state of this.nodes.values()) {
       if (state.vis < 0.05) continue;
       ctx.fillStyle = rgba(state.color, 0.9 * alpha * state.vis);
-      ctx.beginPath(); ctx.arc(x + (state.x - ox) * scale, top + (state.y - oy) * scale, isContainer(state.node) ? 2.1 : 1.7, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + (state.x - ox) * scale, top + (state.y - oy) * scale, isContainer(state.node) ? 2.8 : 2.2, 0, Math.PI * 2); ctx.fill();
     }
     // 지금 화면이 덮는 자리.
     const a = this.unproject(0, 0), b = this.unproject(this.w, this.h);

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import { useMotionValue } from "framer-motion";
 import { APPS, APP_IDS, type AppId } from "../../lib/app-config";
@@ -17,6 +17,11 @@ const canPopOut = (id: AppId): id is PopoutApp => (POPOUT_APPS as readonly AppId
 const MENU_WIDTH = 200;
 const menuHeight = (count: number) => count * 26 + 8;
 type DockMenu = { id: PopoutApp; left: number; top: number };
+/** 아이콘 위 가운데 자리. */
+const menuAt = (target: HTMLElement, count: number) => {
+  const rect = target.getBoundingClientRect();
+  return { left: Math.round(rect.left + rect.width / 2 - MENU_WIDTH / 2), top: Math.round(rect.top - menuHeight(count) - 10) };
+};
 
 export function Dock() {
   const windows = useDesktop((state) => state.windows);
@@ -61,11 +66,32 @@ export function Dock() {
     { kind: "item", id: "popout", label: "새 창으로 열기", onSelect: () => { chose.current = true; popOut(id); } },
   ];
   const openMenu = (id: PopoutApp, target: HTMLElement) => {
-    const rect = target.getBoundingClientRect();
     chose.current = false;
     setMenuLeaving(false);
-    setMenu({ id, left: Math.round(rect.left + rect.width / 2 - MENU_WIDTH / 2), top: Math.round(rect.top - menuHeight(menuEntries(id).length) - 10) });
+    setMenu({ id, ...menuAt(target, menuEntries(id).length) });
   };
+  // 마우스가 막 올라와 아이콘이 아직 커지는 중에 우클릭하면, 다 커진 아이콘이 메뉴 아래를 덮는다.
+  // 메뉴가 떠 있는 동안 Dock은 그 크기로 멈추므로, 아이콘이 멈출 때까지 몇 프레임 따라가 바로 위에 둔다.
+  const menuId = menu && !menuLeaving ? menu.id : null;
+  useEffect(() => {
+    if (!menuId) return;
+    let frame = 0, still = 0, count = 0, last = "";
+    const follow = () => {
+      const target = itemOf(menuId);
+      if (!target) return;
+      const next = menuAt(target, menuEntries(menuId).length);
+      const key = `${next.left},${next.top}`;
+      still = key === last ? still + 1 : 0;
+      last = key;
+      setMenu((current) => (!current || current.id !== menuId || (current.left === next.left && current.top === next.top) ? current : { ...current, ...next }));
+      // 멈춘 채 여섯 프레임이 지나거나 1초가 지나면 그만둔다.
+      if (still < 6 && ++count < 60) frame = requestAnimationFrame(follow);
+    };
+    frame = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(frame);
+    // menuEntries·itemOf는 렌더마다 새로 만들어지지만 메뉴 하나가 떠 있는 동안 결과는 같다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuId]);
   const closeMenu = (returnFocus: boolean) => {
     if (!menu || menuLeaving) return;
     setMenuLeaving(true);

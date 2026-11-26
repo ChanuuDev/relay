@@ -14,8 +14,23 @@ import { useIndexStatus, useSemanticLinks } from "../../lib/semantic";
 import { focusOf, GRAPH_VIEWS, type GraphView } from "../../lib/graph-layout";
 import { useNoteGraph, type GraphLinkKind } from "../../lib/note-graph-prefs";
 import { pathOf, previewOf, search, useNotes, type Items } from "../../lib/notes";
-import { GraphScene, type SceneData } from "./notes-graph-scene";
+import { GraphScene, type Camera, type SceneData } from "./notes-graph-scene";
 import { ContextPanel, InsightPanel, PathPanel, TOOLS, ToolRail, type GraphTool, type PathSlot } from "./notes-graph-tools";
+
+/** 그래프에서 메모를 열 때 남기는 자리. 메모에서 「그래프」로 돌아오면 이 상태로 다시 연다. */
+export type GraphReturn = {
+  /** 열었던 점. 돌아올 때 이 점 속에서 물러나듯 카메라가 빠져나온다. */
+  node: string;
+  camera: Camera;
+  active: string | null;
+  query: string;
+  tool: GraphTool | null;
+  contextQuery: string;
+  contextSeeds: string[];
+  budget: number;
+  pathFrom: string | null;
+  pathTo: string | null;
+};
 
 /** 메모 지식 그래프. 메모 창의 내용 자리에 들어가 메모·폴더·태그를 점으로, 링크·언급·비슷한 내용·폴더·태그 관계를 선으로 보인다.
  *  다섯 가지 보기(관계망·집중·구조·주제·시간)를 오가면 점들이 새 자리로 흘러가고, 선은 모양을 바꾸며 따라간다. */
@@ -42,9 +57,11 @@ const kindName = (node: GraphNode) => KIND_NAME[node.kind];
 /** 그래프 위에서 고른 점이 어디서 왔는지: 그래프 안에서 고르면 카메라를 움직이지 않고, 바깥(트리·연결 목록·검색)에서 고르면 그 점으로 날아간다. */
 type Origin = "graph" | "outside";
 
-export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack, onOpenSession }: {
+export function NotesGraph({ items, selected, leaving, resume, onSelect, onOpen, onBack, onOpenSession }: {
   items: Items; selected: string | null; leaving: boolean;
-  onSelect: (id: string) => void; onOpen: (id: string) => void; onBack: () => void;
+  /** 메모에서 돌아온 경우 떠나기 직전의 상태. 처음 열 때만 읽는다. */
+  resume?: GraphReturn | null;
+  onSelect: (id: string) => void; onOpen: (id: string, back?: GraphReturn) => void; onBack: () => void;
   /** 작업 세션의 상세 화면을 연다(세션 화면이 없는 별도 창에서는 주지 않는다). */
   onOpenSession?: (id: string) => void;
 }) {
@@ -74,23 +91,29 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
   const stageRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [scene, setScene] = useState<GraphScene | null>(null);
-  const [active, setActive] = useState<string | null>(() => (selected && graph.byId.has(selected) ? selected : null));
+  // 처음 연 순간의 resume만 쓴다(이후에 바뀌어도 다시 되돌리지 않는다).
+  const [back] = useState(() => resume ?? null);
+  const [active, setActive] = useState<string | null>(() => {
+    const initial = back ? back.active : selected;
+    return initial && graph.byId.has(initial) ? initial : null;
+  });
   const [hovered, setHovered] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(back?.query ?? "");
   const [, setThemeTick] = useState(0);
   // 도구(발견·에이전트 맥락·경로), 연결 만들기, 재생.
-  const [tool, setTool] = useState<GraphTool | null>(null);
+  const [tool, setTool] = useState<GraphTool | null>(back?.tool ?? null);
   const [linking, setLinking] = useState<string | null>(null);
   const [replaying, setReplaying] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [contextQuery, setContextQuery] = useState("");
-  const [contextSeeds, setContextSeeds] = useState<string[]>([]);
-  const [budget, setBudget] = useState(DEFAULT_BUDGET);
-  const [pathFrom, setPathFrom] = useState<string | null>(null);
-  const [pathTo, setPathTo] = useState<string | null>(null);
+  const [contextQuery, setContextQuery] = useState(back?.contextQuery ?? "");
+  const [contextSeeds, setContextSeeds] = useState<string[]>(back?.contextSeeds ?? []);
+  const [budget, setBudget] = useState(back?.budget ?? DEFAULT_BUDGET);
+  const [pathFrom, setPathFrom] = useState<string | null>(back?.pathFrom ?? null);
+  const [pathTo, setPathTo] = useState<string | null>(back?.pathTo ?? null);
   const [picking, setPicking] = useState<PathSlot | null>(null);
   const origin = useRef<Origin>("outside");
-  const fromGraph = useRef<string | null>(null);
+  // 돌아온 경우 지금 고른 메모(열었던 메모)는 그래프가 고른 것으로 쳐서, 떠나기 전에 고른 점을 덮지 않는다.
+  const fromGraph = useRef<string | null>(back ? selected : null);
 
   // 바깥(트리)에서 고른 메모를 따라간다. 그래프가 고른 것이 돌아온 경우는 건너뛴다.
   useEffect(() => {
@@ -118,6 +141,7 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
     const next = new GraphScene(canvas, root, { hover: (id) => handlers.current.hover(id), select: (id) => handlers.current.select(id), open: (id) => handlers.current.open(id),
       replayed: () => handlers.current.replayed() });
     (root as HTMLDivElement & { relayGraph?: GraphScene }).relayGraph = next;
+    if (back) next.returnTo(back.camera, back.node);
     const resize = new ResizeObserver(([entry]) => { if (entry) next.resize(entry.contentRect.width, entry.contentRect.height); });
     resize.observe(stage);
     // 테마·글자 크기가 바뀌면 색과 글꼴을 다시 읽는다.
@@ -187,7 +211,8 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
   useEffect(() => { scene?.setRoute(route ? route.nodes : null, route ? route.edges.map((edge) => edge.id) : []); }, [scene, route]);
   useEffect(() => { scene?.setLinkFrom(linking); }, [scene, linking]);
   // 도구 패널이 열리고 닫히면 그만큼 비켜서 다시 맞춘다.
-  const toolOpened = useRef<GraphTool | null>(null);
+  // 돌아온 경우 패널은 이미 열려 있던 것이라 다시 맞추지 않는다(떠나기 직전의 카메라를 지킨다).
+  const toolOpened = useRef<GraphTool | null>(back?.tool ?? null);
   useEffect(() => {
     if (!scene) return;
     scene.panel = tool !== null;
@@ -274,9 +299,12 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
     if (node.kind === "tag") { setQuery(node.label); return; }
     if (node.kind === "session") { const session = graph.sessions.get(id); if (session) onOpenSession?.(session.id); return; }
     if (node.kind === "project") { scene?.fit(700, false, data.nodes.filter((entry) => entry.parentId === id || entry.id === id).map((entry) => entry.id)); return; }
+    const leaving: GraphReturn | undefined = scene ? {
+      node: id, camera: scene.restingCamera, active, query, tool, contextQuery, contextSeeds, budget, pathFrom, pathTo,
+    } : undefined;
     rootRef.current?.setAttribute("data-diving", "");
     await scene?.dive(id);
-    onOpen(id);
+    onOpen(id, leaving);
   }
 
   function setView(next: GraphView) {
@@ -356,24 +384,28 @@ export function NotesGraph({ items, selected, leaving, onSelect, onOpen, onBack,
     </div>
 
     <header className="graph-bar">
-      <Button type="button" variant="ghost" size="icon-sm" className="graph-back" aria-label="목록" title="목록" onClick={onBack}><ChevronLeft aria-hidden="true" /></Button>
-      <ViewSwitch view={view} onChange={setView} />
+      <div className="graph-bar-start">
+        <Button type="button" variant="ghost" size="icon-sm" className="graph-back" aria-label="목록" title="목록" onClick={onBack}><ChevronLeft aria-hidden="true" /></Button>
+        <ViewSwitch view={view} onChange={setView} />
+      </div>
+      {/* 찾기는 위쪽 가운데에 넓게 둔다. 좁은 화면에서는 보기 바꾸기 아래 줄을 통째로 쓴다. */}
+      <label className="graph-search" data-filled={query ? "" : undefined}>
+        <Search aria-hidden="true" />
+        <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="그래프에서 찾기" aria-label="그래프에서 찾기"
+          spellCheck={false} autoComplete="off" maxLength={200}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") { event.stopPropagation(); if (query) setQuery(""); else stageRef.current?.focus(); }
+            if (event.key === "Enter" && matches?.size) {
+              event.preventDefault();
+              const first = [...matches].sort((a, b) => (data.degree.get(b) ?? 0) - (data.degree.get(a) ?? 0))[0]!;
+              choose(first, "outside");
+            }
+          }} />
+        {matches && <span className="graph-search-count" aria-live="polite">{matches.size}</span>}
+        {query ? <button type="button" className="graph-search-clear" aria-label="검색어 지우기" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><X aria-hidden="true" /></button>
+          : <kbd className="graph-search-key" aria-hidden="true">/</kbd>}
+      </label>
       <div className="graph-bar-end">
-        <label className="graph-search" data-filled={query ? "" : undefined}>
-          <Search aria-hidden="true" />
-          <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="그래프에서 찾기" aria-label="그래프에서 찾기"
-            spellCheck={false} autoComplete="off" maxLength={200}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") { event.stopPropagation(); if (query) setQuery(""); else stageRef.current?.focus(); }
-              if (event.key === "Enter" && matches?.size) {
-                event.preventDefault();
-                const first = [...matches].sort((a, b) => (data.degree.get(b) ?? 0) - (data.degree.get(a) ?? 0))[0]!;
-                choose(first, "outside");
-              }
-            }} />
-          {matches && <span className="graph-search-count" aria-live="polite">{matches.size}</span>}
-          {query && <button type="button" className="graph-search-clear" aria-label="검색어 지우기" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><X aria-hidden="true" /></button>}
-        </label>
         <FilterMenu />
       </div>
     </header>
