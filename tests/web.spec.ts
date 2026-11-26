@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { binary, cli, clipboardText, env, hook, launch, record, ready, spawnEnv, stop, useRelayServer, version } from "./web-helpers";
+import { binary, cli, clipboardText, env, grantClipboard, hook, launch, ready, record, spawnEnv, stop, useRelayServer, version } from "./web-helpers";
 
 useRelayServer();
 
@@ -99,7 +99,7 @@ test("context copy is a step-by-step guide with a shell-safe lookup command, nev
   const id = "literal'id; echo untrusted";
   const payload = '<img src=x onerror="window.pwned=1">\n<script>window.pwned=1</script>';
   record(id, "안전한 텍스트 검사", "openai", "codex", payload);
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   await ready(page);
   await page.getByRole("button", { name: "세션 컨텍스트 복사", exact: true }).click();
   await expect(page).toHaveURL(env.url + "/");
@@ -179,7 +179,7 @@ test("context falls back to the default store command when storage lookup is una
   cli(["record", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "same-id",
     "--session-name", "완료된 Claude 작업", "--model", "recorded-model", "--cwd", env.dir, "--summary", "이전 요약"]);
   cli(["update", "--session-id", "same-id", "--provider", "anthropic", "--summary", "검증까지 마친 작업"]);
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   await page.route("**/api/v1/health", route => route.fulfill({ status: 503, contentType: "application/json",
     body: JSON.stringify({ schemaVersion: 1, error: { message: "저장소 정보 조회 실패" } }) }));
   await page.goto(env.url);

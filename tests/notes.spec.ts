@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { cli, env, ready, useRelayServer } from "./web-helpers";
+import { cli, env, grantClipboard, ready, realClipboard, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -588,7 +588,7 @@ test("메모 창: 메모는 Relay DB에 저장되어 다른 브라우저에서�
 });
 
 test("메모 창: 메모·폴더 ID를 복사해 AI 에이전트에 넘기고, 에이전트가 relay memo로 읽어 메모 API로 고친 내용이 열린 편집기에 보인다", async ({ page, context, request }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   await seed(page, SAMPLE, { selected: "n-weekly", expanded: ["f-work", "f-meet"] });
   await expect.poll(async () => (await saved(page)).items.length).toBe(SAMPLE.length);
   const notes = page.locator(win("notes"));
@@ -953,7 +953,7 @@ const IMAGE = /!\[\]\(\/api\/v1\/notes\/images\/[0-9a-f]{64}\)/;
 
 test("메모 창: 붙여 넣은 그림은 서버에 올려 본문에 넣고, Mermaid 코드 블록은 다이어그램으로 그린다", async ({ page, context }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await realClipboard(context);
   await ready(page);
   await page.locator(dock("메모")).click();
   const notes = page.locator(win("notes"));
@@ -1028,7 +1028,7 @@ test("메모 창: 붙여 넣은 그림은 서버에 올려 본문에 넣고, Mer
 });
 
 test("메모 창: 글과 그림이 함께 든 클립보드는 글을 붙이고, 그림 단추로 고른 파일은 커서 자리에 넣는다", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await realClipboard(context);
   await seed(page, [{ id: "n", kind: "note", parentId: null, title: "표", body: "첫 줄" }], { selected: "n" });
   const notes = page.locator(win("notes"));
   await page.locator(".note-prose").click();

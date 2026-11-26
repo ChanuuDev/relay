@@ -2,10 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
-import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { binary, root, spawnEnv } from "./web-helpers";
+import { binary, freePort, root, spawnEnv } from "./web-helpers";
 
 /* 브라우저 모드(원격 서버가 내려준 정적 화면)를 끝까지 확인한다. nginx(deploy/nginx/relay-web.conf)처럼 내보낸 화면을 내려주고
    /api/는 테스트용 원격 서버(NestJS + PGlite)로 넘기는 작은 서버를 띄운다. localhost는 보안 출처라 WebCrypto·서비스 워커가 그대로 돈다. */
@@ -59,7 +58,7 @@ test.beforeAll(async () => {
   const bun = path.join(root, "node_modules", "bun", "bin", "bun.exe");
   const exported = spawnSync(existsSync(bun) ? bun : "bun", ["run", "scripts/export-web.ts", path.join(dir, "web"), "--no-build"], { cwd: root, encoding: "utf8" });
   if (exported.status !== 0) throw new Error(`export failed: ${exported.stderr}${exported.stdout}`);
-  remote = spawn(process.execPath, [path.join(root, "tests", "support", "remote-server.mjs"), dir], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+  remote = spawn(process.execPath, [path.join(root, "tests", "support", "remote-server.mjs"), dir, String(await freePort())], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
   let logs = "";
   remote.stderr?.on("data", (chunk) => { logs += chunk; });
   await new Promise<void>((resolve, reject) => {
@@ -68,7 +67,8 @@ test.beforeAll(async () => {
   });
   fixture = JSON.parse(readFileSync(path.join(dir, "fixture.json"), "utf8"));
   web = serve(path.join(dir, "web"), fixture.url);
-  await new Promise<void>((resolve) => web!.listen(0, "127.0.0.1", resolve));
+  const webPort = await freePort();
+  await new Promise<void>((resolve) => web!.listen(webPort, "127.0.0.1", resolve));
   site = `http://localhost:${(web.address() as { port: number }).port}`;
 });
 
@@ -164,10 +164,7 @@ test("원격 모드로 켜 둔 PC의 파일을 브라우저에서 보고, 그림
     headers: { Authorization: `Bearer ${fixture.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ name: "test-pc", platform: process.platform }) })).json() as { device: { id: string } };
   writeFileSync(path.join(pcDir, "config.json"), JSON.stringify({ schemaVersion: 1, mode: "remote",
     remote: { url: fixture.url, token: fixture.token, deviceId: registered.device.id, deviceName: "test-pc" } }));
-  const reservation = net.createServer();
-  await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
-  const port = (reservation.address() as net.AddressInfo).port;
-  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const port = await freePort();
   // PC가 켜지기 전에 먼저 로그인해 첫 화면을 본다: 원격 서버만 보이고, PC가 붙으면 곧 PC 드라이브가 더해져야 한다.
   await login(page);
   await expect(page.locator("#connection-state")).toContainText("연결됨");

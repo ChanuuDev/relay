@@ -1,12 +1,31 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clipboardText, env, record, useRelayServer } from "./web-helpers";
+import { clipboardText, grantClipboard, record, useRelayServer } from "./web-helpers";
 import { GRAPH_KEY, SAMPLE, graph, openGraph, pointOf, seed, settled, win } from "./graph-helpers";
 
 useRelayServer();
 
 /** 그래프의 점을 누른다(캔버스 위의 화면 좌표). */
+/** 점을 누른다. 메모가 늘거나 보기가 바뀐 직후에는 점이 아직 움직이므로 자리가 멎은 뒤에 누르고,
+ *  점이 패널·카드 밑에 가렸거나 화면 밖이면(확대해 다른 점을 보고 있을 때) 전체가 보이게 맞춘 뒤에 누른다. */
 async function clickNode(page: Page, id: string) {
-  const at = await pointOf(page, id);
+  const rest = async () => {
+    let at = await pointOf(page, id);
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await page.waitForTimeout(80);
+      const next = await pointOf(page, id);
+      const still = Boolean(at && next && Math.hypot(next.x - at.x, next.y - at.y) < 0.5);
+      at = next;
+      if (still) break;
+    }
+    return at;
+  };
+  const reachable = (at: { x: number; y: number } | null) => (at ? page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest(".graph-stage")), [at.x, at.y]) : false);
+  let at = await rest();
+  if (!(await reachable(at))) {
+    await page.locator(".graph-stage").focus();
+    await page.keyboard.press("0");
+    at = await rest();
+  }
   expect(at).not.toBeNull();
   await page.mouse.click(at!.x, at!.y);
 }
@@ -74,7 +93,7 @@ test("메모 그래프 도구: 발견 패널이 제안 연결·중심 메모·�
 
 test("메모 그래프 도구: 에이전트 맥락이 질의와 중심 메모로 묶음을 고르고, 붙여 넣을 줄·명령·내용을 복사한다", async ({ page, context }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   const notes = await open(page);
   await notes.getByRole("button", { name: "에이전트 맥락" }).click();
   const panel = notes.getByRole("complementary", { name: "에이전트 맥락" });

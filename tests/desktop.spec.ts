@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clipboardText, env, record, ready, useRelayServer } from "./web-helpers";
+import { clipboardText, env, grantClipboard, ready, record, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -503,7 +503,7 @@ test("/ 단축키가 최소화한 세션 창을 앞으로 가져와 검색 칸�
 
 test("명령 창은 선택한 세션의 조회 명령을 보여 주고 셸 설정을 공유한다", async ({ page, context }) => {
   record("cmd-session", "명령 창 확인");
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   await ready(page);
   await page.getByRole("link", { name: "명령 창 확인" }).click();
   await page.locator(dock("명령")).click();

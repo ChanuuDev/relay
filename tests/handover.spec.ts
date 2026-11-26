@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { clipboardText, cli, env, ready, record, root, useRelayServer } from "./web-helpers";
+import { cli, clipboardText, grantClipboard, ready, record, root, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -10,7 +10,7 @@ test("declared state, pin, git clue, chain and the hand-over copies reach the br
   cli(["continue", "origin", "--provider", "anthropic", "--agent", "claude-code", "--session-id", "taken", "--session-name", "이어받은 작업", "--summary", "이어서 진행", "--status", "blocked"]);
   cli(["pin", "taken", "--provider", "anthropic"]);
   record("plain", "표시 없는 작업");
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   await ready(page);
   await expect(page.locator("#list-content .session-row")).toHaveCount(3);
   await expect(page.locator("#list-content .status-badge")).toHaveText(["막힘", "인계 대기"]);

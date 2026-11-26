@@ -13,7 +13,8 @@ const app = await createApp(db, { databaseUrl: null, port: 0, retentionDays: 30,
 const auth = app.get(AuthService);
 const user = await auth.bootstrap("tester");
 const { token } = await auth.createToken(user.id, "fixture");
-await app.listen(0, "127.0.0.1");
+// 포트는 부른 쪽이 정해 준다(fetch와 브라우저가 막는 포트를 피한 것, tests/web-helpers.ts의 freePort).
+await app.listen(Number(process.argv[3]) || 0, "127.0.0.1");
 const { port } = app.getHttpServer().address();
 const url = `http://127.0.0.1:${port}`;
 await fetch(url + "/api/v1/sessions", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ provider: "openai", agent: "codex", sessionId: "fixture-session", summary: "다른 PC에서 남긴 기록", cwd: "C:/fixture" }) });

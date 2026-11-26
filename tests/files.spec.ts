@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { env, ready, useRelayServer } from "./web-helpers";
+import { env, ready, realClipboard, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -929,8 +929,9 @@ test("파일 탐색기: 트리의 우클릭·F2로 폴더 이름을 바꾸고 �
 });
 
 
-test("파일 탐색기: 복사·Ctrl+C가 Windows 파일 클립보드를 채워 Shell에 단일·다중 파일을 붙여넣는다", async ({ page }) => {
+test("파일 탐색기: 복사·Ctrl+C가 Windows 파일 클립보드를 채워 Shell에 단일·다중 파일을 붙여넣는다", async ({ page, context }) => {
   test.skip(process.platform !== "win32", "Windows 파일 클립보드 통합 검증");
+  await realClipboard(context);
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   const disk = await openFolder(page);
   await page.unroute("**/api/v1/files/clipboard");

@@ -101,6 +101,18 @@ export function FilesTree({ places, favorites, location, showHidden, error, onGo
 
 type ChildNode = { key: string; label: string; Icon: LucideIcon; tone: string; target: TreeTarget; hidden?: boolean };
 
+/** 이름을 바꾼 항목이 새 키로 그려지면 초점을 준다. 다시 읽은 목록을 그리는 일이 다음 프레임보다 늦을 수 있어 몇 프레임 기다리고
+ *  (한 프레임만 보면 항목이 아직 없어 초점이 사라진다), 그사이 초점이 트리 밖 다른 곳으로 갔으면 그만둔다. */
+function focusWhenDrawn(tree: Element, key: string, frames = 40) {
+  requestAnimationFrame(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body && !tree.contains(active)) return;
+    const row = tree.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`);
+    if (row) row.focus({ preventScroll: true });
+    else if (frames > 0) focusWhenDrawn(tree, key, frames - 1);
+  });
+}
+
 /** folder가 location 자신이거나 그 상위 폴더인가 */
 function onPath(folder: string, location: string | null) {
   if (location === null) return false;
@@ -159,7 +171,7 @@ function Node({ shared, nodeKey, tabKey, level, label, Icon, tone, target, child
     shared.onRenaming(null);
     const key = nodeKey.slice(0, nodeKey.indexOf(":") + 1) + to;
     onFocusKey(key);
-    if (focus) requestAnimationFrame(() => tree?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true }));
+    if (focus && tree) focusWhenDrawn(tree, key);
     return true;
   }
 

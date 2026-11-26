@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { cli, env, record, ready, useRelayServer } from "./web-helpers";
+import { cli, grantClipboard, ready, record, useRelayServer } from "./web-helpers";
 
 useRelayServer();
 
@@ -206,7 +206,7 @@ test("상세 필터 행은 0에서 윗줄부터 펼쳐지고, 접히는 중에 �
 
 test("복사 토스트는 떠오른 뒤 3.5초 안에 사라진다", async ({ page, context }) => {
   record("toast", "토스트 확인");
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: env.url });
+  await grantClipboard(context);
   await ready(page);
   await page.getByRole("button", { name: "세션 컨텍스트 복사" }).click();
   await expect(page.locator("#copy-status")).toBeVisible();
