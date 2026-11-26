@@ -143,7 +143,13 @@ describe("relay embed와 의미 검색 CLI", () => {
       const created = cli(dir, ["memo", "register", first]).data;
       expect(created).toMatchObject({ action: "created" });
       const stored = cli(dir, ["memo", "--find", created.noteId]).data.item;
-      expect(stored).toMatchObject({ title: "동기화 결정 1", body });
+      expect(stored).toMatchObject({ title: "동기화 결정 1", body, parentId: null });
+      // --folder는 relay memo --list의 옵션과 이름이 같다. 등록에 준 값이 윗 명령으로 새지 않고 그 폴더에 만들어져야 한다.
+      const third = path.join(docs, "adr-003.md");
+      writeFileSync(third, "# 폴더에 넣을 문서\n\n설계 폴더 아래에 둔다.\n");
+      const placed = cli(dir, ["memo", "register", third, "--folder", "f-design"]).data;
+      expect(cli(dir, ["memo", "--find", placed.noteId]).data.item).toMatchObject({ title: "폴더에 넣을 문서", parentId: "f-design" });
+      expect(cli(dir, ["memo", "register", third, "--folder", "f-none"]).data.error.code).toBe("NOTE_NOT_FOUND");
       expect(cli(dir, ["memo", "meta", created.noteId]).data.meta).toMatchObject({ docType: "decision", docStatus: "adopted", project: "relay", sourceRepo: null });
       writeFileSync(first, `${body}\n보완: 간격은 30초.\n`);
       expect(cli(dir, ["memo", "register", first, "--note", created.noteId]).data).toMatchObject({ action: "updated", noteId: created.noteId });
@@ -155,7 +161,7 @@ describe("relay embed와 의미 검색 CLI", () => {
       expect(found[1]).toMatchObject({ docStatus: "superseded", supersededBy: { id: next.noteId, title: "동기화 결정 2" } });
       expect(cli(dir, ["memo", "--search", "동기화 결정", "--status", "adopted"]).data.items.map((item: { id: string }) => item.id)).toEqual([next.noteId]);
       expect(cli(dir, ["memo", "meta", "n-cook", "--type", "knowledge", "--project", "home"]).data.meta).toMatchObject({ noteId: "n-cook", docType: "knowledge", project: "home" });
-      expect(cli(dir, ["memo", "meta"]).data.items).toHaveLength(3);
+      expect(cli(dir, ["memo", "meta"]).data.items).toHaveLength(4);
       expect(cli(dir, ["memo", "meta", next.noteId, "--superseded-by", created.noteId]).data.error.code).toBe("INVALID_ARGUMENT");
       expect(cli(dir, ["memo", "register", path.join(docs, "none.md")]).data.error.code).toBe("FILE_NOT_FOUND");
     } finally { if (env === undefined) delete process.env.RELAY_NO_GIT; else process.env.RELAY_NO_GIT = env; }

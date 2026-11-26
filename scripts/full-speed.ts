@@ -73,8 +73,9 @@ const stop = release();
 const env = { ...process.env, [NESTED]: "1" };
 // Windows의 npm·playwright는 .cmd라 셸을 거쳐야 한다. 빈칸이나 한글이 든 인자(-g "메모 그래프")는 따옴표로 묶어 넘긴다.
 const quote = (value: string) => (/^[\w@%+=:,./\\-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`);
+// cmd는 명령 이름의 /를 옵션으로 읽으므로(node_modules/bun/bin/bun.exe) 실행 파일 경로만 \로 바꾼다.
 const child = process.platform === "win32"
-  ? spawn([command, ...args].map(quote).join(" "), { stdio: "inherit", shell: true, env })
+  ? spawn([command.replace(/\//g, "\\"), ...args].map(quote).join(" "), { stdio: "inherit", shell: true, env })
   : spawn(command, args, { stdio: "inherit", env });
 child.on("error", (error) => { stop(); console.error(String(error)); process.exit(1); });
 child.on("exit", (code, signal) => { stop(); process.exit(code ?? (signal ? 1 : 0)); });

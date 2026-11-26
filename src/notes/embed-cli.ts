@@ -138,11 +138,12 @@ export async function rankedSearch(config: Config, query: string, o: { mode?: st
   return { data: { ...result, api, items: result.items.map((item) => ({ id: item.noteId, label: item.title, ...item })) }, text: searchText(result) };
 }
 
-/** 윗 명령(relay memo)과 이름이 같은 옵션의 값. 하위 명령에 준 것이 먼저다. */
-function shared(command: Command, own: { type?: string; status?: string; project?: string }) {
-  const merged = command.optsWithGlobals() as { type?: string; status?: string; project?: string };
-  const pick = (key: "type" | "status" | "project") => own[key] ?? merged[key];
-  return { ...(pick("type") !== undefined ? { type: pick("type") } : {}), ...(pick("status") !== undefined ? { status: pick("status") } : {}), ...(pick("project") !== undefined ? { project: pick("project") } : {}) };
+/** 윗 명령(relay memo)과 이름이 같은 옵션의 값. 하위 명령에 준 것이 먼저다. commander가 이런 옵션을 윗 명령의 것으로 읽어 가므로,
+ *  여기서 꺼내지 않으면 하위 명령에는 준 적이 없는 것처럼 보인다(--folder를 빠뜨려 등록한 문서가 최상위에 만들어진 적이 있다). */
+const SHARED = ["type", "status", "project", "folder"] as const;
+function shared(command: Command, own: Partial<Record<(typeof SHARED)[number], string>>) {
+  const merged = command.optsWithGlobals() as Partial<Record<(typeof SHARED)[number], string>>;
+  return Object.fromEntries(SHARED.map((key) => [key, own[key] ?? merged[key]] as const).filter((pair): pair is readonly [(typeof SHARED)[number], string] => pair[1] !== undefined));
 }
 
 /** `relay memo register`·`relay memo meta`. */

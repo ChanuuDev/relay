@@ -392,14 +392,38 @@ describe("검색", () => {
     const superseded = found.items.find((item) => item.noteId === old.noteId)!;
     expect(superseded).toMatchObject({ docStatus: "superseded", supersededBy: { id: next.noteId, title: "동기화 결정 (신)", status: "adopted" } });
     expect(found.items.at(-1)!.noteId).toBe(old.noteId);
-    // 이력까지 보면 감점이 없다.
+    // 이력까지 보면 상태로 가르지 않고 낱말이 맞은 정도 그대로 줄 세운다(평소에는 상태가 그 순서를 바꾼다).
     const history = await index.search(search("동기화 sync", { mode: "keyword", filters: { includeHistory: true } }));
-    expect(history.items.find((item) => item.noteId === old.noteId)!.score).toBeGreaterThan(superseded.score);
+    const raw = (items: typeof history.items) => items.map((item) => item.scores.keyword ?? 0);
+    expect(raw(history.items)).toEqual([...raw(history.items)].sort((a, b) => b - a));
+    expect(raw(found.items)).not.toEqual([...raw(found.items)].sort((a, b) => b - a));
+    expect(history.items.findIndex((item) => item.noteId === old.noteId)).toBeLessThanOrEqual(found.items.findIndex((item) => item.noteId === old.noteId));
     expect((await index.search(search("동기화", { mode: "keyword", filters: { project: "other" } }))).items.map((item) => item.noteId)).toEqual(["n-other"]);
     expect((await index.search(search("동기화", { mode: "keyword", filters: { docType: ["decision"], docStatus: ["adopted"] } }))).items.map((item) => item.noteId)).toEqual([next.noteId]);
     port.put({ id: "f-a", kind: "folder", name: "가" } as never, { id: "n-in", parentId: "f-a", title: "폴더 안 동기화", body: "sync" });
     expect((await index.search(search("동기화", { mode: "keyword", filters: { folderId: "f-a" } }))).items.map((item) => item.noteId)).toEqual(["n-in"]);
     expect((await index.metaList()).items.map((item) => item.noteId).sort()).toEqual([next.noteId, old.noteId, "n-other"].sort());
+  });
+
+  test("문서 상태는 비슷하게 맞은 문서 사이에서만 순서를 바꾼다: 훨씬 잘 맞은 문서를 채택한 문서들이 밀어내지 않는다", async () => {
+    const { port, index } = engine();
+    const day = 86_400_000;
+    // 가장 잘 맞는 글은 상태가 없고 가장 오래됐다. 채택한 문서 셋은 덜 맞을수록 새 글이다(고친 날짜로 줄 세우면 거꾸로 나온다).
+    port.put({ id: "n-best", title: "배포 절차", body: "배포 절차를 순서대로 적는다. 배포 전 점검, 배포, 배포 뒤 확인.", updatedAt: day },
+      { id: "n-strong", title: "배포 점검표", body: "배포 전에 볼 것을 적는다. 절차는 따로 둔다.", updatedAt: 2 * day },
+      { id: "n-weak", title: "회의록", body: "여러 이야기를 했다. 일정, 예산, 채용, 그리고 배포 이야기도 조금 나왔다. 다음 회의는 다음 주다.", updatedAt: 3 * day },
+      { id: "n-weaker", title: "잡담", body: "점심 메뉴를 정했다. 날씨 이야기를 했다. 주말 계획을 나눴다. 끝에 배포 일정이 잠깐 나왔다. 그 밖에 여러 가지를 이야기했고 다음에 또 모이기로 했다.", updatedAt: 4 * day });
+    for (const noteId of ["n-strong", "n-weak", "n-weaker"]) await index.setMeta({ noteId, docType: "design", docStatus: "adopted" });
+    const found = await index.search(search("배포 절차", { mode: "keyword" }));
+    expect(found.items.map((item) => item.noteId)).toEqual(["n-best", "n-strong", "n-weak", "n-weaker"]);
+    // 점수도 그 순서대로 내려간다(맨 위 여럿이 같은 점수로 뭉치지 않는다).
+    expect(found.items.map((item) => item.score)).toEqual([...found.items.map((item) => item.score)].sort((a, b) => b - a));
+    expect(new Set(found.items.map((item) => item.score)).size).toBe(4);
+    // 똑같이 맞으면 채택한 문서가 앞선다.
+    port.put({ id: "n-twin-a", title: "복구 훈련", body: "복구 훈련 기록" }, { id: "n-twin-b", title: "복구 훈련", body: "복구 훈련 기록" });
+    expect((await index.search(search("복구 훈련", { mode: "keyword" }))).items.map((item) => item.noteId)).toEqual(["n-twin-a", "n-twin-b"]);
+    await index.setMeta({ noteId: "n-twin-b", docType: "decision", docStatus: "adopted" });
+    expect((await index.search(search("복구 훈련", { mode: "keyword" }))).items.map((item) => item.noteId)).toEqual(["n-twin-b", "n-twin-a"]);
   });
 });
 

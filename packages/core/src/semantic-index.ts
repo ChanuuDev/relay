@@ -32,6 +32,11 @@ export type IndexDeps = {
 /** 워커가 임대를 손대지 않고 돌려놓을 때 fail의 error에 적는 말. */
 export const RELEASED = "released";
 const RRF_K = 60;
+/** 문서 상태에 따라 곱하는 값. 순위를 매기기 전의 점수(낱말 점수, 유사도)에 곱한다: 비슷하게 맞은 문서 사이에서는 채택한 문서가 앞서고,
+ *  훨씬 잘 맞은 문서는 그대로 앞에 남는다. 순위를 합친 값(RRF)에 곱하면 안 된다. 그 값은 맨 위에서 한 칸 차이가 1.6%뿐이라(1/61 대 1/62)
+ *  1.15가 열 칸을 뛰어넘고, 채택 문서끼리 점수가 뭉쳐 가장 잘 맞은 문서가 뒤로 밀린다(실제 메모에서 그렇게 됐다).
+ *  대체된 문서는 크게 깎아 같은 주제의 새 문서 뒤에 둔다. */
+const ADOPTED_WEIGHT = 1.15, SUPERSEDED_WEIGHT = 0.6;
 const LINKS_PER_NOTE = 6;
 const PROBE_CHARS = 300;
 /** 값들의 아래쪽 80%로 잰 평균과 표준편차. 관련 있는 몇 개가 끌어올리지 않은 「배경」 유사도를 어림한다. */
@@ -450,18 +455,20 @@ export class SemanticIndex {
     }
     // 의미 검색만 달라고 했는데 할 수 없으면 낱말로 답한다(빈 결과보다 낫다).
     const usable = fallbackReason !== undefined && request.mode === "semantic" ? lexicalRank(this.lexical(view), request.query) : lexical;
-    const rank = (entries: Array<[string, number]>) => new Map(entries.filter(([id]) => allowed(view.docs.get(id)!)).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([id], at) => [id, at + 1]));
+    const statusWeight = (status: DocStatus | null | undefined) => (filters.includeHistory ? 1 : status === "adopted" ? ADOPTED_WEIGHT : status === "superseded" ? SUPERSEDED_WEIGHT : 1);
+    const rank = (entries: Array<[string, number]>) => new Map(entries.filter(([id]) => allowed(view.docs.get(id)!))
+      .map(([id, score]): [string, number] => [id, score * statusWeight(view.docs.get(id)!.meta?.docStatus)])
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([id], at) => [id, at + 1]));
     const keywordRank = rank([...usable].filter(([, hit]) => hit.score >= (semantic.size ? 0.12 : 0.02)).map(([id, hit]) => [id, hit.score]));
     const semanticRank = rank([...semantic].map(([id, hit]) => [id, hit.score]));
     const keywordWeight = exactIntent(request.query) ? 1.4 : 1;
     const best = (keywordRank.size ? keywordWeight : 0) / (RRF_K + 1) + (semanticRank.size ? 1 : 0) / (RRF_K + 1);
-    const statusWeight = (status: DocStatus | null | undefined) => (filters.includeHistory ? 1 : status === "adopted" ? 1.15 : status === "superseded" ? 0.6 : 1);
     const states = model ? new Map((await this.port.states(model.key)).map((state) => [state.noteId, state])) : new Map<string, IndexState>();
     const terms = (() => { const { words, raw } = queryTerms(request.query); return [...new Set([...words, ...raw])]; })();
     const ranked = [...new Set([...keywordRank.keys(), ...semanticRank.keys()])].map((id) => {
       const doc = view.docs.get(id)!;
       const fused = (keywordRank.has(id) ? keywordWeight / (RRF_K + keywordRank.get(id)!) : 0) + (semanticRank.has(id) ? 1 / (RRF_K + semanticRank.get(id)!) : 0);
-      return { doc, score: Math.min(1, fused / (best || 1) * statusWeight(doc.meta?.docStatus)) };
+      return { doc, score: Math.min(1, fused / (best || 1)) };
     }).sort((a, b) => b.score - a.score || b.doc.note.updatedAt - a.doc.note.updatedAt || (a.doc.note.id < b.doc.note.id ? -1 : 1));
 
     const items = ranked.slice(0, request.limit).map(({ doc, score }): SearchItem => {
