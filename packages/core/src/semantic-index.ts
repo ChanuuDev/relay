@@ -1,22 +1,23 @@
 import { RelayError } from "./errors.js";
 import { MAX_NAME, labelOf, plainLine, type NoteItem } from "./notes.js";
-import { CHUNK_VERSION, chunkInput, chunkNote, headingAt, headingOf, type Chunk, type ChunkContext, type DocStatus } from "./chunk.js";
+import { CHUNK_VERSION, MAX_CHUNKS, chunkInput, chunkNote, headingAt, headingOf, type Chunk, type ChunkContext, type DocStatus } from "./chunk.js";
 import { redactSecrets } from "./redact.js";
 import { exactIntent, lexicalIndex, lexicalRank, lowerText, queryTerms, tagsOf, type LexicalHit, type LexicalIndex } from "./text.js";
 import { decodeVector, dot } from "./vector.js";
+import { FLOOR_MIN_CHUNKS, floorFrom } from "./embedding.js";
 import {
-  INDEX_DEBOUNCE_MS, LEASE_MS, MAX_ATTEMPTS, MAX_LEASE_TEXTS, PROBE_INDEX, RETRY_AFTER_MS, WORKER_ONLINE_MS, modelKey,
+  INDEX_DEBOUNCE_MS, LEASE_MS, MAX_ATTEMPTS, MAX_LEASE_TEXTS, PROBE_INDEX, RETRY_AFTER_MS, WORKER_ONLINE_MS, modelKey, sameEmbedding,
   type CardInput, type CardsPending, type ChunkRow, type CommitRequest, type CommitResponse, type EmbeddingModel, type FailRequest, type FallbackReason,
   type IndexPort, type IndexState, type IndexStatus, type IndexSummary, type LeaseJob, type LeaseRequest, type LeaseResponse, type LinkItem, type LinksResponse,
-  type MetaRequest, type NoteCard, type NoteMeta, type RegisterRequest, type RegisterResponse, type ReindexRequest, type SearchItem, type SearchMatch,
-  type SearchRequest, type SearchResponse, type SemanticLink, type SuggestionItem,
+  type CardShown, type MetaRequest, type NoteCard, type NoteMeta, type ProbeRequest, type ProbeResponse, type RegisterRequest, type RegisterResponse, type ReindexRequest,
+  type SearchItem, type SearchMatch, type SearchRequest, type SearchResponse, type SemanticLink, type SuggestionItem,
 } from "./semantic.js";
 
 // 메모 의미 검색 엔진. 저장은 IndexPort에 맡기고 계산은 모두 여기서 한다(로컬 서버·원격 서버·CLI가 같은 코드를 돈다).
 //  - 색인할 일은 따로 쌓아 두지 않는다. 「지금 메모의 입력 해시」와 「색인된 입력 해시」가 다른 메모가 곧 대기 목록이다.
 //    벡터가 메모와 같은 DB에 있어 지운 메모는 함께 지워지고, 문서 유형·상태는 검색할 때 붙이므로 따로 맞출 것이 없다.
 //  - 조각 나누기와 가리기는 서버가 한다. 워커는 받은 글을 벡터로 바꿔 돌려줄 뿐이라, 가리지 않은 본문이 임베딩 서버로 가지 않는다.
-//  - 검색은 낱말(BM25 + 에이전트가 쓴 의미 카드)과 의미(조각 벡터) 두 순위를 RRF로 합친다. 질의 벡터가 없으면 낱말 순위만으로 바로 답한다.
+//  - 검색은 낱말(BM25 + 에이전트가 쓴 의미 카드)과 의미(조각 벡터) 두 점수를 무게를 두어 더한다. 질의 벡터가 없으면 낱말 점수만으로 바로 답한다.
 
 type Note = Extract<NoteItem, { kind: "note" }>;
 type Doc = { note: Note; path: string; context: ChunkContext; /** 이 메모를 질의로 삼을 때의 글(제목·카드의 요약과 질문·본문 첫머리) */ probe: string; contentHash: string; inputHash: string; empty: boolean; meta: NoteMeta | null; card: NoteCard | null };
@@ -31,21 +32,63 @@ export type IndexDeps = {
 
 /** 워커가 임대를 손대지 않고 돌려놓을 때 fail의 error에 적는 말. */
 export const RELEASED = "released";
-const RRF_K = 60;
-/** 문서 상태에 따라 곱하는 값. 순위를 매기기 전의 점수(낱말 점수, 유사도)에 곱한다: 비슷하게 맞은 문서 사이에서는 채택한 문서가 앞서고,
- *  훨씬 잘 맞은 문서는 그대로 앞에 남는다. 순위를 합친 값(RRF)에 곱하면 안 된다. 그 값은 맨 위에서 한 칸 차이가 1.6%뿐이라(1/61 대 1/62)
- *  1.15가 열 칸을 뛰어넘고, 채택 문서끼리 점수가 뭉쳐 가장 잘 맞은 문서가 뒤로 밀린다(실제 메모에서 그렇게 됐다).
- *  대체된 문서는 크게 깎아 같은 주제의 새 문서 뒤에 둔다. */
-const ADOPTED_WEIGHT = 1.15, SUPERSEDED_WEIGHT = 0.6;
+/** 합친 점수 = 의미의 몫 × (유사도 ÷ 그 질의의 1위 유사도) + 낱말의 몫 × 낱말 점수(1위가 1).
+ *  순위만 보는 RRF로 합쳤더니 의미 검색만 쓴 것보다 나빴다(질의 50개, 메모 557개에서 MRR 0.781 대 점수 합 0.884): 자연어 질의의 낱말 순위는
+ *  흔한 말이 든 긴 문서로 흐려지는데 순위만 보면 그 차이가 지워지고, 문장을 그대로 물으면 강한 낱말 증거가 묽어진다.
+ *  경로·오류 코드처럼 글자 그대로를 찾는 질의와, 질의가 글에 구절째 들어 있는 경우는 낱말 쪽을 더 믿는다. */
+const SEMANTIC_SHARE = 0.7, SEMANTIC_SHARE_EXACT = 0.4;
+/** 문서 상태에 따라 합친 점수에 곱하는 값. 채택한 문서는 비슷하게 맞은 문서를 앞지를 만큼만 올린다: 위쪽 결과들의 점수 차이가 3~15%라
+ *  1.15를 곱하면 순서가 통째로 뒤집혔다(질의 50개 가운데 26개의 위 셋이 바뀌고 MRR이 0.03 떨어졌다). 대체된 문서는 크게 깎아 새 문서 뒤에 둔다. */
+const ADOPTED_WEIGHT = 1.03, SUPERSEDED_WEIGHT = 0.6;
+/** 의미 목록에는 1위 유사도의 이 배수를 넘는 메모만 남긴다(바닥값을 겨우 넘은 메모가 길게 따라 나오지 않게). */
+const RELATIVE_CUT = 0.6;
+/** 낱말로만 걸린 글은 질의의 낱말을 (드문 낱말을 무겁게 쳐서) 이만큼 담아야 남긴다. 흔한 말 하나만 걸린 글이 결과를 채우지 않게 한다.
+ *  뜻으로도 맞은 글(의미 목록에 든 글)은 이미 관련이 확인됐으므로 낱말 점수를 그대로 보탠다. 의미 검색을 하지 못했을 때는 조금 느슨하게 본다
+ *  (0.5로 두면 답이 있는 질의의 절반에서 맞는 글이 낱말 목록에서 빠졌고, 0.3으로 두면 색인에 없는 것을 물어도 결과가 열 건씩 나왔다). */
+const COVERAGE_ALONE = 0.5, COVERAGE_LEXICAL = 0.3;
+/** 지금 일하는 저장소의 프로젝트 문서에 곱하는 값. 프로젝트마다 같은 종류의 문서(작업 지침·서버 구축·디자인 기준)가 있어,
+ *  전체에서 찾으면 다른 프로젝트의 문서가 앞섰다. 좁히지 않고 올리기만 하므로 훨씬 잘 맞은 다른 프로젝트 문서는 그대로 앞에 남는다. */
+const PREFERRED_WEIGHT = 1.25;
+/** 의미 연결: 두 메모의 유사도가 「그 메모가 자기 자신과 맞는 정도」의 이 비율을 넘어야 잇는다. 절댓값 대신 비율을 쓰는 까닭은
+ *  의미 카드가 있고 없음, 모델에 따라 유사도의 크기가 달라서다. 사람이 판정한 37쌍에서 납득되는 쌍은 0.54 이상, 약한 쌍은 0.52 이하였다.
+ *  세기는 이 비율이 LINK_RATIO일 때 0.1, LINK_FULL일 때 1이다(앞서는 모든 연결의 세기가 1로 포화했다). */
+const LINK_RATIO = 0.53, LINK_FULL = 0.85;
 const LINKS_PER_NOTE = 6;
 const PROBE_CHARS = 300;
-/** 값들의 아래쪽 80%로 잰 평균과 표준편차. 관련 있는 몇 개가 끌어올리지 않은 「배경」 유사도를 어림한다. */
-function background(values: number[]): { mean: number; deviation: number } {
-  const lower = [...values].sort((a, b) => a - b).slice(0, Math.max(3, Math.floor(values.length * 0.8)));
-  const mean = lower.reduce((sum, value) => sum + value, 0) / lower.length;
-  return { mean, deviation: Math.sqrt(lower.reduce((sum, value) => sum + (value - mean) ** 2, 0) / lower.length) };
-}
 const missing = (what: string): never => { throw new RelayError("NOTE_NOT_FOUND", `${what}을(를) 찾을 수 없습니다.`, 3, 404); };
+
+type Closest = { score: number; rows: Array<{ row: ChunkRow; score: number }> };
+/** 질의 벡터에 메모마다 가장 가까운 절 셋과 메모 점수. 같은 메모의 절이 여럿 맞아도 가장 가까운 절이 점수를 정하고, 나머지는 조금만 보탠다
+ *  (1 : 0.15 : 0.05. 긴 메모가 절의 수만으로 유리해지지 않게). */
+function closest(vector: Float32Array, rows: ChunkRow[]): Map<string, Closest> {
+  const out = new Map<string, Closest>();
+  for (const row of rows) {
+    const score = dot(vector, row.vector);
+    let entry = out.get(row.noteId);
+    if (!entry) { entry = { score: 0, rows: [] }; out.set(row.noteId, entry); }
+    if (entry.rows.length < 3) entry.rows.push({ row, score });
+    else if (score > entry.rows[2]!.score) entry.rows[2] = { row, score };
+    else continue;
+    entry.rows.sort((a, b) => b.score - a.score);
+  }
+  for (const entry of out.values()) entry.score = entry.rows[0]!.score + 0.15 * (entry.rows[1]?.score ?? 0) + 0.05 * (entry.rows[2]?.score ?? 0);
+  return out;
+}
+
+/** 글의 offset 글자 뒤에 나오는 소제목들(코드 울타리 안은 뺀다). 긴 메모의 카드를 쓸 때 보이지 않는 뒷부분을 알리는 데 쓴다. */
+function outlineAfter(text: string, offset: number, limit = 40): string[] {
+  const out: string[] = [];
+  let at = 0, fence = false;
+  for (const line of text.split("\n")) {
+    const start = at;
+    at += line.length + 1;
+    if (/^\s{0,3}(```|~~~)/.test(line)) { fence = !fence; continue; }
+    if (fence || start < offset) continue;
+    const head = headingOf(line);
+    if (head && head[0] <= 3) { out.push(`${"#".repeat(head[0])} ${head[1]}`.slice(0, 80)); if (out.length >= limit) break; }
+  }
+  return out;
+}
 
 export class SemanticIndex {
   constructor(private port: IndexPort, private deps: IndexDeps, private cache: IndexCache = {}) {}
@@ -137,20 +180,22 @@ export class SemanticIndex {
     for (const model of models) {
       const own = new Map((await this.port.states(model.key)).map((state) => [state.noteId, state]));
       if (model.active) states = own;
-      rows.push({ key: model.key, name: model.name, dimensions: model.dimensions, active: model.active, ...this.summary(view, own, now) });
+      rows.push({ key: model.key, name: model.name, dimensions: model.dimensions, active: model.active, floor: model.floor, ...this.summary(view, own, now) });
     }
     const cards = { total: 0, fresh: 0, stale: 0, missing: 0 };
     for (const doc of view.docs.values()) { if (doc.empty) continue; cards.total++; cards[this.cardState(doc)]++; }
     const summary = active ? this.summary(view, states, now) : { total: cards.total, ready: 0, pending: cards.total, failed: 0 };
     const workerAt = this.cache.workerAt ?? null;
+    // 조각 상한을 꽉 채운 메모는 뒤가 색인되지 않은 것으로 본다(상한에 딱 맞게 끝난 메모는 드물다).
+    const cut = (state: IndexState | undefined) => state?.status === "ready" && state.chunkCount >= MAX_CHUNKS;
     const status: IndexStatus = { schemaVersion: 1, activeModelKey: active?.key ?? null, models: rows, embedderOnline: workerAt !== null && now - workerAt < WORKER_ONLINE_MS,
-      lastWorkerAt: workerAt, summary, cards };
+      lastWorkerAt: workerAt, summary, cards, truncated: [...states.values()].filter((state) => view.docs.has(state.noteId) && cut(state)).length };
     if (noteId !== undefined) {
       const doc = view.docs.get(noteId) ?? missing("메모");
       const state = states.get(noteId);
       const value = doc.empty ? "ready" : this.stateOf(doc, state, now);
       status.items = [{ noteId, status: value === "working" ? "pending" : value, chunks: state?.status === "ready" ? state.chunkCount : 0,
-        indexedAt: state?.status === "ready" ? state.updatedAt : null, error: state?.status === "failed" ? state.error : null, card: this.cardState(doc) }];
+        indexedAt: state?.status === "ready" ? state.updatedAt : null, error: state?.status === "failed" ? state.error : null, card: this.cardState(doc), truncated: Boolean(cut(state)) }];
     }
     return status;
   }
@@ -164,9 +209,11 @@ export class SemanticIndex {
     const key = modelKey(request.model.name, request.model.dimensions, request.model.prompt);
     const models = await this.port.models();
     let model = models.find((item) => item.key === key);
-    if (!model || Math.abs(model.floor - request.model.floor) > 1e-6) {
+    if (!model) {
+      // 바닥값은 모델을 처음 만들 때만 워커의 값(자가 진단)으로 둔다. 그 뒤에는 색인으로 잰 값(probe)이 정한다:
+      // 임대할 때마다 워커의 값으로 덮어쓰면, PC가 둘일 때 서로의 값을 번갈아 되돌린다.
       model = { key, name: request.model.name, dimensions: request.model.dimensions, prompt: request.model.prompt, chunkVersion: CHUNK_VERSION,
-        floor: request.model.floor, active: model?.active ?? !models.some((item) => item.active), createdAt: model?.createdAt ?? now };
+        floor: request.model.floor, active: !models.some((item) => item.active), createdAt: now };
       await this.port.saveModel(model);
     }
     const view = await this.view();
@@ -249,14 +296,20 @@ export class SemanticIndex {
   }
 
   /** 이 메모와 뜻이 가까운 메모들. 조각끼리 견주면 길이나 말투가 닮은 메모가 가깝게 나오므로(실측), 검색과 같은 방향으로 잰다:
-   *  이 메모의 질의 벡터 → 다른 메모의 절, 다른 메모의 질의 벡터 → 이 메모의 절. 둘 중 큰 값이 바닥값을 넘으면 잇고, 가장 가까웠던 절을 근거로 남긴다.
+   *  이 메모의 질의 벡터 → 다른 메모의 절, 다른 메모의 질의 벡터 → 이 메모의 절. 각 방향의 유사도를 「질의 벡터가 제 메모와 맞는 정도」로 나눈
+   *  비율이 LINK_RATIO를 넘으면 잇고, 가장 가까웠던 절을 근거로 남긴다(좁은 문서가 넓은 문서를 가리키는 한 방향 관계도 잇는다).
    *  두 방향을 모두 보므로 새 메모가 들어오면 옛 메모를 다시 색인하지 않아도 그 쌍이 생긴다. */
   private async nearest(model: EmbeddingModel, view: View, noteId: string, rows: ChunkRow[]): Promise<SemanticLink[]> {
     const probe = rows.find((row) => row.index === PROBE_INDEX), own = rows.filter((row) => row.index >= 0);
     if (!probe || !own.length) return [];
+    const all = (await this.chunkRows(model.key)).filter((row) => row.noteId !== noteId && view.docs.has(row.noteId) && row.vector.length === probe.vector.length);
+    const probes = new Map<string, Float32Array>();
+    for (const row of all) if (row.index === PROBE_INDEX) probes.set(row.noteId, row.vector);
+    const self = own.reduce((best, row) => Math.max(best, dot(probe.vector, row.vector)), 0);
     const forward = new Map<string, { score: number; row: ChunkRow }>(), backward = new Map<string, { score: number; row: ChunkRow }>(), opening = new Map<string, ChunkRow>();
-    for (const row of await this.chunkRows(model.key)) {
-      if (row.noteId === noteId || !view.docs.has(row.noteId) || row.vector.length !== probe.vector.length) continue;
+    /** 다른 메모의 질의 벡터가 제 메모의 절과 맞는 정도(가장 가까운 절). */
+    const selves = new Map<string, number>();
+    for (const row of all) {
       if (row.index === PROBE_INDEX) {
         for (const mine of own) { const score = dot(row.vector, mine.vector); if (score > (backward.get(row.noteId)?.score ?? -Infinity)) backward.set(row.noteId, { score, row: mine }); }
         continue;
@@ -264,25 +317,25 @@ export class SemanticIndex {
       if (row.index === 0) opening.set(row.noteId, row);
       const score = dot(probe.vector, row.vector);
       if (score > (forward.get(row.noteId)?.score ?? -Infinity)) forward.set(row.noteId, { score, row });
+      const theirs = probes.get(row.noteId);
+      if (theirs) { const fit = dot(theirs, row.vector); if (fit > (selves.get(row.noteId) ?? 0)) selves.set(row.noteId, fit); }
     }
-    // 바닥값: 모델마다 잰 값에 여유를 두고(잇기 제안은 검색보다 엄격하게), 메모가 넉넉하면 이 메모의 배경 유사도보다 뚜렷이 높은 것만 남긴다.
+    // 유사도 자체가 모델의 바닥값에도 못 미치면 비율이 높아도 잇지 않는다(질의 벡터가 제 메모와도 잘 맞지 않는 빈약한 메모).
     const base = Math.max(model.floor, 0.05);
-    const scores = [...forward.values()].map((item) => item.score);
-    const noise = scores.length >= 8 ? background(scores) : null;
-    const floor = Math.max(base * 1.5, noise ? noise.mean + 3 * noise.deviation : -1);
-    const links: SemanticLink[] = [];
+    const links: Array<SemanticLink & { ratio: number }> = [];
     for (const id of new Set([...forward.keys(), ...backward.keys()])) {
       const out = forward.get(id), back = backward.get(id);
       const score = Math.max(out?.score ?? -1, back?.score ?? -1);
-      if (score < floor) continue;
+      const ratio = Math.max(out && self > 0 ? out.score / self : 0, back && (selves.get(id) ?? 0) > 0 ? back.score / selves.get(id)! : 0);
+      if (ratio < LINK_RATIO || score < base) continue;
       const target = out?.row ?? opening.get(id);
       if (!target) continue;
       // 근거로 보일 이쪽 절: 저쪽의 질의 벡터에 가장 가까운 절, 없으면 저쪽의 그 절과 가장 닮은 절.
       const source = back?.row ?? own.reduce((best, row) => (dot(row.vector, target.vector) > dot(best.vector, target.vector) ? row : best));
-      links.push({ source: noteId, target: id, score, strength: Math.max(0.1, Math.min(1, score / (base * 4))),
+      links.push({ source: noteId, target: id, score, ratio, strength: Math.max(0.1, Math.min(1, 0.1 + 0.9 * (ratio - LINK_RATIO) / (LINK_FULL - LINK_RATIO))),
         sourceHeading: source.headingPath, sourceStart: source.lineStart, sourceEnd: source.lineEnd, targetHeading: target.headingPath, targetStart: target.lineStart, targetEnd: target.lineEnd });
     }
-    return links.sort((a, b) => b.score - a.score || (a.target < b.target ? -1 : 1)).slice(0, LINKS_PER_NOTE);
+    return links.sort((a, b) => b.ratio - a.ratio || b.score - a.score || (a.target < b.target ? -1 : 1)).slice(0, LINKS_PER_NOTE).map(({ ratio: _ratio, ...link }) => link);
   }
 
   async commit(request: CommitRequest): Promise<CommitResponse> {
@@ -419,13 +472,15 @@ export class SemanticIndex {
       && (!filters.folderId || under(doc, filters.folderId));
 
     const lexical: Map<string, LexicalHit> = request.mode === "semantic" ? new Map() : lexicalRank(this.lexical(view), request.query);
-    const semantic = new Map<string, { score: number; rows: Array<{ row: ChunkRow; score: number }> }>();
+    /** 메모마다 가장 가까운 절 셋과 메모 점수. 바닥값에 못 미친 메모도 담아 둔다(낱말로 걸린 결과에 「관련이 낮을 수 있음」을 붙이려고). */
+    let similar = new Map<string, Closest>();
     let fallbackReason: FallbackReason | undefined;
+    let searched = false;
     if (request.mode !== "keyword") {
       let vector: Float32Array | null = null;
       if (!model) fallbackReason = "no_index";
       else if (request.queryVector !== undefined) {
-        if (request.modelKey !== model.key) fallbackReason = "model_mismatch";
+        if (request.modelKey === undefined || !sameEmbedding(request.modelKey, model.key)) fallbackReason = "model_mismatch";
         else if (!(vector = decodeVector(request.queryVector, model.dimensions))) throw new RelayError("INVALID_ARGUMENT", "queryVector가 올바르지 않습니다.");
       } else if (this.deps.embedQuery) {
         const result = await this.deps.embedQuery(request.query, model);
@@ -434,44 +489,48 @@ export class SemanticIndex {
       if (vector && model) {
         const rows = (await this.chunkRows(model.key)).filter((row) => row.index >= 0 && row.vector.length === vector!.length && view.docs.has(row.noteId));
         if (!rows.length) fallbackReason = "no_index";
-        else {
-          const scores = rows.map((row) => dot(vector!, row.vector));
-          // 관련 없는 질의에 억지 결과를 내지 않는다: 모델마다 잰 바닥값과, 이 질의의 배경 유사도(아래쪽 80%)보다 뚜렷이 높은 값만 남긴다.
-          // 전체 평균으로 재면 가장 잘 맞은 조각이 기준을 끌어올려 그다음으로 맞은 메모까지 잘린다(실측).
-          const noise = rows.length >= 8 ? background(scores) : null;
-          const floor = Math.max(model.floor, noise ? noise.mean + 3 * noise.deviation : -1);
-          rows.forEach((row, at) => {
-            if (scores[at]! < floor) return;
-            const entry = semantic.get(row.noteId) ?? { score: 0, rows: [] };
-            entry.rows.push({ row, score: scores[at]! }); semantic.set(row.noteId, entry);
-          });
-          // 같은 메모의 절이 여럿 맞아도 가장 가까운 절이 점수를 정하고, 나머지는 조금만 보탠다(긴 메모가 유리해지지 않게).
-          for (const entry of semantic.values()) {
-            entry.rows.sort((a, b) => b.score - a.score);
-            entry.score = entry.rows[0]!.score + 0.15 * (entry.rows[1]?.score ?? 0) + 0.05 * (entry.rows[2]?.score ?? 0);
-          }
-        }
+        else { similar = closest(vector, rows); searched = true; }
       }
     }
     // 의미 검색만 달라고 했는데 할 수 없으면 낱말로 답한다(빈 결과보다 낫다).
     const usable = fallbackReason !== undefined && request.mode === "semantic" ? lexicalRank(this.lexical(view), request.query) : lexical;
+    // 의미: 모델의 바닥값(답이 없을 질의로 잰 「관련 없음」의 높이)과 1위의 RELATIVE_CUT배 가운데 큰 값을 넘는 메모만 남긴다.
+    let semanticTop = 0;
+    for (const [id, near] of similar) if (allowed(view.docs.get(id)!)) semanticTop = Math.max(semanticTop, near.score);
+    const floor = model ? Math.max(model.floor, semanticTop * RELATIVE_CUT) : Infinity;
+    const semantic = new Map<string, Closest>();
+    for (const [id, near] of similar) if (near.score >= floor && allowed(view.docs.get(id)!)) semantic.set(id, near);
+    // 낱말: 질의의 낱말을 충분히 담지 못한 글은 뺀다(뜻으로도 맞은 글과 질의가 구절째 든 글은 남긴다). 남은 것 가운데 가장 높은 점수를 1로 다시 맞춘다.
+    const keyword = new Map<string, LexicalHit>();
+    for (const [id, hit] of usable) {
+      const doc = view.docs.get(id);
+      if (doc && allowed(doc) && (hit.phrase || semantic.has(id) || hit.coverage >= (searched ? COVERAGE_ALONE : COVERAGE_LEXICAL))) keyword.set(id, hit);
+    }
+    let keywordTop = 0;
+    for (const hit of keyword.values()) keywordTop = Math.max(keywordTop, hit.score);
+    const literal = exactIntent(request.query) || [...keyword.values()].some((hit) => hit.phrase);
+    const share = !semantic.size ? 0 : !keyword.size ? 1 : literal ? SEMANTIC_SHARE_EXACT : SEMANTIC_SHARE;
     const statusWeight = (status: DocStatus | null | undefined) => (filters.includeHistory ? 1 : status === "adopted" ? ADOPTED_WEIGHT : status === "superseded" ? SUPERSEDED_WEIGHT : 1);
-    const rank = (entries: Array<[string, number]>) => new Map(entries.filter(([id]) => allowed(view.docs.get(id)!))
-      .map(([id, score]): [string, number] => [id, score * statusWeight(view.docs.get(id)!.meta?.docStatus)])
-      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([id], at) => [id, at + 1]));
-    const keywordRank = rank([...usable].filter(([, hit]) => hit.score >= (semantic.size ? 0.12 : 0.02)).map(([id, hit]) => [id, hit.score]));
-    const semanticRank = rank([...semantic].map(([id, hit]) => [id, hit.score]));
-    const keywordWeight = exactIntent(request.query) ? 1.4 : 1;
-    const best = (keywordRank.size ? keywordWeight : 0) / (RRF_K + 1) + (semanticRank.size ? 1 : 0) / (RRF_K + 1);
+    // 지금 일하는 저장소에서 등록한 문서의 프로젝트(여럿일 수 있다). 그 프로젝트의 문서를 앞에 둔다.
+    const preferred = new Map<string, string>();
+    if (filters.sourceRepo && !filters.project) {
+      const repo = filters.sourceRepo.toLocaleLowerCase("ko-KR");
+      for (const doc of view.docs.values()) if (doc.meta?.project && doc.meta.sourceRepo?.toLocaleLowerCase("ko-KR") === repo) preferred.set(doc.meta.project.toLocaleLowerCase("ko-KR"), doc.meta.project);
+    }
     const states = model ? new Map((await this.port.states(model.key)).map((state) => [state.noteId, state])) : new Map<string, IndexState>();
     const terms = (() => { const { words, raw } = queryTerms(request.query); return [...new Set([...words, ...raw])]; })();
-    const ranked = [...new Set([...keywordRank.keys(), ...semanticRank.keys()])].map((id) => {
-      const doc = view.docs.get(id)!;
-      const fused = (keywordRank.has(id) ? keywordWeight / (RRF_K + keywordRank.get(id)!) : 0) + (semanticRank.has(id) ? 1 / (RRF_K + semanticRank.get(id)!) : 0);
-      return { doc, score: Math.min(1, fused / (best || 1)) };
-    }).sort((a, b) => b.score - a.score || b.doc.note.updatedAt - a.doc.note.updatedAt || (a.doc.note.id < b.doc.note.id ? -1 : 1));
+    const ranked = [...new Set([...keyword.keys(), ...semantic.keys()])].map((id) => {
+      const doc = view.docs.get(id)!, hit = keyword.get(id), near = similar.get(id);
+      const word = hit && keywordTop > 0 ? hit.score / keywordTop : 0;
+      const meaning = near && semanticTop > 0 ? Math.max(0, near.score) / semanticTop : 0;
+      const fused = (share * meaning + (1 - share) * word) * statusWeight(doc.meta?.docStatus) * (preferred.has((doc.meta?.project ?? "").toLocaleLowerCase("ko-KR")) ? PREFERRED_WEIGHT : 1);
+      // 질의가 구절째 든 글은 그 글을 찾는 것이므로 맨 앞에 둔다(그런 글끼리는 합친 점수로 줄 세운다).
+      // 관련이 낮을 수 있는 결과: 뜻으로는 바닥값에 못 미쳤는데 낱말로 걸린 글, 의미 검색 없이 질의의 낱말을 절반도 담지 못한 글.
+      const weak = !hit?.phrase && (searched ? near !== undefined && !semantic.has(id) : hit !== undefined && hit.coverage < COVERAGE_ALONE);
+      return { doc, order: fused + (hit?.phrase ? 1 : 0), score: hit?.phrase ? 1 : Math.min(1, fused), weak };
+    }).sort((a, b) => b.order - a.order || b.doc.note.updatedAt - a.doc.note.updatedAt || (a.doc.note.id < b.doc.note.id ? -1 : 1));
 
-    const items = ranked.slice(0, request.limit).map(({ doc, score }): SearchItem => {
+    const items = ranked.slice(0, request.limit).map(({ doc, score, weak }): SearchItem => {
       const id = doc.note.id, lines = doc.note.body.split("\n"), state = states.get(id);
       const stale = semantic.has(id) && this.stateOf(doc, state, now) !== "ready";
       const matches: SearchMatch[] = [];
@@ -489,7 +548,7 @@ export class SemanticIndex {
         const seen = this.shown(lines, start, end, terms);
         matches.push({ headingPath: headingAt(doc.note.body, seen.line) || heading, lineStart: start, lineEnd: end, snippet: seen.text, score: Math.round(similarity * 1000) / 1000 });
       }
-      if (matches.length < 2 && usable.has(id)) {
+      if (matches.length < 2 && keyword.has(id)) {
         // 낱말이 든 줄을 보탠다(의미로 맞은 절과 겹치지 않는 것만).
         for (let at = 1; at <= lines.length && matches.length < 2; at++) {
           const lowered = lowerText(lines[at - 1]!);
@@ -503,11 +562,34 @@ export class SemanticIndex {
       return { noteId: id, title: labelOf(doc.note), path: doc.path, updatedAt: doc.note.updatedAt, docType: doc.meta?.docType ?? "memo", docStatus: doc.meta?.docStatus ?? null,
         project: doc.meta?.project ?? "", ...(newer ? { supersededBy: { id: newer.note.id, title: labelOf(newer.note), status: newer.meta?.docStatus ?? null } } : {}),
         score: Math.round(score * 1000) / 1000,
-        scores: { ...(usable.has(id) ? { keyword: Math.round(usable.get(id)!.score * 1000) / 1000 } : {}), ...(semantic.has(id) ? { semantic: Math.round(semantic.get(id)!.score * 1000) / 1000 } : {}) },
-        terms: usable.get(id)?.terms ?? [], staleIndex: stale, matches };
+        scores: { ...(keyword.has(id) ? { keyword: Math.round(keyword.get(id)!.score / (keywordTop || 1) * 1000) / 1000 } : {}), ...(semantic.has(id) ? { semantic: Math.round(semantic.get(id)!.score * 1000) / 1000 } : {}) },
+        terms: keyword.get(id)?.terms ?? [], ...(weak ? { weak: true as const } : {}), staleIndex: stale, matches };
     });
     const searchMode = request.mode === "keyword" ? "keyword" : fallbackReason !== undefined ? "lexical_fallback" : request.mode;
-    return { schemaVersion: 1, query: request.query, searchMode, ...(searchMode === "lexical_fallback" ? { fallbackReason } : {}), modelKey: model?.key ?? null, total: ranked.length, items };
+    return { schemaVersion: 1, query: request.query, searchMode, ...(searchMode === "lexical_fallback" ? { fallbackReason } : {}), modelKey: model?.key ?? null, total: ranked.length, items,
+      ...(preferred.size ? { preferredProjects: [...preferred.values()].sort() } : {}) };
+  }
+
+  /** 질의 벡터마다 지금 색인에서 가장 가까운 메모의 점수. 답이 없을 질의들을 넣어 「관련 없음」이 얼마나 높이 나오는지 잰다.
+   *  apply를 주면 그 값으로 모델의 검색 바닥값을 정해 남긴다(조각이 FLOOR_MIN_CHUNKS개 이상일 때. 거의 같은 값이면 고쳐 쓰지 않는다).
+   *  바닥값은 색인에 하나만 둔다: 어느 PC가 재든 모든 PC의 검색이 같은 값을 쓴다. */
+  async probe(request: ProbeRequest): Promise<ProbeResponse> {
+    const model = (await this.port.models()).find((item) => item.key === request.modelKey) ?? missing("모델");
+    const view = await this.view();
+    const rows = (await this.chunkRows(model.key)).filter((row) => row.index >= 0 && row.vector.length === model.dimensions && view.docs.has(row.noteId));
+    const tops = request.vectors.map((data) => {
+      const vector = decodeVector(data, model.dimensions);
+      if (!vector) throw new RelayError("INVALID_ARGUMENT", `벡터가 올바르지 않습니다(길이 1인 ${model.dimensions}차원 float32여야 합니다).`);
+      let top = 0;
+      for (const near of closest(vector, rows).values()) top = Math.max(top, near.score);
+      return Math.round(top * 1000) / 1000;
+    });
+    let floor: number | undefined;
+    if (request.apply && rows.length >= FLOOR_MIN_CHUNKS) {
+      floor = floorFrom(tops, request.diagnosed ?? 0);
+      if (Math.abs(floor - model.floor) > 0.004) await this.port.saveModel({ ...model, floor }); else floor = model.floor;
+    }
+    return { schemaVersion: 1, modelKey: model.key, tops, chunks: rows.length, ...(floor !== undefined ? { floor } : {}) };
   }
 
   // ── 의미 연결 ────────────────────────────────────────────
@@ -568,8 +650,20 @@ export class SemanticIndex {
     return { schemaVersion: 1, total: [...view.docs.values()].filter((doc) => !doc.empty).length, missing: waiting.filter((doc) => !doc.card).length, stale: waiting.filter((doc) => doc.card).length,
       items: waiting.slice(0, limit).map((doc) => {
         const whole = redactSecrets(doc.note.body.replace(/!\[([^\]\n]*)\]\([^)\n]*\)/g, (_match, alt: string) => (alt ? `[그림: ${alt}]` : "[그림]")).replace(/\s+$/, "")).text;
-        return { noteId: doc.note.id, title: labelOf(doc.note), path: doc.path, contentHash: doc.contentHash, stale: Boolean(doc.card), text: whole.slice(0, maxChars), clipped: whole.length > maxChars };
+        const clipped = whole.length > maxChars;
+        // 잘린 뒤에 무엇이 있는지 소제목으로 알린다(앞 6,000자만 보고 쓴 카드는 뒷부분의 내용을 담지 못한다).
+        const outline = clipped ? outlineAfter(whole, maxChars) : [];
+        return { noteId: doc.note.id, title: labelOf(doc.note), path: doc.path, contentHash: doc.contentHash, stale: Boolean(doc.card), text: whole.slice(0, maxChars), clipped,
+          ...(outline.length ? { outline } : {}) };
       }) };
+  }
+
+  /** 메모 하나에 저장된 카드. 카드를 쓴 뒤 메모가 바뀌었으면 stale이다. */
+  async card(noteId: string): Promise<CardShown> {
+    const view = await this.view();
+    const doc = view.docs.get(noteId) ?? missing("메모");
+    return { schemaVersion: 1, noteId, title: labelOf(doc.note), path: doc.path, state: this.cardState(doc),
+      card: doc.card ? { summary: doc.card.summary, terms: doc.card.terms, questions: doc.card.questions, author: doc.card.author, updatedAt: doc.card.updatedAt } : null };
   }
 
   /** 카드를 저장한다. 없는 메모의 카드, 읽은 뒤에 메모가 바뀐 카드(contentHash가 다름)는 건너뛴다. 카드 글에서도 비밀로 보이는 값은 가린다. */
@@ -612,6 +706,9 @@ export class SemanticIndex {
     const firstHeading = request.body.split("\n").map((line) => headingOf(line)).find((head) => head?.[0] === 1)?.[1];
     const title = (request.title ?? existing?.note.title ?? firstHeading ?? "제목 없음").slice(0, MAX_NAME);
     const id = existing?.note.id ?? this.deps.id();
+    // 새 문서가 옛 문서를 대신한다. 옛 문서가 (여러 단계를 거쳐) 이미 새 문서를 대신하고 있으면 돌고 도는 관계가 되므로 받지 않는다.
+    // 본문을 쓰기 전에 본다: 쓴 뒤에 거절하면 거절한 요청의 본문이 메모에 남는다.
+    if (request.supersedes !== undefined && this.chained(view, id, request.supersedes)) throw new RelayError("INVALID_ARGUMENT", "대체 관계가 돌고 돕니다. 서로를 대신하는 문서는 만들 수 없습니다.");
     let action: RegisterResponse["action"] = existing ? "unchanged" : "created";
     let revision = view.revision;
     if (!existing || existing.note.title !== title || existing.note.body !== request.body) {
@@ -624,8 +721,6 @@ export class SemanticIndex {
       project: request.project ?? before.project, sourceRepo: request.sourceRepo ?? before.sourceRepo, sourcePath: request.sourcePath ?? before.sourcePath,
       sourceCommit: request.sourceCommit ?? before.sourceCommit, updatedAt: now }];
     if (request.supersedes !== undefined) {
-      // 새 문서가 옛 문서를 대신한다. 옛 문서가 (여러 단계를 거쳐) 이미 새 문서를 대신하고 있으면 돌고 도는 관계가 되므로 받지 않는다.
-      if (this.chained(view, id, request.supersedes)) throw new RelayError("INVALID_ARGUMENT", "대체 관계가 돌고 돕니다. 서로를 대신하는 문서는 만들 수 없습니다.");
       rows.push({ ...this.metaOf(view, request.supersedes, now), docStatus: "superseded", supersededBy: id, updatedAt: now });
     }
     await this.port.saveMeta(rows);

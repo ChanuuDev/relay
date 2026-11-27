@@ -809,7 +809,7 @@ function SearchResults({ items, query, selected, onOpen }: { items: Items; query
             <FileText className="tree-icon" aria-hidden="true" />
             <span className="notes-result-text">
               <span className="tree-label">{item.title}</span>
-              <span className="notes-result-path">{item.path || "최상위"}{item.matches[0]?.headingPath ? ` · ${item.matches[0].headingPath.split(" > ").pop()}` : ""}</span>
+              <span className="notes-result-path">{item.path || "최상위"}{item.matches[0]?.headingPath ? ` · ${item.matches[0].headingPath.split(" > ").pop()}` : ""}{item.weak ? " · 관련이 낮을 수 있음" : ""}</span>
               {item.matches[0]?.snippet && <span className="notes-result-snippet">{item.matches[0].snippet}</span>}
             </span>
           </button>

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { dock, graph, openGraph, settled, win } from "./graph-helpers";
 import { cli, env, freePort, launch, ready, root, stop, useRelayServer } from "./web-helpers";
@@ -21,11 +21,14 @@ const NOTES = [
   note("n-trip", "부산 여행", "기차와 숙소를 예약한다.", 5),
 ];
 
+const bundled = path.join(root, "node_modules", "bun", "bin", process.platform === "win32" ? "bun.exe" : "bun");
+const bun = existsSync(bundled) ? bundled : "bun";
+const fake = path.join(root, "tests", "support", "fake-embedder.ts");
+
 /** 임베딩 서버를 띄우고, 메모와 임베딩 설정을 저장소에 넣은 뒤 Relay 서버를 다시 띄운다. 색인 워커가 모든 메모를 색인할 때까지 기다린다. */
 async function indexed() {
   const port = await freePort();
-  const bundled = path.join(root, "node_modules", "bun", "bin", process.platform === "win32" ? "bun.exe" : "bun");
-  embedder = spawn(existsSync(bundled) ? bundled : "bun", [path.join(root, "tests", "support", "fake-embedder.ts"), String(port)], { cwd: root, stdio: "ignore", windowsHide: true });
+  embedder = spawn(bun, [fake, String(port)], { cwd: root, stdio: "ignore", windowsHide: true });
   await expect.poll(async () => { try { return (await fetch(`http://127.0.0.1:${port}/calls`, { signal: AbortSignal.timeout(500) })).ok; } catch { return false; } }, { timeout: 15000 }).toBe(true);
   await stop();
   const file = path.join(env.dir, "notes.json");
@@ -65,6 +68,11 @@ test("의미 검색: 낱말이 달라도 뜻이 가까운 메모를 검색 결�
   await expect(notes.getByRole("list", { name: "검색 결과" }).locator(".notes-result")).toHaveText([/노트북을 열면 메모가 늦게 뜬다/]);
   await expect(related.locator(".notes-result", { hasText: "노트북을 열면" })).toHaveCount(0);
   await expect(related.locator(".notes-result", { hasText: "증분 동기화 설계" })).toBeVisible();
+  // 뜻으로는 닿지 않는데 낱말로만 걸린 메모(「이미지」「올리고」)는 남기되 관련이 낮을 수 있다고 알린다.
+  await search.fill("sync 이미지 올리고");
+  await expect(related.locator(".notes-result", { hasText: "서버 배포 절차" }).locator(".notes-result-path")).toContainText("관련이 낮을 수 있음");
+  await expect(related.locator(".notes-result", { hasText: "증분 동기화 설계" }).locator(".notes-result-path")).not.toContainText("관련이 낮을 수 있음");
+  await search.fill("sync");
   // 눌러서 연다.
   await related.locator(".notes-result", { hasText: "증분 동기화 설계" }).click();
   await expect(page.getByLabel("제목", { exact: true })).toHaveValue("증분 동기화 설계");
@@ -103,4 +111,33 @@ test("의미 검색: 낱말이 달라도 뜻이 가까운 메모를 검색 결�
   // 보일 연결 설정에 「뜻이 가까움」이 있다.
   await expect(graph(page)).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("쉬다 꺼진 임베딩 서버: 처음에는 낱말로 답하고, 서버가 뜨면 다시 치지 않아도 뜻으로 찾은 결과로 바뀐다", async ({ page }) => {
+  await indexed();
+  // 임베딩 서버를 끄고, 필요할 때 띄우는 명령을 설정에 적는다(쓰지 않으면 꺼지는 로컬 서버와 같은 상태).
+  await stop();
+  embedder!.kill(); embedder = undefined;
+  const file = path.join(env.dir, "embedding.json");
+  const config = JSON.parse(readFileSync(file, "utf8")) as { url: string };
+  const port = Number(new URL(config.url).port);
+  await expect.poll(async () => { try { return (await fetch(`http://127.0.0.1:${port}/calls`, { signal: AbortSignal.timeout(300) })).ok; } catch { return false; } }, { timeout: 10000 }).toBe(false);
+  writeFileSync(file, JSON.stringify({ ...config, launch: [bun, fake, String(port)], idleMinutes: 1 }));
+  await launch();
+  try {
+    await ready(page);
+    await page.locator(dock("메모")).click();
+    const notes = page.locator(win("notes"));
+    await expect(notes.locator(".notes-tree")).toContainText("증분 동기화 설계");
+    const asked = (response: { url(): string; request(): { postDataJSON(): unknown } }) => response.url().endsWith("/api/v1/notes/search") && (response.request().postDataJSON() as { query?: string })?.query === "wake up sync";
+    const first = page.waitForResponse(asked);
+    await notes.locator("#notes-search").fill("wake up sync");
+    // 첫 답은 낱말 검색이다(서버는 이 질의를 받고 임베딩 서버를 띄우기 시작한다).
+    expect(await (await first).json()).toMatchObject({ searchMode: "lexical_fallback", fallbackReason: "embedder_offline" });
+    // 잠시 뒤 화면이 한 번 더 물어, 뜻으로 찾은 결과로 바꾼다.
+    const related = notes.getByRole("region", { name: "관련 메모" });
+    await expect(related.locator("h3")).toHaveText("뜻이 가까운 메모", { timeout: 15000 });
+    await expect(related.locator(".notes-result", { hasText: "증분 동기화 설계" }).locator(".notes-result-snippet")).toContainText("밀린 변경을 다시 받아");
+    await expect(notes.locator(".notes-related-note")).toHaveCount(0);
+  } finally { await fetch(`http://127.0.0.1:${port}/exit`, { signal: AbortSignal.timeout(2000) }).catch(() => {}); }
 });

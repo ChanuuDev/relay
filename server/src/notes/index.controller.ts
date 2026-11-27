@@ -26,6 +26,6 @@ export class NotesIndexController {
   @Get(["index-status", "semantic-links", "cards", "meta", ":id/suggestions"])
   read(@Auth() auth: AuthContext, @Req() request: Request, @Res() response: Response) { return this.serve(auth, request, response, undefined); }
 
-  @Post(["search", "reindex", "index-jobs/lease", "index-jobs/commit", "index-jobs/fail", "index-models/activate", "cards", "meta", "register-doc", ":id/suggestions/:target/dismiss"])
+  @Post(["search", "reindex", "index-jobs/lease", "index-jobs/commit", "index-jobs/fail", "index-jobs/probe", "index-models/activate", "cards", "meta", "register-doc", ":id/suggestions/:target/dismiss"])
   write(@Auth() auth: AuthContext, @Req() request: Request, @Res() response: Response, @Body() body: unknown) { return this.serve(auth, request, response, body); }
 }

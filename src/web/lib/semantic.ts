@@ -75,6 +75,8 @@ export function useIndexStatus(enabled: boolean): IndexStatus | null {
 }
 
 export const SEARCH_DELAY = 450;
+/** 꺼져 있던 임베딩 서버가 뜨는 데 3초쯤 걸린다. 그 뒤에 다시 묻는다. */
+export const RETRY_DELAY = 3500;
 /** 낱말과 뜻으로 찾기. 글자를 칠 때마다 부르지 않도록 입력이 멎고 조금 뒤에 한 번 부른다. 두 글자 미만이면 찾지 않는다. */
 export function useNoteSearch(query: string): { result: SearchResponse | null; loading: boolean } {
   const [state, setState] = useState<{ result: SearchResponse | null; loading: boolean }>({ result: null, loading: false });
@@ -85,15 +87,27 @@ export function useNoteSearch(query: string): { result: SearchResponse | null; l
     if (text.length < 2) { setState({ result: null, loading: false }); return; }
     setState((before) => ({ result: before.result?.query === text ? before.result : null, loading: true }));
     const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      let result: SearchResponse | null = null;
+    let again = 0;
+    const ask = async (): Promise<SearchResponse | null> => {
       try {
         const response = await fetch("/api/v1/notes/search", { method: "POST", headers: json, body: JSON.stringify({ query: text.slice(0, 500), limit: 8 }), signal: controller.signal });
-        if (response.ok) result = await response.json() as SearchResponse;
+        if (response.ok) return await response.json() as SearchResponse;
       } catch { /* 낱말로 찾은 결과만 보인다. */ }
-      if (!controller.signal.aborted && latest.current === text) setState({ result, loading: false });
+      return null;
+    };
+    const current = () => !controller.signal.aborted && latest.current === text;
+    const timer = window.setTimeout(async () => {
+      const result = await ask();
+      if (!current()) return;
+      setState({ result, loading: false });
+      // 임베딩 서버가 쉬다 꺼져 있었다: 서버가 이 질의를 받고 띄우기 시작했으니, 뜰 만큼 기다렸다가 한 번 더 물어 결과를 뜻으로 찾은 것으로 바꾼다.
+      if (result?.fallbackReason !== "embedder_offline") return;
+      again = window.setTimeout(async () => {
+        const retried = await ask();
+        if (retried && current() && retried.searchMode !== "lexical_fallback") setState({ result: retried, loading: false });
+      }, RETRY_DELAY);
     }, SEARCH_DELAY);
-    return () => { controller.abort(); window.clearTimeout(timer); };
+    return () => { controller.abort(); window.clearTimeout(timer); window.clearTimeout(again); };
   }, [query]);
   return state;
 }

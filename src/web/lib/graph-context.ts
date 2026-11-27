@@ -7,7 +7,7 @@ import type { Item, Items, Note } from "./notes";
  *  화면의 「에이전트 맥락」 패널과 CLI(`relay graph context`)가 같은 계산·같은 글을 쓴다. LLM이나 임베딩을 쓰지 않아 결과가 항상 같다.
  *
  *  고르는 방법 (참고한 것)
- *  1. 씨앗: 질의를 BM25(k1 1.2, b 0.75)로 찾는다. 제목·폴더 경로·태그를 본문보다 무겁게 색인한다(Anthropic Contextual Retrieval의 「조각 앞에 위치 설명 붙이기」를 규칙으로 옮긴 것).
+ *  1. 씨앗: 질의를 BM25(k1 1.2, b 0.4)로 찾는다. 제목·폴더 경로·태그를 본문보다 무겁게 색인한다(Anthropic Contextual Retrieval의 「조각 앞에 위치 설명 붙이기」를 규칙으로 옮긴 것).
  *  2. 퍼뜨리기: 씨앗에서 Personalized PageRank(되돌아올 확률 0.5)를 돌린다. 맞은 메모 모두에 약한 씨앗(0.05배)을 주어 그래프가 검색 결과를
  *     뒤집지 않고 순서만 고치게 한다(HippoRAG·HippoRAG 2).
  *  3. 고르기: 점수가 낮으면 한도가 남아도 싣지 않는다(관련 없는 글 하나도 답을 흐린다: Chroma 「Context Rot」). 겹치는 글은 MMR(λ 0.7)로 민다.

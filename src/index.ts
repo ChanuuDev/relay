@@ -16,7 +16,7 @@ import { autoInstallHostHooks, installHostHooks } from "./hooks/install";
 import { transcriptModels } from "./hooks/transcript";
 import { EXPORT_FORMAT, NoteStore, parseExport, parseExportImages, type NoteItem } from "./notes/notes.store";
 import { findText, listText, MemoIndex, searchText } from "./notes/memo";
-import { embedCommands, memoDocCommands, rankedSearch, searchNotes, semanticLinks, toHits } from "./notes/embed-cli";
+import { embedCommands, memoDocCommands, rankedSearch, repoName, searchNotes, semanticLinks, toHits } from "./notes/embed-cli";
 import { graphml, GraphTool, linkedText, mapText, mermaid, neighborsText, pathResultText, suggestText, type GraphSource, type SessionScope } from "./notes/graph";
 import { DEFAULT_BUDGET, MAX_BUDGET, MIN_BUDGET } from "./web/lib/graph-context";
 import { parseSearch, type NoteList } from "@relay/core";
@@ -197,11 +197,12 @@ const memo = program.command("memo").description("AI 에이전트용 메모 읽�
   .option("--project <name>", "--search를 프로젝트로 좁힘")
   .option("--history", "--search에서 대체된 문서도 감점 없이 봄")
   .option("--limit <number>", "--search로 보일 메모 수 (1~50, 기본 10)")
-  .action(async (o: { list?: boolean; folder?: string; find?: string; search?: string; mode?: string; type?: string; status?: string; project?: string; history?: boolean; limit?: string }, c: Command) => {
+  .option("--all", "--search에서 작업 중인 저장소의 프로젝트 문서를 앞에 두지 않고 전체에서 고르게 찾음")
+  .action(async (o: { list?: boolean; folder?: string; find?: string; search?: string; mode?: string; type?: string; status?: string; project?: string; history?: boolean; limit?: string; all?: boolean }, c: Command) => {
     const picked = [o.list === true, o.find !== undefined, o.search !== undefined].filter(Boolean).length;
     if (picked > 1) invalid("--list, --find, --search 중 하나만 지정하세요.");
     if (o.folder !== undefined && !o.list) invalid("--folder는 --list와 함께 씁니다.");
-    if (o.search === undefined && [o.mode, o.type, o.status, o.project, o.history, o.limit].some((value) => value !== undefined)) invalid("--mode, --type, --status, --project, --history, --limit은 --search와 함께 씁니다.");
+    if (o.search === undefined && [o.mode, o.type, o.status, o.project, o.history, o.limit, o.all].some((value) => value !== undefined)) invalid("--mode, --type, --status, --project, --history, --limit, --all은 --search와 함께 씁니다.");
     if (!picked) return void process.stdout.write(c.helpInformation());
     const config = loadConfig(c.optsWithGlobals().dataDir);
     if (o.search !== undefined && o.mode !== "exact") {
@@ -262,7 +263,9 @@ withSessions(graph.command("context [query...]").description("질의나 중심 �
     const project = o.project === undefined ? undefined : directory(typeof o.project === "string" ? o.project : process.cwd(), false);
     // 질의가 있으면 서버의 검색(낱말 + 의미)으로 씨앗을 고른다. 검색하지 못하면 그래프 안의 낱말 검색만으로 고른다.
     let hits: ReturnType<typeof toHits> | undefined;
-    if (query && !o.lexical) try { hits = toHits(await searchNotes(loadConfig(c.optsWithGlobals().dataDir), parseSearch({ query: query.slice(0, 500), limit: 12 }))); } catch { /* 낱말로만 찾는다. */ }
+    // 저장소 안에서 부르면 그 저장소에서 등록한 문서의 프로젝트를 앞에 둔다(다른 프로젝트의 같은 종류 문서가 씨앗이 되지 않게).
+    const repo = repoName(process.cwd());
+    if (query && !o.lexical) try { hits = toHits(await searchNotes(loadConfig(c.optsWithGlobals().dataDir), parseSearch({ query: query.slice(0, 500), limit: 12, ...(repo ? { filters: { sourceRepo: repo } } : {}) }))); } catch { /* 낱말로만 찾는다. */ }
     return graphRead(c, o.sessions, (tool) => {
       const result = tool.context({ query, seeds: o.from, project, budget: whole(o.budget, "--budget", MIN_BUDGET, MAX_BUDGET, DEFAULT_BUDGET), brief: o.brief === true, redact: o.raw !== true, ...(hits?.length ? { hits } : {}) });
       return [result, result.text];

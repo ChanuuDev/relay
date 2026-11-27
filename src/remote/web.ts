@@ -38,6 +38,10 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
         const local = places();
         return Response.json({ ...local, drives: [...local.drives, { path: "remote:/", label: `원격 서버 · ${new URL(config.remote!.url).hostname}`, type: "network", total: null, free: null }] }, { headers: localHeaders });
       }
+      // 검색의 wait는 이 PC만 읽는다(쉬다 꺼진 임베딩 서버를 그만큼 기다린다). 원격 서버로는 보내지 않는다.
+      const search = request.method === "POST" && url.pathname === "/api/v1/notes/search";
+      const wait = search ? Math.min(30_000, Math.max(0, Number(url.searchParams.get("wait")) || 0)) : 0;
+      if (search) url.searchParams.delete("wait");
       let route = url.pathname + url.search;
       let encode = false;
       let body: unknown;
@@ -69,7 +73,7 @@ export function remoteHandler(config: Config, fallback: (request: Request) => Re
         try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new RelayError("INVALID_ARGUMENT", "JSON 본문을 읽을 수 없습니다."); }
       }
       // 검색: 이 PC에서 질의를 임베딩해 벡터를 싣는다. 임베딩하지 못하면 그대로 보내고, 서버가 낱말 검색으로 답한다.
-      if (host && request.method === "POST" && url.pathname === "/api/v1/notes/search") body = await host.attach(parseSearch(body));
+      if (host && search) body = await host.attach(parseSearch(body), wait);
       if (fileApi && !explicitFiles) {
         const value = body as { path?: string; paths?: string[]; parent?: string; destination?: string; sources?: string[] } | undefined;
         if (url.pathname === "/api/v1/files/transfer" || (url.pathname.endsWith("/paste") && value?.sources?.some(source => remotePath(source) !== remotePath(value.destination)))) {

@@ -18,7 +18,7 @@ $skills = [ordered]@{
     'relay-session' = 'argument-hint: codex|claude|grok|cursor|gemini'
     'relay-memo' = 'argument-hint: <memo-id|folder-id|query>'
     'relay-graph' = 'argument-hint: <query|memo-id>'
-    'relay-embedding' = 'argument-hint: [status|cards|run|setup|doctor]'
+    'relay-embedding' = 'argument-hint: [status|cards|run|setup|doctor|eval]'
 }
 function Test-Link([string]$ItemPath) {
     # Test-Path follows a link, so a dangling junction is recognised through its own attributes instead.

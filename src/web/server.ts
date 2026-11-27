@@ -109,7 +109,14 @@ export function handler(service: SessionService, config: Config, { notes, files,
       if (request.method !== "GET" && request.method !== "POST") throw new RelayError("METHOD_NOT_ALLOWED", "GET 조회와 POST만 허용합니다.", 2, 405);
       let body: unknown;
       if (request.method === "POST") { checkWrite(request, config.webPort, MAX_INDEX_BODY_BYTES); body = await readBody(request); } else checkRequest(request, config.webPort);
-      const result = await serveIndex(index.engine(), request.method, url.pathname, Object.fromEntries(url.searchParams), body);
+      const query = Object.fromEntries(url.searchParams);
+      // 검색의 wait(밀리초): 쉬다 꺼진 임베딩 서버를 그만큼 기다렸다가 찾는다. CLI와 에이전트가 붙이고, 글자를 칠 때마다 찾는 화면은 붙이지 않는다.
+      if (request.method === "POST" && url.pathname === "/api/v1/notes/search" && query.wait !== undefined) {
+        const wait = Math.min(30_000, Math.max(0, Number(query.wait) || 0));
+        delete query.wait;
+        if (wait > 0 && index.host && (body as { mode?: unknown } | null)?.mode !== "keyword") await index.host.ensure(wait).catch(() => false);
+      }
+      const result = await serveIndex(index.engine(), request.method, url.pathname, query, body);
       if (request.method !== "GET") return Response.json(result, { headers });
       const text = JSON.stringify(result);
       const tag = `"${createHash("sha256").update(text).digest("hex").slice(0, 32)}"`;

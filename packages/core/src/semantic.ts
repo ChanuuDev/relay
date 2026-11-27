@@ -66,7 +66,9 @@ export interface IndexPort {
 export type SearchMode = "hybrid" | "keyword" | "semantic";
 /** 의미 검색을 하지 못해 낱말 검색으로 답한 까닭. */
 export type FallbackReason = "no_index" | "embedder_offline" | "embedding_timeout" | "embedding_overloaded" | "embedding_unavailable" | "model_mismatch";
-export type SearchFilters = { project?: string; docType?: DocType[]; docStatus?: DocStatus[]; folderId?: string; includeHistory?: boolean };
+export type SearchFilters = { project?: string; docType?: DocType[]; docStatus?: DocStatus[]; folderId?: string; includeHistory?: boolean;
+  /** 지금 일하는 Git 저장소의 이름. 그 저장소에서 등록한 문서의 프로젝트를 앞에 둔다(좁히지는 않는다). project를 주면 쓰지 않는다. */
+  sourceRepo?: string };
 export type SearchRequest = { query: string; mode: SearchMode; filters: SearchFilters; limit: number;
   /** 질의 벡터(float32 base64). 임베딩 서버가 있는 PC의 CLI·로컬 서버가 계산해 싣는다. modelKey는 그 벡터를 만든 모델이다. */
   queryVector?: string; modelKey?: string };
@@ -74,18 +76,28 @@ export type SearchMatch = { headingPath: string; lineStart: number; lineEnd: num
 export type SearchItem = {
   noteId: string; title: string; path: string; updatedAt: number; docType: DocType; docStatus: DocStatus | null; project: string;
   supersededBy?: { id: string; title: string; status: DocStatus | null };
-  /** 0..1 (합친 순위 점수) */ score: number; scores: { keyword?: number; semantic?: number }; terms: string[];
+  /** 0..1 (합친 점수) */ score: number; scores: { keyword?: number; semantic?: number }; terms: string[];
+  /** 낱말로는 걸렸지만 뜻으로는 바닥값에 못 미쳤다(관련이 낮을 수 있다). */ weak?: true;
   /** 색인 뒤에 메모가 바뀌었다(위치는 지금 본문에서 다시 찾은 것이다). */ staleIndex: boolean; matches: SearchMatch[];
 };
 export type SearchResponse = { schemaVersion: 1; query: string; searchMode: SearchMode | "lexical_fallback"; fallbackReason?: FallbackReason;
-  modelKey: string | null; total: number; items: SearchItem[] };
+  modelKey: string | null; total: number; items: SearchItem[];
+  /** filters.sourceRepo로 앞에 둔 프로젝트들(그 저장소에서 등록한 문서가 있을 때만). */ preferredProjects?: string[] };
+/** 질의 벡터마다 지금 색인에서 가장 가까운 메모의 점수를 묻는다. 답이 없을 질의를 넣어 「관련 없음」의 높이를 재는 데 쓴다. */
+/** apply: 잰 값으로 그 모델의 검색 바닥값을 정해 색인에 남긴다(diagnosed는 자가 진단의 바닥값. 그보다 내려가지 않는다). */
+export type ProbeRequest = { modelKey: string; vectors: string[]; apply?: boolean; diagnosed?: number };
+/** floor: apply로 정한(또는 거의 같아 그대로 둔) 검색 바닥값. 색인이 작아 재지 않았으면 없다. */
+export type ProbeResponse = { schemaVersion: 1; modelKey: string; tops: number[]; chunks: number; floor?: number };
+export type CardShown = { schemaVersion: 1; noteId: string; title: string; path: string; state: "fresh" | "stale" | "missing";
+  card: { summary: string; terms: string[]; questions: string[]; author: string; updatedAt: number } | null };
 
 export type IndexSummary = { total: number; ready: number; pending: number; failed: number };
 export type IndexStatus = {
-  schemaVersion: 1; activeModelKey: string | null; models: Array<Pick<EmbeddingModel, "key" | "name" | "dimensions" | "active"> & IndexSummary>;
+  schemaVersion: 1; activeModelKey: string | null; models: Array<Pick<EmbeddingModel, "key" | "name" | "dimensions" | "active" | "floor"> & IndexSummary>;
   /** 최근에 색인 워커가 다녀갔는가. */ embedderOnline: boolean; lastWorkerAt: number | null;
   summary: IndexSummary; cards: { total: number; fresh: number; stale: number; missing: number };
-  items?: Array<{ noteId: string; status: "ready" | "pending" | "failed"; chunks: number; indexedAt: number | null; error: string | null; card: "fresh" | "stale" | "missing" }>;
+  /** 조각 상한에 걸려 뒤가 색인되지 않은 메모 수. */ truncated: number;
+  items?: Array<{ noteId: string; status: "ready" | "pending" | "failed"; chunks: number; indexedAt: number | null; error: string | null; card: "fresh" | "stale" | "missing"; truncated: boolean }>;
 };
 export type LeaseRequest = { workerId: string; model: { name: string; dimensions: number; prompt: string; floor: number }; limit: number };
 export type LeaseJob = { noteId: string; leaseToken: string; inputHash: string;
@@ -102,7 +114,8 @@ export type SuggestionItem = { targetNoteId: string; title: string; path: string
   sourceHeading: string; targetHeading: string; sourceSnippet: string; targetSnippet: string };
 export type CardInput = { noteId: string; contentHash?: string; summary: string; terms: string[]; questions: string[] };
 export type CardsPending = { schemaVersion: 1; total: number; missing: number; stale: number;
-  items: Array<{ noteId: string; title: string; path: string; contentHash: string; stale: boolean; text: string; clipped: boolean }> };
+  items: Array<{ noteId: string; title: string; path: string; contentHash: string; stale: boolean; text: string; clipped: boolean;
+    /** 본문이 길어 잘렸을 때, 보이지 않는 뒷부분의 소제목들. */ outline?: string[] }> };
 export type RegisterRequest = {
   noteId?: string; title?: string; body: string; docType: DocType; docStatus?: DocStatus | null; project?: string;
   sourceRepo?: string; sourcePath?: string; sourceCommit?: string; supersedes?: string; folderId?: string | null;
@@ -114,6 +127,8 @@ export const SEARCH_LIMIT = 10;
 export const MAX_SEARCH_LIMIT = 50;
 export const MAX_QUERY = 500;
 export const MAX_LEASE = 32;
+/** 바닥값을 잴 때 한 번에 보내는 질의 벡터의 상한. */
+export const MAX_PROBES = 32;
 /** 임대 한 번에 내려 주는 조각 글의 상한(워커 한 묶음이 너무 커지지 않게). */
 export const MAX_LEASE_TEXTS = 96;
 export const LEASE_MS = 5 * 60 * 1000;
@@ -125,6 +140,9 @@ export const INDEX_DEBOUNCE_MS = 3000;
 export const WORKER_ONLINE_MS = 90_000;
 
 export const modelKey = (name: string, dimensions: number, prompt: string, chunkVersion = CHUNK_VERSION) => `${name}@${dimensions}/${prompt}/c${chunkVersion}`;
+/** 두 모델 키가 같은 임베딩(이름·차원·머리말)을 가리키는가. 조각 규칙의 판(`/c2`)은 글을 나누는 방법일 뿐 질의 벡터와는 무관하다:
+ *  조각 규칙이 바뀌어 뒤에서 다시 색인하는 동안에도(새 판의 PC가 옛 판의 색인을, 옛 판의 PC가 새 판의 색인을) 뜻으로 찾을 수 있어야 한다. */
+export const sameEmbedding = (a: string, b: string) => a.replace(/\/c\d+$/, "") === b.replace(/\/c\d+$/, "");
 
 const bad = (message: string): never => { throw new RelayError("INVALID_ARGUMENT", message); };
 const object = (raw: unknown, what: string) => (raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : bad(`${what}은(는) 객체여야 합니다.`));
@@ -155,7 +173,9 @@ export function parseSearch(raw: unknown): SearchRequest {
   const value = object(raw, "검색 요청");
   only(value, ["query", "mode", "filters", "limit", "queryVector", "modelKey"], "검색 요청");
   const filters = value.filters === undefined || value.filters === null ? {} : object(value.filters, "filters");
-  only(filters, ["project", "docType", "docStatus", "folderId", "includeHistory"], "filters");
+  only(filters, ["project", "docType", "docStatus", "folderId", "includeHistory", "sourceRepo"], "filters");
+  const repo = optional(filters.sourceRepo, "filters.sourceRepo", 300)?.trim();
+  if (repo && /[\s\\]/.test(repo)) bad("filters.sourceRepo는 빈칸과 역슬래시 없는 이름이어야 합니다.");
   if (filters.includeHistory !== undefined && typeof filters.includeHistory !== "boolean") bad("filters.includeHistory는 true 또는 false여야 합니다.");
   const project = optional(filters.project, "filters.project", 200)?.trim();
   const docType = listOf(filters.docType, DOC_TYPES, "filters.docType"), docStatus = listOf(filters.docStatus, DOC_STATUSES, "filters.docStatus");
@@ -166,10 +186,20 @@ export function parseSearch(raw: unknown): SearchRequest {
     mode: value.mode === undefined ? "hybrid" : oneOf(value.mode, ["hybrid", "keyword", "semantic"] as const, "mode"),
     filters: { ...(project ? { project } : {}), ...(docType ? { docType } : {}), ...(docStatus ? { docStatus } : {}),
       ...(filters.folderId === undefined || filters.folderId === null ? {} : { folderId: checkId(filters.folderId, "filters.folderId") }),
-      ...(filters.includeHistory === true ? { includeHistory: true } : {}) },
+      ...(filters.includeHistory === true ? { includeHistory: true } : {}), ...(repo ? { sourceRepo: repo } : {}) },
     limit: whole(value.limit, "limit", SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT),
     ...(vector !== undefined ? { queryVector: vector, modelKey: key! } : {}),
   };
+}
+
+export function parseProbe(raw: unknown): ProbeRequest {
+  const value = object(raw, "바닥값 재기");
+  only(value, ["modelKey", "vectors", "apply", "diagnosed"], "바닥값 재기");
+  if (!Array.isArray(value.vectors) || !value.vectors.length || value.vectors.length > MAX_PROBES) bad(`vectors는 1~${MAX_PROBES}개의 배열이어야 합니다.`);
+  if (value.apply !== undefined && typeof value.apply !== "boolean") bad("apply는 true 또는 false여야 합니다.");
+  if (value.diagnosed !== undefined && (typeof value.diagnosed !== "number" || !(value.diagnosed >= -1 && value.diagnosed <= 1))) bad("diagnosed는 -1~1 사이의 수여야 합니다.");
+  return { modelKey: str(value.modelKey, "modelKey", 200, 1), vectors: (value.vectors as unknown[]).map((entry, index) => str(entry, `vectors[${index}]`, 40_000, 1)),
+    ...(value.apply === true ? { apply: true } : {}), ...(typeof value.diagnosed === "number" ? { diagnosed: value.diagnosed } : {}) };
 }
 
 export function parseLease(raw: unknown): LeaseRequest {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CHUNK_MAX_TOKENS, Embedder, MAX_ATTEMPTS, QueryEmbedder, RELEASED, chunkNote, decodeVector, diagnoseEmbedder, dot, encodeVector, estimateTokens, exactIntent, fit, modelKey,
-  parseCards, parseCommit, parseEmbeddingConfig, parseLease, parseRegister, parseSearch, unit, type SearchRequest } from "@relay/core";
+import { CHUNK_MAX_TOKENS, Embedder, MAX_ATTEMPTS, MAX_CHUNKS, QueryEmbedder, RELEASED, chunkNote, decodeVector, diagnoseEmbedder, dot, encodeVector, estimateTokens, exactIntent, fit,
+  lexicalIndex, lexicalRank, modelKey, parseCards, parseCommit, parseEmbeddingConfig, parseLease, parseRegister, parseSearch, queryTerms, unit, type SearchRequest } from "@relay/core";
 import { FAKE_DIMS, FAKE_MODEL, engine, fakeEmbedder, fakeVector, indexAll, sha256 } from "./semantic-helpers";
 
 const search = (query: string, extra: Partial<SearchRequest> = {}): SearchRequest => ({ query, mode: "hybrid", filters: {}, limit: 10, ...extra });
@@ -60,6 +60,88 @@ describe("메모를 절로 나누기", () => {
     expect(secret).toContain("[그림: 배포 흐름]");
     expect(secret).toContain("요약: 서버 접속 방법");
     expect(estimateTokens(secret)).toBeLessThan(120);
+  });
+});
+
+describe("끊긴 표와 코드, 긴 메모", () => {
+  test("표가 조각 사이에서 끊기면 이어지는 조각 앞에 머리 줄과 구분 줄을 다시 붙인다", () => {
+    const rows = Array.from({ length: 60 }, (_unused, at) => `| 항목 ${at} | 값은 ${"가나다라마바사 ".repeat(6)}${at} | 비고 ${at} |`);
+    const body = ["# 표 문서", "", "머리 글이다.", "", "| 이름 | 설명 | 비고 |", "|---|---|---|", ...rows, "", "끝 글이다."].join("\n");
+    const { chunks } = chunkNote(body, { title: "표 문서" });
+    expect(chunks.length).toBeGreaterThan(2);
+    const continued = chunks.filter((chunk) => body.split("\n")[chunk.lineStart - 1]!.startsWith("| 항목"));
+    expect(continued.length).toBeGreaterThan(1);
+    for (const chunk of continued) {
+      // 머리말(# 표 문서) 다음에 표의 머리 줄·구분 줄·그 조각의 첫 줄이 이어진다.
+      const lines = chunk.text.split("\n");
+      const at = lines.indexOf("| 이름 | 설명 | 비고 |");
+      expect(at).toBeGreaterThan(0);
+      expect(lines[at + 1]).toBe("|---|---|---|");
+      expect(lines[at + 2]).toBe(body.split("\n")[chunk.lineStart - 1]!);
+    }
+    // 표가 시작하는 조각에는 머리 줄을 한 번만 싣는다.
+    expect(chunks[0]!.text.split("| 이름 | 설명 | 비고 |").length - 1).toBe(1);
+    // 위치는 원문의 줄 그대로다(다시 붙인 머리 줄은 세지 않는다).
+    for (const chunk of chunks) expect(body.slice(chunk.charStart, chunk.charEnd)).toBe(body.split("\n").slice(chunk.lineStart - 1, chunk.lineEnd).join("\n"));
+  });
+
+  test("코드 울타리 안에서 끊기면 여는 줄을 다시 붙이고, 닫히기 전에 끝나는 조각은 닫아 준다", () => {
+    const code = Array.from({ length: 220 }, (_unused, at) => `const value${at} = compute(${at}); // 설명 ${"가나다 ".repeat(4)}`);
+    const body = ["# 코드 문서", "", "```ts", ...code, "```", "", "끝 글이다."].join("\n");
+    const { chunks } = chunkNote(body, { title: "코드 문서" });
+    expect(chunks.length).toBeGreaterThan(3);
+    const fenced = (text: string) => text.split("\n").filter((line) => /^(```|~~~)/.test(line)).length;
+    for (const chunk of chunks) {
+      // 울타리가 짝이 맞는다: 코드가 든 조각은 ```ts로 열고 ```로 닫는다.
+      expect(fenced(chunk.text) % 2).toBe(0);
+      if (chunk.text.includes("const value")) expect(chunk.text).toContain("```ts\nconst value");
+    }
+    expect(chunks.at(-1)!.text.endsWith("끝 글이다.")).toBe(true);
+  });
+
+  test("조각 상한은 본문 상한의 메모도 담을 만큼이고, 넘으면 잘렸음을 알린다", () => {
+    expect(MAX_CHUNKS).toBe(300);
+    const section = (at: number) => `## 절 ${at}\n\n${Array.from({ length: 6 }, (_unused, line) => `절 ${at}의 ${line + 1}번째 문장으로 조각이 따로 서도록 충분히 길게 쓴다.`).join("\n")}`;
+    const fits = chunkNote(Array.from({ length: 200 }, (_unused, at) => section(at)).join("\n\n"), { title: "긴 문서" });
+    expect(fits).toMatchObject({ truncated: false });
+    expect(fits.chunks.length).toBeGreaterThan(120);
+    const over = chunkNote(Array.from({ length: MAX_CHUNKS + 40 }, (_unused, at) => section(at)).join("\n\n"), { title: "더 긴 문서" });
+    expect(over.truncated).toBe(true);
+    expect(over.chunks).toHaveLength(MAX_CHUNKS);
+  });
+
+  test("토큰 어림은 임베딩 모델의 토크나이저에 맞춘 값이다", () => {
+    // 영문·숫자·기호는 3.5자, 한글은 1.2자에 토큰 하나(실제 메모의 조각 500개로 맞춤).
+    expect(estimateTokens("a".repeat(35))).toBe(10);
+    expect(estimateTokens("가".repeat(12))).toBe(10);
+    expect(estimateTokens("")).toBe(0);
+  });
+});
+
+describe("낱말 검색의 문턱", () => {
+  const index = lexicalIndex([
+    { id: "deploy", title: "서버 배포 절차", text: "이미지를 올리고 컨테이너를 다시 띄운다. 배포 절차는 점검표를 따른다.", fields: [["서버 배포 절차", 3], ["이미지를 올리고 컨테이너를 다시 띄운다. 배포 절차는 점검표를 따른다.", 1]] },
+    { id: "meet", title: "주간 회의", text: "배포 일정을 이야기했다. 회의록은 바로 남긴다.", fields: [["주간 회의", 3], ["배포 일정을 이야기했다. 회의록은 바로 남긴다.", 1]] },
+    { id: "cook", title: "김치찌개", text: "두부를 넣고 끓인다. how to cook it well.", fields: [["김치찌개", 3], ["두부를 넣고 끓인다. how to cook it well.", 1]] },
+    { id: "trip", title: "여행 계획", text: "기차표를 예매한다.", fields: [["여행 계획", 3], ["기차표를 예매한다.", 1]] },
+  ]);
+
+  test("뜻 없는 말은 띄어 쓴 덩어리에서도 빼고, 두 글자 약어는 남긴다", () => {
+    expect(queryTerms("how to bake sourdough bread").raw).toEqual(["bake", "sourdough", "bread"]);
+    expect(queryTerms("DB 이전은 어떻게 해?").raw).toEqual(["db", "이전은"]);
+    // 뜻 없는 말만 겹치는 글은 걸리지 않는다(앞서는 how·to가 든 글이 모두 걸렸다).
+    expect([...lexicalRank(index, "how to bake sourdough bread").keys()]).toEqual([]);
+  });
+
+  test("질의의 낱말을 얼마나 담았는지와, 질의가 구절째 들어 있는지를 함께 알린다", () => {
+    const hits = lexicalRank(index, "양자역학 배포 강의");
+    // 「배포」만 걸렸다: 색인에 없는 낱말(양자역학·강의)이 질의의 무게를 거의 다 차지하므로 담은 비율이 낮다.
+    expect(hits.get("meet")!.coverage).toBeLessThan(0.3);
+    expect(lexicalRank(index, "배포 절차").get("deploy")!.coverage).toBe(1);
+    const phrase = lexicalRank(index, "컨테이너를 다시 띄운다");
+    expect(phrase.get("deploy")).toMatchObject({ phrase: true });
+    // 짧은 질의는 구절로 보지 않는다(낱말 하나가 든 글이 모두 맨 앞에 서지 않게).
+    expect(lexicalRank(index, "배포").get("deploy")).toMatchObject({ phrase: false });
   });
 });
 
@@ -335,6 +417,10 @@ describe("검색", () => {
     expect((await index.search(search("동기화 설계"))).items[0]).toMatchObject({ noteId: "n-sync" });
     expect((await index.search(search("동기화", { mode: "keyword" })))).toMatchObject({ searchMode: "keyword" });
     expect((await index.search(withVector("동기화", "other-model@16/plain/c1"))).fallbackReason).toBe("model_mismatch");
+    expect((await index.search(withVector("동기화", key.replace("@16/", "@32/")))).fallbackReason).toBe("model_mismatch");
+    // 조각 규칙의 판만 다른 키는 같은 임베딩이다: 조각 규칙이 바뀌어 다시 색인하는 동안에도 옛 판·새 판의 PC가 뜻으로 찾는다.
+    expect(key.endsWith("/c2")).toBe(true);
+    expect(await index.search(withVector("wake sync", key.replace(/\/c2$/, "/c1"), { mode: "semantic" }))).toMatchObject({ searchMode: "semantic", items: [{ noteId: "n-sync" }] });
     // 의미 검색만: 낱말이 겹치지 않아도 찾는다. 관련 없는 질의에는 억지 결과를 내지 않는다.
     expect((await index.search(withVector("wake sync", key, { mode: "semantic" }))).items[0]!.noteId).toBe("n-sync");
     expect((await index.search(withVector("양자역학 강의 노트", key, { mode: "semantic" }))).items).toEqual([]);
@@ -349,7 +435,7 @@ describe("검색", () => {
     expect(JSON.stringify(login)).not.toContain("hunter2");
 
     // 색인 뒤에 고친 메모: 옛 줄 번호 대신 지금 본문의 같은 절을 가리키고 staleIndex를 알린다.
-    port.put({ id: "n-sync", body: "# 증분 동기화 설계\n\n머리말을 새로 넣었다.\n\n## 누락된 작업 재처리\n\n기기가 다시 켜지면 밀린 변경을 다시 받는다 🙂" });
+    port.put({ id: "n-sync", body: "# 증분 동기화 설계\n\n새 머리말.\n\n## 누락된 작업 재처리\n\n기기가 다시 켜지면 밀린 변경을 다시 받는다 🙂" });
     const stale = (await index.search(withVector("resume from sleep sync", key))).items[0]!;
     expect(stale).toMatchObject({ noteId: "n-sync", staleIndex: true });
     expect(stale.matches[0]).toMatchObject({ headingPath: "증분 동기화 설계 > 누락된 작업 재처리", lineStart: 5 });
@@ -383,21 +469,25 @@ describe("검색", () => {
     expect(port.metaRows.get(old.noteId)).toMatchObject({ docStatus: "superseded", supersededBy: next.noteId });
     // 서로를 대신하는 관계는 받지 않는다.
     await expect(index.register({ noteId: old.noteId, body: "x", docType: "decision", supersedes: next.noteId })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    // 거절한 등록은 메모를 건드리지 않는다(본문을 먼저 쓰고 나서 거절하던 때는 「x」가 남았다).
+    expect(port.items.get(old.noteId)).toMatchObject({ body: "동기화는 긴 폴링으로 한다. sync" });
     await expect(index.setMeta({ noteId: next.noteId, supersededBy: old.noteId })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
 
-    port.put({ id: "n-other", title: "동기화 메모", body: "다른 프로젝트의 동기화 sync 메모" });
+    // 다른 프로젝트의 메모는 대체된 옛 결정과 글이 똑같다: 낱말로는 똑같이 맞는다.
+    port.put({ id: "n-other", title: "동기화 결정 (구)", body: "동기화는 긴 폴링으로 한다. sync" });
     await index.setMeta({ noteId: "n-other", project: "other", docType: "knowledge" });
     const found = await index.search(search("동기화 sync", { mode: "keyword" }));
     expect(found.items[0]).toMatchObject({ noteId: next.noteId, docType: "decision", docStatus: "adopted", project: "relay" });
     const superseded = found.items.find((item) => item.noteId === old.noteId)!;
     expect(superseded).toMatchObject({ docStatus: "superseded", supersededBy: { id: next.noteId, title: "동기화 결정 (신)", status: "adopted" } });
+    // 똑같이 맞았지만 대체된 문서는 크게 깎여 맨 뒤로 간다.
+    const other = found.items.find((item) => item.noteId === "n-other")!;
+    expect(superseded.scores.keyword).toBeCloseTo(other.scores.keyword!, 1);
+    expect(superseded.score).toBeLessThan(other.score * 0.7);
     expect(found.items.at(-1)!.noteId).toBe(old.noteId);
-    // 이력까지 보면 상태로 가르지 않고 낱말이 맞은 정도 그대로 줄 세운다(평소에는 상태가 그 순서를 바꾼다).
+    // 이력까지 보면 상태로 가르지 않는다: 똑같이 맞은 두 글의 점수가 같다.
     const history = await index.search(search("동기화 sync", { mode: "keyword", filters: { includeHistory: true } }));
-    const raw = (items: typeof history.items) => items.map((item) => item.scores.keyword ?? 0);
-    expect(raw(history.items)).toEqual([...raw(history.items)].sort((a, b) => b - a));
-    expect(raw(found.items)).not.toEqual([...raw(found.items)].sort((a, b) => b - a));
-    expect(history.items.findIndex((item) => item.noteId === old.noteId)).toBeLessThanOrEqual(found.items.findIndex((item) => item.noteId === old.noteId));
+    expect(history.items.find((item) => item.noteId === old.noteId)!.score).toBeCloseTo(history.items.find((item) => item.noteId === "n-other")!.score, 1);
     expect((await index.search(search("동기화", { mode: "keyword", filters: { project: "other" } }))).items.map((item) => item.noteId)).toEqual(["n-other"]);
     expect((await index.search(search("동기화", { mode: "keyword", filters: { docType: ["decision"], docStatus: ["adopted"] } }))).items.map((item) => item.noteId)).toEqual([next.noteId]);
     port.put({ id: "f-a", kind: "folder", name: "가" } as never, { id: "n-in", parentId: "f-a", title: "폴더 안 동기화", body: "sync" });
@@ -411,9 +501,11 @@ describe("검색", () => {
     // 가장 잘 맞는 글은 상태가 없고 가장 오래됐다. 채택한 문서 셋은 덜 맞을수록 새 글이다(고친 날짜로 줄 세우면 거꾸로 나온다).
     port.put({ id: "n-best", title: "배포 절차", body: "배포 절차를 순서대로 적는다. 배포 전 점검, 배포, 배포 뒤 확인.", updatedAt: day },
       { id: "n-strong", title: "배포 점검표", body: "배포 전에 볼 것을 적는다. 절차는 따로 둔다.", updatedAt: 2 * day },
-      { id: "n-weak", title: "회의록", body: "여러 이야기를 했다. 일정, 예산, 채용, 그리고 배포 이야기도 조금 나왔다. 다음 회의는 다음 주다.", updatedAt: 3 * day },
-      { id: "n-weaker", title: "잡담", body: "점심 메뉴를 정했다. 날씨 이야기를 했다. 주말 계획을 나눴다. 끝에 배포 일정이 잠깐 나왔다. 그 밖에 여러 가지를 이야기했고 다음에 또 모이기로 했다.", updatedAt: 4 * day });
-    for (const noteId of ["n-strong", "n-weak", "n-weaker"]) await index.setMeta({ noteId, docType: "design", docStatus: "adopted" });
+      { id: "n-weak", title: "회의록", body: "여러 이야기를 했다. 일정, 예산, 채용, 그리고 배포 절차 이야기도 조금 나왔다. 다음 회의는 다음 주다.", updatedAt: 3 * day },
+      { id: "n-weaker", title: "잡담", body: "점심 메뉴를 정했다. 날씨 이야기를 했다. 주말 계획을 나눴다. 끝에 배포 절차가 잠깐 나왔다. 그 밖에 여러 가지를 이야기했고 다음에 또 모이기로 했다. 다음 주에는 장소를 바꾸기로 했고 그때 다시 이야기한다.", updatedAt: 4 * day },
+      // 흔한 말 하나(배포)만 걸린 글은 질의의 절반도 담지 못해 결과에 들지 않는다.
+      { id: "n-noise", title: "일정", body: "다음 달에 배포가 있다.", updatedAt: 5 * day });
+    for (const noteId of ["n-strong", "n-weak", "n-weaker", "n-noise"]) await index.setMeta({ noteId, docType: "design", docStatus: "adopted" });
     const found = await index.search(search("배포 절차", { mode: "keyword" }));
     expect(found.items.map((item) => item.noteId)).toEqual(["n-best", "n-strong", "n-weak", "n-weaker"]);
     // 점수도 그 순서대로 내려간다(맨 위 여럿이 같은 점수로 뭉치지 않는다).

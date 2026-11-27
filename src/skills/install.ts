@@ -48,7 +48,7 @@ export const MEMO_ARGUMENT_HINT = "argument-hint: <memo-id|folder-id|query>";
 /** What a reader passes to relay-graph: what the work is about, or the ID the graph copied. */
 export const GRAPH_ARGUMENT_HINT = "argument-hint: <query|memo-id>";
 /** What a reader passes to relay-embedding: which part of the index work to do. With nothing, it looks at the state and does what is needed. */
-export const EMBEDDING_ARGUMENT_HINT = "argument-hint: [status|cards|run|setup|doctor]";
+export const EMBEDDING_ARGUMENT_HINT = "argument-hint: [status|cards|run|setup|doctor|eval]";
 
 // The skills ship inside the executable, so an installation never depends on a checkout or on a link to one.
 const SOURCES: Record<SkillName, { skill: string; openai: string; hint: string }> = {

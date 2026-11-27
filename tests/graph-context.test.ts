@@ -298,6 +298,35 @@ describe("가리기와 줄이기", () => {
     expect(redactSecrets("평범한 글").count).toBe(0);
   });
 
+  test("파일 경로와 낱말을 이은 이름, 디자인 토큰 표는 남기고 무작위 값만 가린다", () => {
+    // 길고 대소문자·숫자가 섞였지만 낱말을 이은 것: 경로, 클래스 이름. 가리면 그 줄이 임베딩과 발췌에서 뜻을 잃는다.
+    const path = "packages/core/src/SemanticIndexEngine2/NoteChunkWriterV2.test.ts";
+    const name = "RelayDesktopWindow2ControllerFactoryV3Impl";
+    const kept = redactSecrets(`경로 ${path} 를 고친다.\n클래스 ${name} 를 쓴다.`);
+    expect(kept).toEqual({ text: `경로 ${path} 를 고친다.\n클래스 ${name} 를 쓴다.`, count: 0 });
+
+    // 무작위로 만든 값은 통째로, 경로 안의 무작위 마디는 그 마디만 가린다.
+    const random = ["aB3xK9", "mQ2pL7", "vR8nT4", "wZ1cY6", "dF5gH0", "jS3uE8"].join("");
+    expect(redactSecrets(`값 ${random} 끝`)).toEqual({ text: "값 [가림] 끝", count: 1 });
+    expect(redactSecrets(`내려받기 packages/server/storage/uploads/${random}/report-final.pdf 끝`).text).toBe("내려받기 packages/server/storage/uploads/[가림]/report-final.pdf 끝");
+    const encoded = ["Qk3xP9a", "Zr7Lm2T", "vN8cY4w", "Hd5Gs0J", "uE3fK6b"].join("/") + "==";
+    expect(redactSecrets(`서명 ${encoded}`).text).toBe("서명 [가림]");
+
+    // 「토큰」 열: 디자인 토큰의 이름은 남고, 자격 증명처럼 생긴 칸만 가린다. 「토큰: 값」 한 줄도 같다.
+    const issued = ["8f3k2j9d", "7h1m4q6z"].join("");
+    const table = ["| 토큰 | 값 |", "|---|---|", "| `--dur-fast` | 120ms |", "| gray900 | #111 |", `| ${issued} | 운영 |`].join("\n");
+    const masked = redactSecrets(table);
+    expect(masked.text).toBe(["| 토큰 | 값 |", "|---|---|", "| `--dur-fast` | 120ms |", "| gray900 | #111 |", "| [가림] | 운영 |"].join("\n"));
+    expect(masked.count).toBe(1);
+    expect(redactSecrets("token: --color-surface").count).toBe(0);
+    expect(redactSecrets(`token: ${issued}`).text).toBe("token: [가림]");
+    expect(redactSecrets("토큰 = aaaaaaaa-0000-4000-8000-000000000003").text).toBe("토큰 = [가림]");
+
+    // 「시크릿」 열은 값 하나로 된 칸만(설명 글은 남김), 「비밀번호」 열은 모두 가린다.
+    const secrets = redactSecrets(["| 이름 | 시크릿 | 비밀번호 |", "|---|---|---|", "| 운영 | 환경 변수에서 읽는다 | 없음 |", "| 개발 | devvalue | 1 |"].join("\n"));
+    expect(secrets.text).toBe(["| 이름 | 시크릿 | 비밀번호 |", "|---|---|---|", "| 운영 | 환경 변수에서 읽는다 | [가림] |", "| 개발 | [가림] | [가림] |"].join("\n"));
+  });
+
   test("맥락 묶음은 가린 수를 알리고, redact를 끄면 원문을 싣는다", () => {
     const secret = { ...SAMPLE, ...items([{ id: "n-server", title: "서버 접속", body: `서버 배포 순서\n\n비밀번호: hunter2` }]) };
     const graph = buildGraph(secret);
@@ -309,8 +338,11 @@ describe("가리기와 줄이기", () => {
   });
 
   test("토큰 어림과 본문 줄이기", () => {
-    expect(estimateTokens("abcd")).toBe(1);
-    expect(estimateTokens("가나다")).toBe(2);
+    // 영문·숫자·기호는 3.5글자에, 한글은 1.2글자에 토큰 하나(실제 토크나이저에 맞춘 값).
+    expect(estimateTokens("abcd")).toBe(2);
+    expect(estimateTokens("가나다")).toBe(3);
+    expect(estimateTokens("a".repeat(350))).toBe(100);
+    expect(estimateTokens("가".repeat(120))).toBe(100);
     const body = ["첫 문단", "둘째 문단 " + "가".repeat(400), "찾는 낱말 배포가 든 문단", "```\n코드\n\n블록\n```"].join("\n\n");
     expect(excerpt("짧은 글", 100)).toEqual({ text: "짧은 글", clipped: false });
     const cut = excerpt(body, 80, ["배포"]);

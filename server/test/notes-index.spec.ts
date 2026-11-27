@@ -81,9 +81,27 @@ describe("원격 메모 의미 검색 API", () => {
     expect((await search("배포", { mode: "keyword" }).expect(200)).body.items[0].noteId).toBe("n-deploy");
     expect(JSON.stringify((await search("배포 deploy").expect(200)).body)).not.toContain("hunter2");
 
+    // 색인에 없는 것을 물으면 결과를 채우지 않는다. 뜻으로 맞지 않는데 낱말로만 걸린 글에는 관련이 낮을 수 있다고 붙인다.
+    expect((await search("양자역학 강의").expect(200)).body).toMatchObject({ searchMode: "hybrid", total: 0, items: [] });
+    const weak = (await search("sync 이미지 올리고").expect(200)).body.items.find((item: { noteId: string }) => item.noteId === "n-deploy");
+    expect(weak).toMatchObject({ weak: true });
+
+    // 바닥값 재기: 답이 없을 질의의 벡터를 보내면 지금 색인에서 가장 가까운 점수를 돌려준다. 색인이 작으면(조각 50개 미만) 바닥값을 고치지 않는다.
+    const probe = { modelKey: KEY, vectors: [encodeVector(vector("양자역학")), encodeVector(vector("두부 찌개"))], apply: true, diagnosed: 0.2 };
+    const probed = (await t.post("/api/v1/notes/index-jobs/probe", probe).expect(200)).body;
+    expect(probed).toMatchObject({ schemaVersion: 1, modelKey: KEY, chunks: 4 });
+    expect(probed.tops[0]).toBeLessThan(0.2);
+    expect(probed.tops[1]).toBeGreaterThan(0.9);
+    expect(probed.floor).toBeUndefined();
+    expect((await t.get("/api/v1/notes/index-status").expect(200)).body.models).toMatchObject([{ key: KEY, active: true, floor: 0.2 }]);
+    expect((await t.post("/api/v1/notes/index-jobs/probe", { modelKey: KEY, vectors: [] })).body.error.code).toBe("INVALID_ARGUMENT");
+    expect((await t.post("/api/v1/notes/index-jobs/probe", { ...probe, modelKey: "other@16/plain/c2" })).status).toBe(404);
+    await t.raw.post("/api/v1/notes/index-jobs/probe").send(probe).expect(401);
+
     // 검색과 워커 요청에 멱등 키가 붙어 와도 응답을 보관하지 않는다.
     await search("wake up sync").set("Idempotency-Key", "search-key-0001").expect(200);
     await t.post("/api/v1/notes/index-jobs/lease", { workerId: "pc-1", model: MODEL }).set("Idempotency-Key", "lease-key-00001").expect(200);
+    await t.post("/api/v1/notes/index-jobs/probe", probe).set("Idempotency-Key", "probe-key-00001").expect(200);
     expect(await t.db.select().from(schema.idempotencyKeys)).toEqual([]);
 
     // 요청 검사와 경로.
@@ -142,6 +160,11 @@ describe("원격 메모 의미 검색 API", () => {
     expect(saved).toEqual({ schemaVersion: 1, saved: 1, skipped: [{ noteId: "n-gone", reason: "not_found" }] });
     expect((await t.post("/api/v1/notes/search", { query: "hibernate offline-first", mode: "keyword" }).expect(200)).body.items.map((item: { noteId: string }) => item.noteId)).toEqual(["n-sync"]);
     expect((await t.get("/api/v1/notes/index-status").expect(200)).body.cards).toEqual({ total: 4, fresh: 1, stale: 0, missing: 3 });
+    // 메모 하나에 저장된 카드.
+    expect((await t.get("/api/v1/notes/cards?noteId=n-sync").expect(200)).body).toMatchObject({ noteId: "n-sync", title: "증분 동기화 설계", path: "설계", state: "fresh",
+      card: { summary: "꺼져 있던 동안 밀린 변경을 다시 맞추는 설계", terms: ["hibernate", "offline-first"], author: "claude-fable" } });
+    expect((await t.get("/api/v1/notes/cards?noteId=n-cook").expect(200)).body).toMatchObject({ state: "missing", card: null });
+    expect((await t.get("/api/v1/notes/cards?noteId=n-none")).status).toBe(404);
 
     const first = (await t.post("/api/v1/notes/register-doc", { title: "동기화 결정 1", body: "동기화는 폴링으로 한다.", docType: "decision", docStatus: "adopted", project: "relay",
       sourceRepo: "relay", sourcePath: "docs/adr/001.md", sourceCommit: "abc1234" }).expect(200)).body;
@@ -154,6 +177,11 @@ describe("원격 메모 의미 검색 API", () => {
     const found = (await t.post("/api/v1/notes/search", { query: "동기화 결정", mode: "keyword", filters: { docType: ["decision"] } }).expect(200)).body.items;
     expect(found[0]).toMatchObject({ noteId: second.noteId, docStatus: "adopted", project: "relay" });
     expect(found[1]).toMatchObject({ noteId: first.noteId, docStatus: "superseded", supersededBy: { id: second.noteId, title: "동기화 결정 2" } });
+    // 일하는 저장소를 알리면 그 저장소에서 등록한 문서의 프로젝트를 앞에 둔다고 함께 알린다(좁히지는 않는다).
+    const here = (await t.post("/api/v1/notes/search", { query: "동기화", mode: "keyword", filters: { sourceRepo: "relay" } }).expect(200)).body;
+    expect(here.preferredProjects).toEqual(["relay"]);
+    expect(here.items.map((item: { noteId: string }) => item.noteId)).toContain("n-sync");
+    expect((await t.post("/api/v1/notes/search", { query: "동기화", mode: "keyword" }).expect(200)).body.preferredProjects).toBeUndefined();
     expect((await t.post("/api/v1/notes/meta", { noteId: second.noteId, supersededBy: first.noteId })).body.error.code).toBe("INVALID_ARGUMENT");
     expect((await t.post("/api/v1/notes/meta", { noteId: "n-cook", docType: "knowledge", project: "home" }).expect(200)).body.meta).toMatchObject({ noteId: "n-cook", docType: "knowledge", project: "home" });
     expect((await t.get("/api/v1/notes/meta").expect(200)).body.items.map((item: { noteId: string }) => item.noteId).sort()).toEqual([first.noteId, second.noteId, "n-cook"].sort());

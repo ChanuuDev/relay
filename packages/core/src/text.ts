@@ -55,8 +55,15 @@ export function tokenize(text: string): string[] {
 export type LexicalDoc = { id: string; title: string; text: string; fields: Array<readonly [text: string, weight: number]> };
 type IndexedDoc = { id: string; lower: string; lowerTitle: string; tf: Map<string, number>; length: number };
 export type LexicalIndex = { docs: Map<string, IndexedDoc>; df: Map<string, number>; average: number };
-export type LexicalHit = { score: number; terms: string[] };
-const K1 = 1.2, B = 0.75;
+/** coverage는 질의의 낱말 가운데 이 글에 든 것의 비율이다(드문 낱말일수록 무겁게 센다). 흔한 말 하나만 걸린 글을 가려내는 데 쓴다.
+ *  phrase는 질의가 한 구절 그대로 글에 들어 있다는 뜻이다. */
+export type LexicalHit = { score: number; terms: string[]; coverage: number; phrase: boolean };
+/** 길이 보정(b)은 0.75보다 낮게 둔다. 메모 길이가 200자에서 19만 자까지라, 0.75에서는 긴 문서에 든 문장을 그대로 물어도 짧은 글에 밀렸다. */
+const K1 = 1.2, B = 0.4;
+/** 구절로 볼 질의의 최소 길이(글자). 이보다 긴 질의가 글에 그대로 들어 있으면 그 글을 찾는 것으로 본다. */
+export const PHRASE_MIN = 12;
+/** 띄어 쓴 그대로 찾을 때 건너뛰는 영어의 짧은 말. 두 글자 약어(DB, UI)는 찾아야 하므로 길이로 거르지 않고 이 목록으로 거른다. */
+const RAW_STOP = new Set("a an as at be by do go he if in is it me my no of on or so to up us we".split(" "));
 export const lowerText = (text: string) => text.normalize("NFC").toLocaleLowerCase("ko-KR");
 
 export function lexicalIndex(docs: Iterable<LexicalDoc>): LexicalIndex {
@@ -74,36 +81,46 @@ export function lexicalIndex(docs: Iterable<LexicalDoc>): LexicalIndex {
   return { docs: indexed, df, average: indexed.size ? total / indexed.size : 1 };
 }
 
-/** 질의를 낱말(조사를 뗀 것)과 띄어 쓴 그대로의 덩어리로 나눈다. */
+/** 질의를 낱말(조사를 뗀 것)과 띄어 쓴 그대로의 덩어리로 나눈다. 덩어리에서도 뜻 없는 말(how, to, 어떻게)은 뺀다:
+ *  그대로 두면 어떤 질의든 그 말이 든 글에 걸려, 색인에 없는 것을 물어도 결과가 가득 나온다. */
 export function queryTerms(query: string): { words: string[]; raw: string[] } {
   return { words: [...new Set(tokenize(query))],
-    raw: [...new Set(lowerText(query).split(/[\s,.;:!?()[\]{}"'`“”‘’]+/).filter((term) => term.length >= 2))] };
+    raw: [...new Set(lowerText(query).split(/[\s,.;:!?()[\]{}"'`“”‘’]+/).filter((term) => term.length >= 2 && !RAW_STOP.has(term) && !STOP_EN.has(term) && !STOP_KO.has(term)))] };
 }
 
-/** 질의와 맞는 글. 점수(가장 높은 것이 1)와 맞은 낱말을 돌려준다. 낱말 색인(BM25, k1 1.2 · b 0.75)에 더해, 질의 낱말이 제목·본문에 그대로 나오면 점수를 보탠다
+/** 질의와 맞는 글. 점수(가장 높은 것이 1)와 맞은 낱말을 돌려준다. 낱말 색인(BM25, k1 1.2 · b 0.4)에 더해, 질의 낱말이 제목·본문에 그대로 나오면 점수를 보탠다
  *  (짧은 영문 약어나 조사가 붙은 낱말, 경로·오류 코드처럼 색인이 놓치는 것을 잡는다). */
 export function lexicalRank(index: LexicalIndex, query: string): Map<string, LexicalHit> {
   const { words, raw } = queryTerms(query);
   const out = new Map<string, LexicalHit>();
   if (!words.length && !raw.length) return out;
   const n = index.docs.size;
+  // 질의의 낱말마다 무게(IDF). 색인에 없는 낱말이 가장 무겁다: 그 낱말을 빼고 흔한 말만 맞은 글은 질의의 절반도 담지 못한 것이다.
+  const weights = words.map((word) => { const seen = index.df.get(word) ?? 0; return Math.log(1 + (n - seen + 0.5) / (seen + 0.5)); });
+  const total = weights.reduce((sum, value) => sum + value, 0);
+  const phrase = lowerText(query).replace(/\s+/g, " ").trim();
   let top = 0;
   for (const doc of index.docs.values()) {
-    let score = 0;
+    let score = 0, covered = 0;
     const terms: string[] = [];
-    for (const word of words) {
+    words.forEach((word, at) => {
       const tf = doc.tf.get(word);
-      if (!tf) continue;
-      const seen = index.df.get(word) ?? 0;
-      const idf = Math.log(1 + (n - seen + 0.5) / (seen + 0.5));
-      score += idf * (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * doc.length / (index.average || 1)));
+      if (!tf) { if (doc.lower.includes(word) || doc.lowerTitle.includes(word)) covered += weights[at]!; return; }
+      score += weights[at]! * (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * doc.length / (index.average || 1)));
+      covered += weights[at]!;
       terms.push(word);
-    }
+    });
+    let rawHits = 0;
     for (const term of raw) {
-      if (doc.lowerTitle.includes(term)) { score += term.length >= 3 ? 1.6 : 0.9; if (!terms.some((word) => term.includes(word) || word.includes(term))) terms.push(term); }
-      else if (doc.lower.includes(term)) { score += 0.45; if (!terms.some((word) => term.includes(word) || word.includes(term))) terms.push(term); }
+      if (doc.lowerTitle.includes(term)) { rawHits++; score += term.length >= 3 ? 1.6 : 0.9; if (!terms.some((word) => term.includes(word) || word.includes(term))) terms.push(term); }
+      else if (doc.lower.includes(term)) { rawHits++; score += 0.45; if (!terms.some((word) => term.includes(word) || word.includes(term))) terms.push(term); }
     }
-    if (score > 0) { out.set(doc.id, { score, terms }); top = Math.max(top, score); }
+    if (score > 0) {
+      // 낱말로 뽑히지 않는 질의(`c#`, `v2`)는 덩어리가 맞은 비율로 센다.
+      const coverage = total > 0 ? covered / total : raw.length ? rawHits / raw.length : 0;
+      out.set(doc.id, { score, terms, coverage, phrase: phrase.length >= PHRASE_MIN && (doc.lower.includes(phrase) || doc.lowerTitle.includes(phrase)) });
+      top = Math.max(top, score);
+    }
   }
   for (const entry of out.values()) entry.score /= top;
   return out;

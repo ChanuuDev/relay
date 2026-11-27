@@ -8,7 +8,8 @@ import { runningDataDirectory } from "../web/control";
 import { openDatabase } from "../db/database";
 import { invalid, RelayError } from "../errors";
 import type { ContextHit } from "../web/lib/graph-context";
-import { EmbedderHost, RemoteIndex, cardsText, diagnosisText, loadEmbedding, localIndex, runWorker, saveEmbedding, searchText, statusText, workerText, type IndexApi } from "./embed";
+import { EmbedderHost, RemoteIndex, calibrateFloor, cardShownText, cardsText, diagnosisText, evalText, loadEmbedding, localIndex, runWorker, saveEmbedding, searchText, statusText, workerText,
+  type EvalReport, type IndexApi } from "./embed";
 import type { MemoIndex } from "./memo";
 
 // `relay embed …`, `relay memo --search`(순위 검색), `relay memo register`·`meta`. 계산은 @relay/core, 이 PC의 프로세스·파일은 ./embed가 맡고
@@ -24,33 +25,58 @@ export async function withIndex<T>(config: Config, action: (api: IndexApi) => Pr
 /** 서버가 이 API를 아직 모른다(옛 원격 서버). */
 export const missingApi = (error: unknown) => error instanceof RelayError && error.httpStatus === 404 && error.code !== "NOTE_NOT_FOUND";
 
+/** 쉬다 꺼진 임베딩 서버가 다시 뜨기를 기다리는 시간. 뜨는 데 3초쯤 걸린다. 에이전트는 드물게 한 번씩 찾으므로 기다리지 않으면 그 한 번이 늘 낱말 검색이 된다. */
+export const EMBEDDER_WAIT_MS = 8000;
+
 /** 메모를 낱말과 뜻으로 찾는다. 이 PC에 relay web이 떠 있으면 그 서버에 맡긴다(임베딩 서버를 띄우고 질의 벡터를 기억하는 일을 그 서버가 한다).
- *  떠 있지 않으면 직접 찾는다: 임베딩 서버가 지금 답하면 질의 벡터를 싣고, 아니면 낱말 검색으로 답한다. */
-export async function searchNotes(config: Config, request: SearchRequest): Promise<SearchResponse> {
+ *  떠 있지 않으면 직접 찾는다: 임베딩 서버가 답하면(꺼져 있고 띄우는 명령이 있으면 띄워서) 질의 벡터를 싣고, 아니면 낱말 검색으로 답한다. */
+export async function searchNotes(config: Config, request: SearchRequest, waitMs = EMBEDDER_WAIT_MS): Promise<SearchResponse> {
+  try { return await searchOnce(config, request, waitMs); }
+  catch (error) {
+    // 옛 서버는 sourceRepo를 모른다: 그 조건만 빼고 다시 찾는다.
+    if (!(error instanceof RelayError && error.code === "INVALID_ARGUMENT" && request.filters.sourceRepo)) throw error;
+    const { sourceRepo: _repo, ...filters } = request.filters;
+    return searchOnce(config, { ...request, filters }, waitMs);
+  }
+}
+
+async function searchOnce(config: Config, request: SearchRequest, waitMs: number): Promise<SearchResponse> {
   const origin = `http://${config.webHost}:${config.webPort}`;
   try {
     // 같은 저장소를 쓰는 서버일 때만 맡긴다(다른 저장소를 --data-dir로 가리킨 명령이 엉뚱한 서버의 메모를 찾지 않게).
     const same = (value: string | null) => value !== null && path.resolve(value).toLowerCase() === path.resolve(config.dataDirectory).toLowerCase();
     if (same(await runningDataDirectory(origin, 400))) {
-      const response = await fetch(`${origin}/api/v1/notes/search`, { method: "POST", signal: AbortSignal.timeout(12_000),
+      // wait는 이 PC의 서버만 읽는다: 임베딩 서버가 꺼져 있으면 그만큼 기다렸다가 찾는다(옛 서버는 모르는 query라 거절하고, 그러면 아래에서 직접 찾는다).
+      const response = await fetch(`${origin}/api/v1/notes/search${waitMs > 0 && request.mode !== "keyword" ? `?wait=${waitMs}` : ""}`, { method: "POST", signal: AbortSignal.timeout(12_000 + waitMs),
         headers: { "Content-Type": "application/json", Origin: origin }, body: JSON.stringify(request) });
       if (response.ok) return await response.json() as SearchResponse;
       await response.body?.cancel().catch(() => {});
     }
   } catch { /* 서버가 없거나 답하지 않는다: 직접 찾는다. */ }
-  let attached = request;
+  let attached = request, host: EmbedderHost | null = null;
   try {
     const embedding = loadEmbedding(config.dataDirectory);
     if (embedding && request.mode !== "keyword") {
-      const host = new EmbedderHost(embedding);
-      const vector = await host.queries.embed(request.query);
-      if (vector instanceof Float32Array) attached = await host.attach({ ...request });
+      host = new EmbedderHost(embedding);
+      attached = await host.attach({ ...request }, waitMs);
     }
   } catch { /* 설정이 잘못됐으면 낱말 검색으로 답한다(relay embed status가 알린다). */ }
-  const result = await withIndex(config, (api) => api.search(attached));
-  // 검색 API를 모르는 서버가 다른 모양으로 답한 경우도 「없음」으로 본다(부른 쪽이 글자 그대로 찾기로 답한다).
-  if (!result || !Array.isArray(result.items)) throw new RelayError("NOT_FOUND", "서버가 검색 API를 지원하지 않습니다.", 3, 404);
-  return result;
+  try {
+    const result = await withIndex(config, (api) => api.search(attached));
+    // 검색 API를 모르는 서버가 다른 모양으로 답한 경우도 「없음」으로 본다(부른 쪽이 글자 그대로 찾기로 답한다).
+    if (!result || !Array.isArray(result.items)) throw new RelayError("NOT_FOUND", "서버가 검색 API를 지원하지 않습니다.", 3, 404);
+    return result;
+  } finally { host?.stop(); }   // 이 명령이 띄운 임베딩 서버는 끝낼 때 닫는다(남겨 두면 끌 사람이 없다).
+}
+
+/** 지금 폴더가 든 Git 저장소의 이름(origin 주소의 마지막 마디, 없으면 폴더 이름). 그 저장소에서 등록한 문서의 프로젝트를 검색 앞에 두는 데 쓴다. */
+export function repoName(directory: string): string | undefined {
+  if (process.env.RELAY_NO_GIT === "1") return undefined;
+  const top = git(directory, ["rev-parse", "--show-toplevel"]);
+  if (!top) return undefined;
+  const remote = git(directory, ["remote", "get-url", "origin"]) ?? "";
+  const name = (remote.replace(/[\\/]+$/, "").split(/[\\/:]/).pop() ?? "").replace(/\.git$/i, "") || path.basename(top);
+  return name.replace(/\s+/g, "-").slice(0, 300) || undefined;
 }
 
 /** 검색 결과를 맥락 묶음의 씨앗으로. */
@@ -126,11 +152,14 @@ const whole = (value: string | undefined, name: string, min: number, max: number
 const split = (value: string | undefined) => value?.split(",").map((item) => item.trim()).filter(Boolean);
 
 /** `relay memo --search`의 순위 검색. mode가 exact가 아닐 때 부른다. 옛 서버라 검색 API가 없으면 null(부른 쪽이 글자 그대로 찾기로 답한다). */
-export async function rankedSearch(config: Config, query: string, o: { mode?: string; type?: string; status?: string; project?: string; history?: boolean; limit?: string }) {
+export async function rankedSearch(config: Config, query: string, o: { mode?: string; type?: string; status?: string; project?: string; history?: boolean; limit?: string; all?: boolean }) {
   const mode = o.mode ?? "hybrid";
   if (mode !== "hybrid" && mode !== "keyword" && mode !== "semantic") invalid("--mode: hybrid | keyword | semantic | exact 중 하나를 입력하세요.");
+  // 저장소 안에서 찾으면 그 저장소에서 등록한 문서의 프로젝트를 앞에 둔다(--all이나 --project를 주면 하지 않는다).
+  const repo = o.all || o.project ? undefined : repoName(process.cwd());
   const request = parseSearch({ query, mode, limit: whole(o.limit, "--limit", 1, 50, 10),
-    filters: { ...(o.project ? { project: o.project } : {}), ...(split(o.type) ? { docType: split(o.type) } : {}), ...(split(o.status) ? { docStatus: split(o.status) } : {}), ...(o.history ? { includeHistory: true } : {}) } });
+    filters: { ...(o.project ? { project: o.project } : {}), ...(split(o.type) ? { docType: split(o.type) } : {}), ...(split(o.status) ? { docStatus: split(o.status) } : {}), ...(o.history ? { includeHistory: true } : {}),
+      ...(repo ? { sourceRepo: repo } : {}) } });
   let result: SearchResponse;
   try { result = await searchNotes(config, request); } catch (error) { if (missingApi(error)) return null; throw error; }
   const api = `http://${config.webHost}:${config.webPort}`;
@@ -257,7 +286,13 @@ export function embedCommands(program: Command, tools: Tools) {
       } finally { host.stop(); }
     });
 
-  embed.command("doctor").description("임베딩 서버 자가 진단: 같은 뜻의 글(한국어끼리, 영어 질의와 한국어 글)이 다른 주제의 글보다 가깝게 나오는지")
+  /** 검색 바닥값을 다시 잰다(값은 색인에 남는다). 색인이 아직 없거나 작으면, 또는 서버가 이 기능을 모르면 null. */
+  const calibrate = (config: Config, host: EmbedderHost) => withIndex(config, (api) => calibrateFloor(api, host)).catch(() => null);
+  const floorText = (measured: Awaited<ReturnType<typeof calibrate>>) => (measured
+    ? `- 검색 바닥값: ${measured.floor.toFixed(3)} (답이 없을 질의 ${measured.tops.length}개가 지금 색인에서 얻은 최고 유사도 ${Math.min(...measured.tops).toFixed(3)}~${Math.max(...measured.tops).toFixed(3)}, 조각 ${measured.chunks}개)`
+    : "- 검색 바닥값: 색인이 아직 없거나 작아 재지 않았습니다(색인이 생기면 워커가 잽니다).");
+
+  embed.command("doctor").description("임베딩 서버 자가 진단: 같은 뜻의 글(한국어끼리, 영어 질의와 한국어 글)이 다른 주제의 글보다 가깝게 나오는지. 색인이 있으면 검색 바닥값도 다시 잼")
     .action(async (_o: unknown, c: Command) => {
       const config = loadConfig(c.optsWithGlobals().dataDir);
       const embedding = need(config);
@@ -265,9 +300,52 @@ export function embedCommands(program: Command, tools: Tools) {
       try {
         if (!(await host.ensure(180_000))) throw new RelayError("EMBEDDING_FAILED", `임베딩 서버가 답하지 않습니다: ${embedding.url}`, 5, 502);
         const diagnosis = await diagnoseEmbedder(host.embedder);
-        write(c, tools, { schemaVersion: 1, diagnosis }, diagnosisText(diagnosis, embedding));
+        const measured = diagnosis.ok ? await calibrate(config, host) : null;
+        write(c, tools, { schemaVersion: 1, diagnosis, ...(measured ? { searchFloor: measured.floor, probes: measured.tops } : {}) }, `${diagnosisText(diagnosis, embedding)}${diagnosis.ok ? `\n${floorText(measured)}` : ""}`);
         if (!diagnosis.ok) process.exitCode = 1;
       } finally { host.stop(); }
+    });
+
+  embed.command("eval <file>").description("질의 세트로 검색 품질을 잼: 기대한 메모가 몇 번째에 나오는지(R@1·R@3·R@10·MRR). 파일은 {\"queries\":[{\"query\":\"…\",\"expect\":[\"<메모 ID>\"],\"kind\":\"…\"}]}")
+    .option("--modes <list>", "잴 방식(쉼표로 여럿): hybrid,keyword,semantic (기본 셋 다)").option("--project <name>", "프로젝트로 좁혀서 잼")
+    .option("--all", "작업 중인 저장소의 프로젝트를 앞에 두지 않음")
+    .action(async (file: string, own: { modes?: string; project?: string; all?: boolean }, c: Command) => {
+      const o = { ...own, ...(c.optsWithGlobals() as { project?: string }).project !== undefined && own.project === undefined ? { project: (c.optsWithGlobals() as { project?: string }).project } : {} };
+      const config = loadConfig(c.optsWithGlobals().dataDir);
+      let raw: unknown;
+      try { raw = JSON.parse(readFileSync(path.resolve(file), "utf8").replace(/^\uFEFF/, "")); } catch { throw new RelayError("FILE_NOT_FOUND", `질의 세트 파일을 읽을 수 없거나 JSON이 아닙니다: ${path.resolve(file)}`, 3, 404); }
+      const list = (raw as { queries?: unknown })?.queries;
+      if (!Array.isArray(list) || !list.length || list.length > 2000) invalid("파일에 queries 배열(1~2000개)이 있어야 합니다.");
+      const modes = (split(o.modes) ?? ["hybrid", "keyword", "semantic"]).map((mode) => (mode === "hybrid" || mode === "keyword" || mode === "semantic" ? mode : invalid("--modes: hybrid, keyword, semantic 가운데서 고릅니다.")));
+      const index = await tools.memoIndex(config);
+      const repo = o.all || o.project ? undefined : repoName(process.cwd());
+      const rows: EvalReport["rows"] = [];
+      const fallbacks = new Map<string, number>();
+      for (const [at, entry] of (list as unknown[]).entries()) {
+        const item = entry as { id?: unknown; kind?: unknown; query?: unknown; expect?: unknown };
+        if (!item || typeof item.query !== "string" || !item.query.trim() || !Array.isArray(item.expect ?? [])) invalid(`queries[${at}]: query(문자열)와 expect(메모 ID 배열)가 있어야 합니다.`);
+        const expect = ((item.expect ?? []) as unknown[]).map((id) => index.resolve(String(id)).id);
+        const row: EvalReport["rows"][number] = { id: typeof item.id === "string" ? item.id : String(at + 1), kind: typeof item.kind === "string" ? item.kind : "", query: (item.query as string).trim(), expect, ranks: {}, results: {}, weak: {} };
+        for (const mode of modes) {
+          const result = await searchNotes(config, parseSearch({ query: row.query.slice(0, 500), mode, limit: 10,
+            filters: { ...(o.project ? { project: o.project } : {}), ...(repo ? { sourceRepo: repo } : {}) } }));
+          if (result.fallbackReason) fallbacks.set(mode, (fallbacks.get(mode) ?? 0) + 1);
+          const found = result.items.findIndex((hit) => expect.includes(hit.noteId));
+          row.ranks[mode] = found < 0 ? null : found + 1;
+          row.results[mode] = result.items.length;
+          row.weak[mode] = result.items.filter((hit) => hit.weak).length;
+        }
+        rows.push(row);
+      }
+      const answerable = rows.filter((row) => row.expect.length);
+      const mrr = (part: typeof rows, mode: string) => (part.length ? part.reduce((sum, row) => sum + (row.ranks[mode] ? 1 / row.ranks[mode]! : 0), 0) / part.length : 0);
+      const within = (mode: string, top: number) => (answerable.length ? answerable.filter((row) => row.ranks[mode] !== null && row.ranks[mode]! <= top).length / answerable.length : 0);
+      const round = (value: number) => Math.round(value * 1000) / 1000;
+      const kinds = [...new Set(answerable.map((row) => row.kind))];
+      const report: EvalReport = { schemaVersion: 1, queries: rows.length, answerable: answerable.length, rows,
+        modes: modes.map((mode) => ({ mode, recall1: round(within(mode, 1)), recall3: round(within(mode, 3)), recall10: round(within(mode, 10)), mrr: round(mrr(answerable, mode)), fallbacks: fallbacks.get(mode) ?? 0,
+          kinds: kinds.map((kind) => { const part = answerable.filter((row) => row.kind === kind); return { kind: kind || "(종류 없음)", count: part.length, mrr: round(mrr(part, mode)) }; }) })) };
+      write(c, tools, report, evalText(report));
     });
 
   embed.command("run").description("대기 중인 메모를 지금 색인(임베딩 서버가 꺼져 있고 띄우는 명령이 있으면 띄움). relay web이 떠 있으면 평소에는 스스로 돎")
@@ -281,7 +359,9 @@ export function embedCommands(program: Command, tools: Tools) {
         if (noteId) await withIndex(config, (api) => api.reindex({ scope: "note", noteId }));
         for (;;) {
           const report = await withIndex(config, (api) => runWorker(api, host, { ...(maxNotes ? { maxNotes } : {}) }));
-          if (!o.watch) { write(c, tools, { schemaVersion: 1, ...report }, workerText(report)); if (report.offline) process.exitCode = 1; return; }
+          // 색인을 다 따라잡았으면 검색 바닥값을 다시 잰다(색인이 달라지면 「관련 없음」의 높이도 달라진다).
+          const measured = report.notes && !report.remaining && !report.offline ? await calibrate(config, host) : null;
+          if (!o.watch) { write(c, tools, { schemaVersion: 1, ...report, ...(measured ? { searchFloor: measured.floor } : {}) }, `${workerText(report)}${measured ? `\n${floorText(measured)}` : ""}`); if (report.offline) process.exitCode = 1; return; }
           if (report.notes || report.failed || report.offline) process.stdout.write(`${workerText(report)}\n`);
           await new Promise((resolve) => setTimeout(resolve, report.offline ? 60_000 : 20_000));
         }
@@ -305,9 +385,15 @@ export function embedCommands(program: Command, tools: Tools) {
     });
 
   embed.command("cards").description("의미 카드: 에이전트가 메모를 읽고 쓰는 한 줄 요약·같은 뜻의 다른 말·이 메모가 답하는 질문. 인자 없이 부르면 카드가 필요한 메모를 보임")
-    .option("--limit <number>", "보일 메모 수(1~100, 기본 5)").option("--save <file>", "카드 JSON 파일을 저장(-는 표준 입력)")
-    .action(async (o: { limit?: string; save?: string }, c: Command) => {
+    .option("--limit <number>", "보일 메모 수(1~100, 기본 5)").option("--save <file>", "카드 JSON 파일을 저장(-는 표준 입력)").option("--show <id>", "그 메모에 저장된 카드를 보임")
+    .action(async (o: { limit?: string; save?: string; show?: string }, c: Command) => {
       const config = loadConfig(c.optsWithGlobals().dataDir);
+      if (o.show !== undefined) {
+        if (o.save !== undefined) invalid("--show와 --save는 함께 쓰지 않습니다.");
+        const noteId = (await tools.memoIndex(config)).resolve(o.show).id;
+        const shown = await withIndex(config, (api) => api.card(noteId));
+        return write(c, tools, shown, cardShownText(shown));
+      }
       if (o.save === undefined) {
         const pending = await withIndex(config, (api) => api.cardsPending(whole(o.limit, "--limit", 1, 100, 5)));
         return write(c, tools, pending, cardsText(pending));

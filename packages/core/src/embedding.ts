@@ -34,7 +34,7 @@ export type EmbeddingConfig = {
   batch?: number;
   /** Ollama에 넘기는 컨텍스트 길이(기본 8192). 모델 기본값이 아주 크면 VRAM이 모자라 뜨지 않는다. */
   contextTokens?: number;
-  /** 자가 진단에서 잰 유사도 바닥값. */
+  /** 자가 진단에서 잰 유사도 바닥값. 색인이 아직 작을 때의 검색 바닥값이고, 색인이 생긴 뒤에 잰 값(floorFrom)이 이보다 내려가지 않게 한다. */
   floor?: number;
   /** 서버가 꺼져 있으면 이 명령으로 띄운다(로컬 서버). idleMinutes 동안 쓰지 않으면 끈다. */
   launch?: string[];
@@ -90,7 +90,8 @@ export function parseEmbeddingConfig(raw: unknown, options: { /** 서버 환경 
     url: url.origin + url.pathname.replace(/\/+$/, ""), style: style as EmbeddingConfig["style"], model: text("model", 200)!, ...(name ? { name } : {}),
     dimensions: count("dimensions", undefined, 16, 4096) ?? fail("dimensions가 필요합니다."), prompt: prompt as EmbeddingPrompt,
     ...(apiKey ? { apiKey } : {}), ...(batch ? { batch } : {}), ...(contextTokens ? { contextTokens } : {}),
-    ...(typeof value.floor === "number" ? { floor: value.floor } : {}), ...(launch ? { launch } : {}), ...(idleMinutes !== undefined ? { idleMinutes } : {}),
+    ...(typeof value.floor === "number" ? { floor: value.floor } : {}),
+    ...(launch ? { launch } : {}), ...(idleMinutes !== undefined ? { idleMinutes } : {}),
     ...(value.auto === false ? { auto: false } : {}),
   };
 }
@@ -206,6 +207,24 @@ const PROBE_QUERIES: Array<[query: string, passage: number]> = [
   ["김치찌개 끓이는 법", 2], ["비밀번호를 잊어버렸을 때", 3], ["forgot my password", 3],
   ["가계부 정리 방법", 4], ["회의록에 무엇을 남기나", 5], ["meeting notes action items", 5],
 ];
+/** 어느 메모에도 답이 없을 법한 질의들(일상의 여러 갈래, 한국어와 영어). 이 질의들이 지금 색인에서 얻는 최고 유사도가 「관련 없음」의 높이다. */
+export const FLOOR_PROBES: readonly string[] = [
+  "김치찌개 맛있게 끓이는 법", "월드컵 역대 우승국", "기타 코드 운지법", "주택담보대출 금리 비교", "강아지 예방접종 시기", "르네상스 미술사 요약",
+  "제주도 맛집 추천", "아이 생일 선물 아이디어", "허리 통증에 좋은 스트레칭", "봄에 심기 좋은 채소", "계절별 별자리 찾는 법", "결혼식 축사 예문",
+  "how to bake sourdough bread", "stock market technical analysis patterns", "best hiking trails in the alps", "history of the roman empire",
+];
+/** 색인의 조각이 이보다 적으면 검색 바닥값을 재지 않는다(메모 몇 개로는 「관련 없음」의 높이를 알 수 없다). */
+export const FLOOR_MIN_CHUNKS = 50;
+/** 검색 바닥값을 정한다. tops는 FLOOR_PROBES가 얻은 최고 유사도들이다. 그 가운데 두엇은 사용자의 메모에 실제로 있는 주제일 수 있어
+ *  가장 높은 값이 아니라 85% 지점을 쓰고, 조금 여유(0.01)를 둔다. 자가 진단의 바닥값보다 낮아지지 않고, 0.6을 넘지 않는다.
+ *  (메모 557개에서 답이 없는 질의의 최고 유사도는 0.13~0.25였고, 답이 있는 질의에서 맞은 메모의 90%는 0.27 이상이었다.) */
+export function floorFrom(tops: number[], diagnosed = 0): number {
+  if (!tops.length) return diagnosed;
+  const sorted = [...tops].sort((a, b) => a - b);
+  const value = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.85))]! + 0.01;
+  return Math.round(Math.min(0.6, Math.max(diagnosed, value)) * 1000) / 1000;
+}
+
 export type EmbeddingDiagnosis = {
   ok: boolean; passed: number; total: number;
   /** 맞는 글과 가장 가까운 틀린 글의 유사도 차이(평균). */ margin: number;

@@ -51,7 +51,7 @@ test.skipIf(process.platform !== "win32")("project skill installation is idempot
   expect(readFileSync(path.join(dir, ".claude/skills/relay-graph/SKILL.md"), "utf8"))
     .toBe(readFileSync(path.join(root, "skills/relay-graph/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: <query|memo-id>\n"));
   expect(readFileSync(path.join(dir, ".claude/skills/relay-embedding/SKILL.md"), "utf8"))
-    .toBe(readFileSync(path.join(root, "skills/relay-embedding/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: [status|cards|run|setup|doctor]\n"));
+    .toBe(readFileSync(path.join(root, "skills/relay-embedding/SKILL.md"), "utf8").replace(/^---\r?\n/, "---\nargument-hint: [status|cards|run|setup|doctor|eval]\n"));
   expect(install("grok").exitCode).toBe(0);
   const grokSkill = path.join(dir, ".grok/skills/relay-session/SKILL.md");
   expect(readFileSync(grokSkill, "utf8")).toBe(installed);

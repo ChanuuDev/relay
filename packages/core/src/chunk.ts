@@ -6,17 +6,20 @@ import { estimateTokens, redactSecrets } from "./redact.js";
 //  - 절이 길면 빈 줄(문단) → 줄 → 문장 순으로 더 나누고, 이어지는 조각은 앞 조각의 끝을 조금 겹친다. 짧은 절은 다음 절과 묶는다.
 //  - 조각 앞에 문서 유형·프로젝트·폴더·제목·소제목 경로를 붙인다(Anthropic Contextual Retrieval: 조각만으로는 무엇에 관한 글인지 모른다).
 //  - 그림 주소는 설명만 남기고, 비밀번호·토큰처럼 보이는 값은 가린 뒤에 내보낸다. 원문은 바꾸지 않고 위치(줄·글자)만 기억한다.
+//  - 표나 코드 울타리가 조각 사이에서 끊기면, 이어지는 조각 앞에 표의 머리 줄(코드는 울타리를 여는 줄)을 다시 붙인다. 열 이름 없는 값만으로는 무슨 표인지 모른다.
 // 규칙을 바꾸면 CHUNK_VERSION을 올린다. 모델 키에 들어가므로 모든 메모가 새 규칙으로 다시 색인된다.
+//  2: 끊긴 표·코드에 머리 줄을 다시 붙임, 가리기 규칙이 경로와 디자인 토큰 이름을 남김, 토큰 어림을 실제에 맞춤, 조각 상한 120 → 300.
 
-export const CHUNK_VERSION = 1;
+export const CHUNK_VERSION = 2;
 /** 조각 하나의 본문 상한(어림 토큰). */
 export const CHUNK_MAX_TOKENS = 700;
 /** 이보다 짧은 절은 다음 절과 묶는다(제목만 있는 절이 제목 유사도만으로 올라오지 않게). */
 export const CHUNK_MIN_TOKENS = 50;
 /** 길어서 나뉜 조각끼리 겹치는 양. */
 export const CHUNK_OVERLAP_TOKENS = 70;
-/** 메모 하나에서 만드는 조각 수의 상한. 넘으면 뒤를 버리고 truncated를 알린다. */
-export const MAX_CHUNKS = 120;
+/** 메모 하나에서 만드는 조각 수의 상한. 넘으면 뒤를 버리고 truncated를 알린다. 본문 상한(20만 자)의 메모도 다 들어가게 잡았다
+ *  (120일 때 실제 메모 3개의 꼬리가 색인되지 않았다). */
+export const MAX_CHUNKS = 300;
 
 export type DocType = "memo" | "knowledge" | "design" | "decision";
 export type DocStatus = "draft" | "adopted" | "superseded";
@@ -36,6 +39,8 @@ const FENCE_LINE = /^\s{0,3}(`{3,}|~{3,})/;
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const IMAGE = /!\[([^\]\n]*)\]\([^)\n]*\)/g;
 const SENTENCE_END = /(?<=[.!?。…])\s+|(?<=[다요음임함됨])\.\s+/;
+const TABLE_ROW = /^\s*\|/;
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}/;
 
 /** 소제목 줄이면 [단계, 글], 아니면 null. */
 export function headingOf(line: string): [level: number, text: string] | null {
@@ -86,6 +91,8 @@ function splitUnit(unit: Unit, lines: string[], max: number): Unit[] {
 
 /** 덩어리의 끝부분(줄이나 문장 단위로 budget 토큰까지). 다음 조각의 앞에 겹쳐 싣는다. */
 function tailOf(unit: Unit, budget: number): Unit | null {
+  // 표의 줄과 코드는 겹쳐 싣지 않는다(줄을 이어 붙이면 표가 아니게 되고, 이어지는 조각에는 머리 줄을 다시 붙인다).
+  if (unit.text.split("\n").some((line) => TABLE_ROW.test(line) || FENCE_LINE.test(line))) return null;
   const parts = unit.text.split("\n").flatMap((line) => line.split(SENTENCE_END)).filter((part) => part.trim());
   const kept: string[] = [];
   let room = budget;
@@ -190,12 +197,41 @@ export function chunkNote(body: string, context: ChunkContext, max = CHUNK_MAX_T
     if (sum(own) < CHUNK_MIN_TOKENS && sum(before) + sum(own) <= max * 1.25) { before.push(...own); groups.pop(); }
   }
 
+  // 줄마다 그 줄이 든 코드 울타리(여는 줄의 번호와 표시). 조각이 울타리 안에서 시작하거나 끝나는지 본다.
+  type Fence = { open: number; close: number; mark: string };
+  const fences: Array<Fence | null> = [];
+  for (let at = 0, inside: Fence | null = null; at < lines.length; at++) {
+    const mark = FENCE_LINE.exec(lines[at]!)?.[1];
+    if (inside) {
+      fences.push(inside);
+      if (mark && mark[0] === inside.mark[0] && mark.length >= inside.mark.length && !lines[at]!.trim().slice(mark.length).trim()) { inside.close = at; inside = null; }
+    } else if (mark) { inside = { open: at, close: -1, mark }; fences.push(inside); }
+    else fences.push(null);
+  }
   const truncated = groups.length > MAX_CHUNKS;
   const chunks = groups.slice(0, MAX_CHUNKS).map((group, index): Chunk => {
     const first = group[0]!, last = group[group.length - 1]!;
     // 소제목만 든 첫 덩어리와 묶였으면 실제 글이 시작되는 절의 경로를 쓴다.
     const heading = group.find((unit) => !unit.overlap && unit.tokens >= 8 && !headingOf(unit.text.split("\n")[0]!))?.heading ?? group[group.length - 1]!.heading;
-    const text = redactSecrets(`${headerOf(context, heading)}\n\n${group.map((unit) => unit.text).join("\n\n")}`.trim()).text;
+    // 이 조각이 표나 코드 울타리의 가운데서 시작하면 그 머리(표의 머리 줄과 구분 줄, 울타리를 여는 줄)를 앞에 다시 붙인다.
+    const before = index > 0 ? groups[index - 1]! : [];
+    const own = group.find((unit) => !unit.overlap && !before.includes(unit)) ?? first;
+    let lead = "";
+    if (TABLE_ROW.test(lines[own.first]!) && own.first > 0 && TABLE_ROW.test(lines[own.first - 1]!)) {
+      let top = own.first;
+      while (top > 0 && TABLE_ROW.test(lines[top - 1]!)) top--;
+      if (top + 1 < own.first && TABLE_RULE.test(lines[top + 1]!)) lead = `${tidy(lines[top]!)}\n${lines[top + 1]!}`;
+    } else {
+      const fence = fences[own.first];
+      if (fence && fence.open < own.first) lead = lines[fence.open]!;
+    }
+    // 울타리가 닫히기 전에 조각이 끝나면 닫는 줄을 붙여, 뒤따르는 글이 코드로 읽히지 않게 한다.
+    const open = fences[last.last];
+    const tail = open && open.close !== last.last ? `\n${open.mark}` : "";
+    // 머리를 다시 붙인 조각에는 앞 조각에서 겹쳐 온 끝부분을 싣지 않는다(표의 줄이나 코드가 머리 밖에 따로 놓인다).
+    const at = group.indexOf(own);
+    const parts = group.filter((unit, i) => !(lead && unit.overlap && i < at)).map((unit) => (unit === own && lead ? `${lead}\n${unit.text}` : unit.text));
+    const text = redactSecrets(`${headerOf(context, heading)}\n\n${parts.join("\n\n")}${tail}`.trim()).text;
     return { index, headingPath: heading, lineStart: first.first + 1, lineEnd: last.last + 1, charStart: offsets[first.first]!,
       charEnd: offsets[last.last]! + lines[last.last]!.length, text, tokens: estimateTokens(text) };
   });

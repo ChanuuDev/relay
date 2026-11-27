@@ -292,7 +292,10 @@ relay graph export --format graphml             # Gephi용 GraphML (json·mermai
 **쓰는 곳**
 
 - 메모 검색 창: 글자가 그대로 든 메모는 바로 뜨고, 입력이 멎으면 그 아래에 **뜻이 가까운 메모**가 맞은 절·발췌와 함께 뜹니다.
-- `relay memo --search`, `relay graph context`: 낱말 순위(BM25)와 의미 순위를 RRF로 합쳐 관련 있는 순서대로 냅니다. 경로(`/api/v1/notes`)·오류 코드(`PARENT_CONFLICT`)·파일 이름(`compose.yml`)처럼 글자 그대로를 찾는 질의는 낱말 순위를 더 무겁게 칩니다.
+- `relay memo --search`, `relay graph context`: 낱말 점수(BM25)와 의미 점수를 더해 관련 있는 순서대로 냅니다. 경로(`/api/v1/notes`)·오류 코드(`PARENT_CONFLICT`)·파일 이름(`compose.yml`)처럼 글자 그대로를 찾는 질의는 낱말 쪽을 더 믿고, 12자가 넘는 질의가 어떤 메모에 구절째 들어 있으면 그 메모를 맨 앞에 둡니다.
+  - Git 저장소 안에서 찾으면 그 저장소에서 등록한 문서(`relay memo register`)의 프로젝트를 앞에 둡니다. 프로젝트마다 같은 종류의 문서(작업 지침·서버 구축·디자인 기준)가 있어도 지금 프로젝트의 것이 먼저 나옵니다. 좁히지는 않으며, 전체에서 고르게 보려면 `--all`을 붙입니다.
+  - 색인에 없는 것을 물으면 결과를 채우지 않습니다. 뜻으로는 닿지 않고 낱말 일부만 걸린 글은 남기되 `관련이 낮을 수 있음`을 붙입니다.
+  - 임베딩 서버가 쉬다 꺼져 있었으면 CLI의 검색은 서버를 띄워 8초까지 기다렸다가 뜻으로 찾습니다. 글자를 칠 때마다 찾는 화면은 기다리지 않고 낱말로 먼저 답한 뒤, 서버가 뜨면 한 번 더 물어 결과를 바꿉니다.
 - 그래프: 뜻이 가까운 메모가 선으로 이어지고, 「발견」이 근거 절과 함께 연결을 제안합니다.
 
 **임베딩 서버 잇기** — 임베딩은 이 PC에서 합니다. 권장 구성은 llama.cpp의 `llama-server`와 한국어 모델 [KURE-v3](https://huggingface.co/nlpai-lab/KURE-v3)(GGUF `Q8_0` 1.2GB, VRAM 약 2.5GB)입니다.
@@ -314,8 +317,11 @@ relay embed status      # 준비·대기·실패한 메모 수, 쓰는 모델, �
 
 - `relay web`이 떠 있는 동안 색인 워커가 함께 돕니다. 메모를 고치면 몇 초 안에 그 메모를 다시 색인하고, PC가 꺼져 있던 동안 바뀐 메모는 다시 켜지면 따라잡습니다. 지금 돌리려면 `relay embed run`.
 - 메모는 소제목 계층을 따라 절로 나눕니다(코드 울타리 안의 `#`은 소제목이 아닙니다). 긴 절은 문단·줄·문장 순으로 더 나누고 조금 겹치며, 짧은 절은 다음 절과 묶습니다. 절마다 앞에 문서 유형·프로젝트·폴더·제목·소제목 경로(와 의미 카드의 요약)를 붙여 임베딩합니다.
+- 긴 표나 코드가 조각 사이에서 끊기면, 이어지는 조각 앞에 표의 머리 줄(코드는 울타리를 여는 줄)을 다시 붙입니다. 머리 줄 없이 값만 남은 조각은 무엇의 값인지 알 수 없기 때문입니다.
+- 메모 하나는 조각 300개까지 색인합니다(본문 상한 512KiB의 메모도 대개 다 담깁니다). 넘으면 뒷부분은 낱말로만 찾히고, `relay embed status`가 그런 메모의 수를 알립니다.
 - 고친 절만 다시 임베딩합니다. 순서를 끌어 바꾸거나 폴더를 옮긴 것만으로는 다시 하지 않습니다. 메모를 지우면 그 메모의 조각·벡터·의미 연결·카드가 함께 지워집니다.
-- 비밀번호·토큰처럼 보이는 값은 `[가림]`으로 바꾼 뒤에 임베딩 서버로 보냅니다. 조각 나누기와 가리기는 서버가 하고 워커는 받은 글을 벡터로 바꿀 뿐이라, 가리지 않은 본문은 임베딩 서버로 가지 않습니다. 검색 결과의 발췌도 가립니다.
+- 비밀번호·토큰처럼 보이는 값은 `[가림]`으로 바꾼 뒤에 임베딩 서버로 보냅니다. 조각 나누기와 가리기는 서버가 하고 워커는 받은 글을 벡터로 바꿀 뿐이라, 가리지 않은 본문은 임베딩 서버로 가지 않습니다. 검색 결과의 발췌도 가립니다. 가리는 것은 알려진 토큰 모양, `비밀번호: 값` 꼴, 비밀번호·시크릿 열이 있는 표, 주소에 든 암호, 무작위로 만든 긴 문자열입니다. 파일 경로와 낱말을 이은 이름(`NoteChunkWriterV2`), 디자인 문서의 「토큰」 열(`--dur-fast`)은 가리지 않습니다(가리면 그 줄이 검색에서 뜻을 잃습니다).
+- **검색 바닥값**: 유사도가 이보다 낮으면 뜻으로 찾았다고 보지 않는 선입니다. 색인을 다 따라잡으면 워커가 어느 메모에도 답이 없을 질의 16개를 넣어 「관련 없음」이 지금 색인에서 얼마나 높이 나오는지 재고, 그 85번째 백분위 바로 위를 바닥값으로 색인에 남깁니다(`relay embed status`에 보이고, `relay embed doctor`가 다시 잽니다).
 - 원격 저장을 쓰면 색인은 원격 서버에 있고, 임베딩은 임베딩 서버가 있는 PC가 맡습니다: 워커가 서버에서 일을 받아 가 벡터를 올리고, 검색할 때는 그 PC의 Relay가 질의 벡터를 계산해 실어 보냅니다. 그 PC가 꺼져 있거나 다른 기기(휴대폰의 브라우저)에서 찾으면 서버가 곧바로 낱말 검색(의미 카드 포함)으로 답하고, 미리 계산해 둔 의미 연결은 그대로 보입니다.
 
 **의미 카드 쓰기** — Claude Code·Codex·Antigravity 같은 Agent에서 `/relay-embedding`(Codex는 `$relay-embedding`)을 부르면, Agent가 `relay embed cards`로 카드가 없는 메모를 받아 읽고 카드를 써서 `relay embed cards --save`로 저장합니다. 본문에 없는 말을 떠올리는 일이라 성능 좋은 모델일수록 잘합니다. 카드에는 메모에 없는 사실을 적지 않고, 비밀로 보이는 값은 저장할 때 한 번 더 가립니다.
@@ -335,13 +341,14 @@ relay memo meta <메모 ID> --type knowledge --project relay
 
 | 단계 | 방법 |
 | --- | --- |
-| 낱말 순위 | BM25(k1 1.2, b 0.75). 제목 ×3, 폴더 경로·프로젝트 ×1.5, 태그·의미 카드 ×2. 질의 낱말이 제목·본문에 글자 그대로 나오면 점수를 보탭니다 |
-| 의미 순위 | 질의 벡터와 절 벡터의 코사인 유사도. 같은 메모의 절이 여럿 맞아도 가장 가까운 절이 점수를 정하고 나머지는 조금만 보탭니다(1 + 0.15 + 0.05) |
-| 버리기 | 모델마다 잰 바닥값(자가 진단의 「다른 주제」 평균 + 표준편차)과, 그 질의의 배경 유사도(아래쪽 80%의 평균 + 3σ)보다 뚜렷이 높은 절만 남깁니다. 관련 없는 질의에는 아무것도 내지 않습니다 |
-| 합치기 | 두 순위를 RRF(k 60)로 합칩니다. 글자 그대로를 찾는 질의는 낱말 순위를 1.4배로 칩니다. 문서 상태(채택한 문서 ×1.15, 대체된 문서 ×0.6)는 순위를 매기기 전의 낱말 점수와 유사도에 곱해, 비슷하게 맞은 문서 사이에서만 순서를 바꿉니다(훨씬 잘 맞은 문서는 상태와 상관없이 앞에 남습니다) |
-| 의미 연결 | 메모의 제목·요약·첫머리를 질의로 임베딩해 다른 메모의 절과 견줍니다(두 방향 가운데 큰 값). 조각끼리 견주면 길이와 말투가 닮은 메모가 붙기 때문입니다. 근거가 된 두 절을 함께 남깁니다 |
+| 낱말 점수 | BM25(k1 1.2, b 0.4). 제목 ×3, 폴더 경로·프로젝트 ×1.5, 태그·의미 카드 ×2. 질의 낱말이 제목·본문에 글자 그대로 나오면 점수를 보탭니다. 「방법」「어떻게」「how」 같은 뜻 없는 말은 질의에서 뺍니다 |
+| 의미 점수 | 질의 벡터와 절 벡터의 코사인 유사도. 같은 메모의 절이 여럿 맞아도 가장 가까운 절이 점수를 정하고 나머지는 조금만 보탭니다(1 + 0.15 + 0.05) |
+| 버리기 | 뜻: 검색 바닥값과 그 질의 1위 유사도의 0.6배 가운데 큰 값을 넘는 메모만 남깁니다. 낱말: 뜻으로 맞지 않은 글은 질의의 낱말을(드문 낱말을 무겁게 쳐서) 절반 넘게 담아야 남깁니다(의미 검색을 하지 못했을 때는 0.3). 흔한 말 하나만 걸린 글이 결과를 채우지 않습니다 |
+| 합치기 | 합친 점수 = 0.7 × (유사도 ÷ 1위 유사도) + 0.3 × 낱말 점수(1위가 1). 글자 그대로를 찾는 질의와 구절째 맞은 질의는 0.4 대 0.6으로 낱말을 더 믿습니다. 순위만 보는 RRF는 「뜻으로 훨씬 가까운 글」과 「흔한 낱말이 든 긴 글」의 차이를 지워, 실제 메모 557개에서 의미 검색만 쓴 것보다 나빴습니다(MRR 0.78 대 점수 합 0.88). 문서 상태는 합친 점수에 곱합니다: 채택한 문서 ×1.03(비슷하게 맞은 문서를 앞지를 만큼만), 대체된 문서 ×0.6. 일하는 저장소의 프로젝트 문서는 ×1.25 |
+| 의미 연결 | 메모의 제목·요약·첫머리를 질의로 임베딩해 다른 메모의 절과 견줍니다. 조각끼리 견주면 길이와 말투가 닮은 메모가 붙기 때문입니다. 그 유사도가 「그 질의가 제 메모와 맞는 정도」의 0.53배를 넘으면 잇고(두 방향 가운데 큰 쪽), 0.85배면 가장 센 연결로 봅니다. 절댓값 대신 비율을 쓰는 것은 의미 카드의 유무와 모델에 따라 유사도의 크기가 달라서입니다. 근거가 된 두 절을 함께 남깁니다 |
+| 재기 | `relay embed eval <질의 세트.json>`: 질의마다 기대한 메모가 몇 번째에 나오는지(R@1·R@3·R@10·MRR)를 낱말·뜻·합친 방식별로 잽니다. 순위 규칙이나 모델을 바꾸기 전과 뒤를 같은 질의로 견줍니다 |
 
-벡터는 Relay DB의 표에 float32 바이트로 두고, 검색할 때 메모리에서 전부 견줍니다. 개인 메모 규모(조각 수만 개까지)에서는 이쪽이 벡터 확장을 두는 것보다 단순하고 정확합니다(재현율 100%). 참고한 자료: [Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)(조각 앞에 문맥 붙이기), [RRF](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf), [doc2query](https://arxiv.org/abs/1904.08375)(문서에 예상 질의를 덧붙이는 색인: 의미 카드), [Matryoshka 표현 학습](https://arxiv.org/abs/2205.13147)(앞쪽 차원만 쓰기), [KURE-v3](https://huggingface.co/nlpai-lab/KURE-v3), [llama.cpp 서버의 임베딩](https://github.com/ggml-org/llama.cpp/tree/master/tools/server).
+벡터는 Relay DB의 표에 float32 바이트로 두고, 검색할 때 메모리에서 전부 견줍니다. 개인 메모 규모(조각 수만 개까지)에서는 이쪽이 벡터 확장을 두는 것보다 단순하고 정확합니다(재현율 100%). 참고한 자료: [Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)(조각 앞에 문맥 붙이기), [RRF](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf)(견줘 본 뒤 점수 합으로 바꿈), [doc2query](https://arxiv.org/abs/1904.08375)(문서에 예상 질의를 덧붙이는 색인: 의미 카드), [Matryoshka 표현 학습](https://arxiv.org/abs/2205.13147)(앞쪽 차원만 쓰기), [KURE-v3](https://huggingface.co/nlpai-lab/KURE-v3), [llama.cpp 서버의 임베딩](https://github.com/ggml-org/llama.cpp/tree/master/tools/server).
 
 ### 파일을 찾고 내용 확인하기
 
@@ -616,13 +623,14 @@ Claude Code 설정 예시입니다. Codex와 Grok은 같은 구조에 래퍼 `.c
 | `relay delete <ID> [--provider] [--force]` | 기록과 이력 삭제. 이어받은 세션이 있으면 `--force`로 연결을 끊고 삭제 |
 | `relay memo --list [--folder <폴더 ID>]` | 메모 폴더 트리와 메모·폴더 ID(본문 없음). AI 에이전트가 메모를 찾을 때 |
 | `relay memo --find <ID>` | 메모의 제목·위치·본문, 폴더면 그 아래 모든 메모. ID 앞 6자 이상도 받음 |
-| `relay memo --search <찾는 말> [--mode hybrid\|keyword\|semantic\|exact] [--type <유형,…>] [--status <상태,…>] [--project <이름>] [--history] [--limit <수>]` | 메모 검색. 낱말과 뜻으로 찾아 관련 있는 순서대로 맞은 절과 함께(의미 색인이 없으면 낱말로만). `exact`는 띄어 쓴 낱말이 글자 그대로 모두 든 메모·폴더 |
+| `relay memo --search <찾는 말> [--mode hybrid\|keyword\|semantic\|exact] [--type <유형,…>] [--status <상태,…>] [--project <이름>] [--all] [--history] [--limit <수>]` | 메모 검색. 낱말과 뜻으로 찾아 관련 있는 순서대로 맞은 절과 함께(의미 색인이 없으면 낱말로만). 저장소 안에서는 그 저장소의 프로젝트 문서를 앞에 두고 `--all`이면 전체에서 고르게. `exact`는 띄어 쓴 낱말이 글자 그대로 모두 든 메모·폴더 |
 | `relay memo register <파일> [--type] [--status] [--project] [--title] [--supersedes <ID>] [--folder <ID>] [--note <ID>]` | Git 설계서·결정 기록(Markdown)을 메모로 등록·갱신. 같은 저장소·경로는 같은 메모를 고침 |
 | `relay memo meta [<ID>] [--type] [--status] [--project] [--superseded-by <ID\|none>]` | 메모의 문서 유형·상태·프로젝트·대체 관계 보기·고치기 |
-| `relay embed status [--note <ID>]` | 의미 색인 상태: 준비·대기·실패한 메모 수, 쓰는 모델, 색인 워커, 의미 카드 |
-| `relay embed setup --url <주소> --model <이름> --dimensions <수> [--prompt e5\|gemma\|plain] [--style openai\|ollama] [--api-key-env <변수>] [--idle <분>] [--no-auto] [-- <서버를 띄우는 명령>]` / `relay embed doctor` | 임베딩 서버를 잇고 자가 진단을 거쳐 저장(`--remove`로 지움) / 자가 진단만 |
+| `relay embed status [--note <ID>]` | 의미 색인 상태: 준비·대기·실패한 메모 수, 쓰는 모델과 검색 바닥값, 색인 워커, 의미 카드, 너무 길어 뒤가 색인되지 않은 메모 |
+| `relay embed setup --url <주소> --model <이름> --dimensions <수> [--prompt e5\|gemma\|plain] [--style openai\|ollama] [--api-key-env <변수>] [--idle <분>] [--no-auto] [-- <서버를 띄우는 명령>]` / `relay embed doctor` | 임베딩 서버를 잇고 자가 진단을 거쳐 저장(`--remove`로 지움) / 자가 진단과 검색 바닥값 다시 재기 |
 | `relay embed run [--limit <수>] [--note <ID>] [--watch]` / `relay embed reindex --failed\|--note <ID>\|--all` / `relay embed activate <모델 키>` | 대기 중인 메모를 지금 색인 / 다시 색인하게 함 / 검색에 쓸 모델 바꾸기 |
-| `relay embed cards [--limit <수>]` / `relay embed cards --save <파일>` | 의미 카드가 필요한 메모 보기 / Agent가 쓴 카드 저장 |
+| `relay embed cards [--limit <수>]` / `relay embed cards --save <파일>` / `relay embed cards --show <ID>` | 의미 카드가 필요한 메모 보기(긴 메모는 잘린 뒤의 소제목도) / Agent가 쓴 카드 저장 / 메모에 저장된 카드 보기 |
+| `relay embed eval <질의 세트.json> [--modes hybrid,keyword,semantic] [--project <이름>] [--all]` | 질의 세트(`{"queries":[{"query","expect":[메모 ID],"kind"}]}`)로 검색 품질 재기: R@1·R@3·R@10·MRR, 답이 없어야 하는 질의의 결과 수 |
 | `relay graph context [질의] [--from <ID>]… [--project [경로]] [--budget <토큰>] [--brief] [--raw] [--lexical]` | 질의나 중심 메모에서 그래프를 따라 고른 맥락 묶음(핵심 메모 본문·주변 메모·관계·이어진 작업 세션) |
 | `relay graph map [--limit <수>]` | 그래프 지도: 주제 묶음·중심 메모·다리 메모·주제 사이의 틈·제안 연결·연결 없는 메모 |
 | `relay graph neighbors <ID> [--depth <1~3>]` / `relay graph path <ID> <ID>` | 어떤 점의 이웃, 두 점을 잇는 가장 가까운 길 |
@@ -751,7 +759,7 @@ relay web --reload
 | 세션이 사라짐 | 훅 자동 기록만 남은 세션의 종료 정리 또는 30일 보관 정책 확인. 오래 남길 세션은 `pin` |
 | `relay-session` 스킬이 없거나 링크 오류 | `relay install-skills`로 실제 사본 설치. 프로젝트 사본은 `scripts/install-skill.ps1` 사용 |
 | Agent가 그래프 맥락 줄을 못 읽음 | `relay graph context "<낱말>"`이 되는지 확인하고, `relay-graph` 스킬이 없으면 `relay install-skills`. 맞는 메모가 없다고 나오면 낱말을 줄이거나 `relay graph map`으로 주제를 먼저 확인 |
-| 검색에 `낱말(…) 검색`이라고 나오거나 뜻으로 찾지 못함 | `relay embed status`로 모델·준비된 메모 수 확인. 임베딩 설정이 없으면 `relay embed setup`, 임베딩 서버가 꺼져 있으면 `relay embed doctor`. 설정을 바꾼 뒤에는 `relay web --reload`. 그동안에도 낱말 검색과 의미 카드는 듣습니다 |
+| 검색에 `낱말(…) 검색`이라고 나오거나 뜻으로 찾지 못함 | `relay embed status`로 모델·준비된 메모 수 확인. 임베딩 설정이 없으면 `relay embed setup`. 쉬다 꺼진 임베딩 서버는 검색이 스스로 띄워 기다리므로, 그래도 나오면 서버가 뜨지 않는 것이니 `relay embed doctor`. 설정을 바꾼 뒤에는 `relay web --reload`. 그동안에도 낱말 검색과 의미 카드는 듣습니다 |
 | 의미 색인의 `대기`가 줄지 않음 | 임베딩 서버가 있는 PC에서 `relay web`이 떠 있는지 확인하고 `relay embed run`으로 직접 돌려 오류를 봅니다. `실패`는 `relay embed reindex --failed` |
 | 자가 진단 실패 | 머리말(`--prompt`)이 모델과 맞는지, llama-server에 `--embeddings --pooling mean`을 줬는지 확인. KURE-v3는 Ollama로 띄우지 않습니다 |
 | Agent가 복사한 메모 ID를 못 읽음 | `relay memo --find <ID>`가 되는지 확인하고, `relay-memo` 스킬이 없으면 `relay install-skills`. 쓰기가 403이면 `Origin` 헤더가 서버 주소와 같은지 확인 |
@@ -784,11 +792,11 @@ npm run check
 | `GET /api/v1/notes` · `POST /api/v1/notes` | 메모 트리 조회·변경 묶음 저장(`{ "upserts": [항목], "deletes": [ID] }`). AI 에이전트의 쓰기·고치기도 이 API를 씁니다 |
 | `GET /api/v1/notes/export` · `POST /api/v1/notes/import` | 메모·폴더(쓰는 그림 포함) 내보내기·합치기 |
 | `POST /api/v1/notes/images` · `GET /api/v1/notes/images/:id` | 메모 그림 올리기(`{ "data": base64 }`, 장당 10MB)·보기. `id`는 내용의 sha256 |
-| `POST /api/v1/notes/search` | 메모 검색(`{ query, mode?, filters?: { project?, docType?, docStatus?, folderId?, includeHistory? }, limit?, queryVector?, modelKey? }`). 응답의 `searchMode`가 `lexical_fallback`이면 `fallbackReason`에 뜻으로 찾지 못한 까닭 |
+| `POST /api/v1/notes/search[?wait=<밀리초>]` | 메모 검색(`{ query, mode?, filters?: { project?, docType?, docStatus?, folderId?, includeHistory?, sourceRepo? }, limit?, queryVector?, modelKey? }`). 응답의 `searchMode`가 `lexical_fallback`이면 `fallbackReason`에 뜻으로 찾지 못한 까닭, 항목의 `weak`는 관련이 낮을 수 있는 결과, `preferredProjects`는 앞에 둔 프로젝트. `wait`는 이 PC의 서버만 읽습니다(꺼진 임베딩 서버를 그만큼 기다림) |
 | `GET /api/v1/notes/index-status[?noteId=]` · `POST /api/v1/notes/reindex` | 의미 색인 상태(내용이 같으면 304) · 다시 색인(`{ scope: "failed"\|"note"\|"all", noteId? }`) |
-| `POST /api/v1/notes/index-jobs/lease` · `/commit` · `/fail` · `POST /api/v1/notes/index-models/activate` | 색인 워커: 일 받아 가기(임베딩할 글) → 벡터 올리기 / 실패 알리기 · 검색에 쓸 모델 바꾸기 |
+| `POST /api/v1/notes/index-jobs/lease` · `/commit` · `/fail` · `/probe` · `POST /api/v1/notes/index-models/activate` | 색인 워커: 일 받아 가기(임베딩할 글) → 벡터 올리기 / 실패 알리기 / 검색 바닥값 재기(`{ modelKey, vectors, apply?, diagnosed? }`) · 검색에 쓸 모델 바꾸기 |
 | `GET /api/v1/notes/semantic-links` · `GET /api/v1/notes/:id/suggestions` · `POST /api/v1/notes/:id/suggestions/:target/dismiss` | 그래프에 그릴 의미 연결 · 메모 하나의 연결 제안과 근거 절 · 제안 물리기 |
-| `GET /api/v1/notes/cards[?limit=]` · `POST /api/v1/notes/cards` · `GET`·`POST /api/v1/notes/meta` · `POST /api/v1/notes/register-doc` | 의미 카드가 필요한 메모·카드 저장 · 문서 유형과 상태 · Git 문서 등록 |
+| `GET /api/v1/notes/cards[?limit=\|?noteId=]` · `POST /api/v1/notes/cards` · `GET`·`POST /api/v1/notes/meta` · `POST /api/v1/notes/register-doc` | 의미 카드가 필요한 메모(`noteId`를 주면 그 메모에 저장된 카드)·카드 저장 · 문서 유형과 상태 · Git 문서 등록 |
 | `GET /api/v1/calculator/history` · `POST /api/v1/calculator/history` | 계산 이력 조회·추가·삭제·전체 삭제 |
 | `GET /api/v1/tasks[?status=&provider=&project=&board=]` · `POST /api/v1/tasks` | Task 조회(`status`는 쉼표 목록, `provider=none`은 지정 안 함)·변경 묶음 저장(`{ "upserts": [Task], "deletes": [ID] }`). 고칠 때는 받은 항목 전체를 보냅니다 |
 | `GET /api/v1/board` · `POST /api/v1/board` | 업무 보드(칸 4개와 인벤토리)·보드 동작(`{"action":"place","id","status","index?"}` · `{"action":"remove","id"}` · `{"action":"clear-done"}`) |

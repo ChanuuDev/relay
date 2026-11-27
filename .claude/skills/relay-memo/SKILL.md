@@ -47,13 +47,16 @@ ID를 모르면 `--search`나 `--list`로 찾은 뒤 `--find`로 읽는다. 순�
 
 - `--find --json`: `item`(메모 API와 같은 모양), `path`(최상위부터 `{ id, name }`), 폴더면 `items`(`{ item, path, depth }`를 트리 순서로).
 - `--list --json`: `items`(`{ id, kind, parentId, label, path, depth, updatedAt, notes? }`, 본문 없음), `notes`·`folders` 개수.
-- `--search --json`: `query`, `searchMode`(`hybrid`·`keyword`·`semantic`·`lexical_fallback`), `fallbackReason`(뜻으로 찾지 못한 까닭), `total`, `items`(`{ id, label, path, score, docType, docStatus, supersededBy?, staleIndex, matches: [{ headingPath, lineStart, lineEnd, snippet }] }`).
+- `--search --json`: `query`, `searchMode`(`hybrid`·`keyword`·`semantic`·`lexical_fallback`), `fallbackReason`(뜻으로 찾지 못한 까닭), `total`, `items`(`{ id, label, path, score, docType, docStatus, supersededBy?, weak?, staleIndex, matches: [{ headingPath, lineStart, lineEnd, snippet }] }`), `preferredProjects?`(앞에 둔 프로젝트).
 - `--search --mode exact --json`: `query`, `total`, `items`(`{ id, kind, label, path, updatedAt, lines }`).
 
-검색을 좁히거나 넓히는 옵션: `--mode keyword|semantic`(낱말만·뜻만), `--type design,decision`(문서 유형), `--status adopted`(문서 상태), `--project <이름>`, `--history`(대체된 문서도 감점 없이), `--limit <N>`(기본 10).
+검색을 좁히거나 넓히는 옵션: `--mode keyword|semantic`(낱말만·뜻만), `--type design,decision`(문서 유형), `--status adopted`(문서 상태), `--project <이름>`, `--all`(프로젝트를 가리지 않고 전체에서 고르게), `--history`(대체된 문서도 감점 없이), `--limit <N>`(기본 10).
 
+- **지금 저장소의 문서가 앞에 온다.** Git 저장소 안에서 찾으면, 그 저장소에서 등록한 문서(`relay memo register`)의 프로젝트를 앞에 두고 `작업 중인 저장소의 프로젝트(…) 문서를 앞에 두었습니다`라고 알린다. 좁히지는 않으므로 훨씬 잘 맞는 다른 프로젝트의 문서는 그대로 나온다. 다른 프로젝트의 문서를 찾을 때는 `--project <이름>`이나 `--all`을 붙인다.
 - 결과에 `! 대체된 문서입니다. 새 문서: …`가 붙으면 그 문서는 옛 결정이다. 새 문서를 읽는다.
-- `낱말(…) 검색`이라고 나오면 뜻으로 찾지 못한 것이다(의미 색인이 없거나 임베딩 서버가 꺼져 있다). 낱말을 바꿔 다시 찾는다. 색인은 relay-embedding 스킬이 만든다.
+- **`관련이 낮을 수 있음`**이 붙은 결과는 뜻으로는 닿지 않고 낱말 일부만 걸린 글이다. 답이 아닐 수 있으니 발췌를 보고 고른다. 결과가 0건이면 메모에 그 내용이 없는 것이다(색인에 없는 것을 물으면 억지로 채우지 않는다). 낱말을 바꿔 한 번 더 찾아 보고, 없으면 없다고 알린다.
+- 질의가 12자 이상이고 어떤 메모에 구절째 들어 있으면 그 메모가 맨 앞에 온다. 오류 문구나 문장을 그대로 붙여 넣어 찾을 수 있다.
+- `낱말(…) 검색`이라고 나오면 뜻으로 찾지 못한 것이다(의미 색인이 없거나 임베딩 서버를 쓸 수 없다). 임베딩 서버가 쉬다 꺼져 있었으면 검색이 스스로 띄워 8초까지 기다리므로, 그래도 이 말이 나오면 서버가 뜨지 않은 것이다(`relay embed status`). 낱말을 바꿔 다시 찾는다. 색인은 relay-embedding 스킬이 만든다.
 - 발췌(`>` 줄)의 `[가림]`은 비밀로 보여 가린 값이다. 전체 본문은 `--find`로 읽는다.
 - 모두 `revision`(저장 번호)과 `api`(쓰기에 쓸 이 PC Relay 웹 서버 주소, 설정 기준이며 기본 `http://127.0.0.1:7474`)를 담는다.
 

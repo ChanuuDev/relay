@@ -179,7 +179,7 @@ test("install-skills also installs relay-embedding, which tells an agent how to 
   install();
   const source = readFileSync(path.join(root, "skills/relay-embedding/SKILL.md"), "utf8");
   const claude = readFileSync(path.join(skillDir(".claude", "relay-embedding"), "SKILL.md"), "utf8");
-  expect(claude).toBe(source.replace(/^---\n/, "---\nargument-hint: [status|cards|run|setup|doctor]\n"));
+  expect(claude).toBe(source.replace(/^---\n/, "---\nargument-hint: [status|cards|run|setup|doctor|eval]\n"));
   expect(claude).toBe(skillFiles("claude", "relay-embedding")["SKILL.md"]);
   expect(readFileSync(path.join(skillDir(".grok", "relay-embedding"), "SKILL.md"), "utf8")).toBe(claude);
   expect(readFileSync(path.join(skillDir(".gemini", "relay-embedding"), "SKILL.md"), "utf8")).toBe(claude);
