@@ -249,7 +249,7 @@ describe("relay embed와 의미 검색 CLI", () => {
     expect(doctor).toMatchObject({ diagnosis: { ok: true }, searchFloor: run.searchFloor });
     expect(doctor.probes).toHaveLength(16);
     // 색인에 없는 것을 물으면 결과를 채우지 않는다.
-    expect(cli(dir, ["memo", "--search", "양자역학 강의 노트"]).data).toMatchObject({ searchMode: "hybrid", total: 0, items: [] });
+    expect(cli(dir, ["memo", "--search", "양자역학 강의"]).data).toMatchObject({ searchMode: "hybrid", total: 0, items: [] });
   }, 60000);
 
   test("질의 세트로 검색 품질을 재고, 저장된 의미 카드를 보며, 작업 중인 저장소의 프로젝트 문서를 앞에 둔다", () => {

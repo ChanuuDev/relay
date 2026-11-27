@@ -30,12 +30,34 @@ describe("답이 없는 질의와 관련이 낮은 결과", () => {
     expect(mixed.items[1]!.scores.semantic).toBeUndefined();
     expect(mixed.items[0]!.score).toBeGreaterThan(mixed.items[1]!.score);
 
-    // 의미 검색을 하지 못했을 때: 질의의 낱말을 절반도 담지 못한 글은 남기되 표시하고, 거의 담지 못한 글은 뺀다.
+    // 의미 검색을 하지 못했을 때: 질의의 낱말을 절반도 담지 못한 글은 남기되 표시한다.
     const lexical = await index.search(search("분기 정산 양자역학 강의"));
     expect(lexical).toMatchObject({ searchMode: "lexical_fallback", fallbackReason: "embedder_offline" });
     expect(lexical.items.map((item) => [item.noteId, item.weak ?? false])).toEqual([["n-close", true]]);
     expect((await index.search(search("분기 정산"))).items.map((item) => [item.noteId, item.weak ?? false])).toEqual([["n-close", false]]);
-    expect((await index.search(search("일정 양자역학 강의 노트 필기"))).items).toEqual([]);
+  });
+
+  test("낱말로만 찾을 때는 거의 담지 못한 글도 가장 잘 맞은 셋까지는 표시와 함께 남기고, 뜻으로 맞은 글이 없다고 확인됐을 때는 남기지 않는다", async () => {
+    const { port, index } = engine();
+    // 「일정」 하나만 든 글 다섯. 질의의 나머지 낱말(색인에 없는 말)은 어느 글에도 없다.
+    port.put(...Array.from({ length: 5 }, (_unused, at) => ({ id: `n-plan-${at}`, title: `회의 일정 ${at}`, body: `${"다음 달 회의 일정을 적는다. ".repeat(at + 1)}끝.` })),
+      { id: "n-cook", title: "김치찌개", body: "묵은지와 두부를 넣고 끓인다." });
+    const { modelKey: key } = await indexAll(index);
+    // 한국어로 자연스럽게 물으면 활용형(「줄이려고」)이 색인에 없는 낱말이라, 맞는 글도 포함율이 낮게 나온다. 낱말만으로는 가를 수 없으니 위 셋을 보이고 고르게 한다.
+    const fallback = await index.search(search("일정 양자역학 강의 필기"));
+    expect(fallback.searchMode).toBe("lexical_fallback");
+    expect(fallback.items).toHaveLength(3);
+    expect(fallback.items.every((item) => item.weak === true && item.noteId.startsWith("n-plan-"))).toBe(true);
+    expect((await index.search(search("일정 양자역학 강의 필기", { mode: "keyword" }))).items).toHaveLength(3);
+    // 낱말이 하나도 걸리지 않으면 남길 것이 없다.
+    expect((await index.search(search("양자역학 강의 필기"))).items).toEqual([]);
+    // 의미 검색을 했고 바닥값을 넘은 글이 없다: 뜻이 닿지 않는다는 것을 아는 것이므로 거의 담지 못한 글은 남기지 않는다.
+    expect(await index.search(withVector("일정 양자역학 강의 필기", key))).toMatchObject({ searchMode: "hybrid", total: 0, items: [] });
+    // 그때도 질의의 낱말을 웬만큼 담은 글은 남긴다(뜻이 닿는데 유사도가 바닥값에 못 미치는 답이 있다).
+    const covered = await index.search(withVector("일정 적는다", key));
+    expect(covered.searchMode).toBe("hybrid");
+    expect(covered.items).toHaveLength(5);
+    expect(covered.items.every((item) => item.weak === true)).toBe(true);
   });
 
   test("뜻으로 맞은 글은 1위의 0.6배를 넘는 것만 남는다", async () => {

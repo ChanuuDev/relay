@@ -43,9 +43,15 @@ const ADOPTED_WEIGHT = 1.03, SUPERSEDED_WEIGHT = 0.6;
 /** 의미 목록에는 1위 유사도의 이 배수를 넘는 메모만 남긴다(바닥값을 겨우 넘은 메모가 길게 따라 나오지 않게). */
 const RELATIVE_CUT = 0.6;
 /** 낱말로만 걸린 글은 질의의 낱말을 (드문 낱말을 무겁게 쳐서) 이만큼 담아야 남긴다. 흔한 말 하나만 걸린 글이 결과를 채우지 않게 한다.
- *  뜻으로도 맞은 글(의미 목록에 든 글)은 이미 관련이 확인됐으므로 낱말 점수를 그대로 보탠다. 의미 검색을 하지 못했을 때는 조금 느슨하게 본다
- *  (0.5로 두면 답이 있는 질의의 절반에서 맞는 글이 낱말 목록에서 빠졌고, 0.3으로 두면 색인에 없는 것을 물어도 결과가 열 건씩 나왔다). */
+ *  뜻으로도 맞은 글(의미 목록에 든 글)은 이미 관련이 확인됐으므로 낱말 점수를 그대로 보탠다. 뜻으로 맞은 글이 하나도 없을 때
+ *  (의미 검색을 하지 못했거나, 했는데 바닥값을 넘은 글이 없을 때)는 조금 느슨하게 본다: 뜻이 닿는데도 유사도가 바닥값에 못 미치는 답이 있어서,
+ *  그때 0.5를 요구하면 낱말만으로 찾던 글까지 잃는다. */
 const COVERAGE_ALONE = 0.5, COVERAGE_LEXICAL = 0.3;
+/** 의미 검색을 하지 못했을 때는 포함율이 낮아도 낱말 점수가 가장 높은 이만큼은 남긴다(weak 표시와 함께).
+ *  한국어 질의의 활용형(「움직이게」「줄이려고」)은 색인에 없는 낱말이라 무게가 가장 커서, 자연어로 물으면 맞는 글도 포함율이 0.1~0.3에 그친다.
+ *  낱말만으로는 그런 글과 흔한 말 하나만 걸린 글을 가를 수 없으므로 위의 몇 개를 표시해 보이고 고르게 한다
+ *  (Relay 문서 범위의 낱말 검색: 0.3으로만 거르면 MRR 0.78 → 0.73, 위 셋을 남기면 0.77. 답이 없는 질의는 열 건 대신 세 건 이하를 받는다). */
+const KEEP_LEXICAL = 3;
 /** 지금 일하는 저장소의 프로젝트 문서에 곱하는 값. 프로젝트마다 같은 종류의 문서(작업 지침·서버 구축·디자인 기준)가 있어,
  *  전체에서 찾으면 다른 프로젝트의 문서가 앞섰다. 좁히지 않고 올리기만 하므로 훨씬 잘 맞은 다른 프로젝트 문서는 그대로 앞에 남는다. */
 const PREFERRED_WEIGHT = 1.25;
@@ -501,11 +507,12 @@ export class SemanticIndex {
     const semantic = new Map<string, Closest>();
     for (const [id, near] of similar) if (near.score >= floor && allowed(view.docs.get(id)!)) semantic.set(id, near);
     // 낱말: 질의의 낱말을 충분히 담지 못한 글은 뺀다(뜻으로도 맞은 글과 질의가 구절째 든 글은 남긴다). 남은 것 가운데 가장 높은 점수를 1로 다시 맞춘다.
+    // 뜻으로 맞은 글이 있으면 낱말로만 걸린 글에 더 많이 요구하고, 의미 검색을 하지 못했으면 낱말 점수가 가장 높은 몇 개는 포함율과 상관없이 남긴다.
     const keyword = new Map<string, LexicalHit>();
-    for (const [id, hit] of usable) {
-      const doc = view.docs.get(id);
-      if (doc && allowed(doc) && (hit.phrase || semantic.has(id) || hit.coverage >= (searched ? COVERAGE_ALONE : COVERAGE_LEXICAL))) keyword.set(id, hit);
-    }
+    const gate = semantic.size ? COVERAGE_ALONE : COVERAGE_LEXICAL;
+    const candidates = [...usable].filter(([id]) => { const doc = view.docs.get(id); return doc !== undefined && allowed(doc); })
+      .sort((a, b) => b[1].score - a[1].score || (a[0] < b[0] ? -1 : 1));
+    candidates.forEach(([id, hit], at) => { if (hit.phrase || semantic.has(id) || hit.coverage >= gate || (!searched && at < KEEP_LEXICAL)) keyword.set(id, hit); });
     let keywordTop = 0;
     for (const hit of keyword.values()) keywordTop = Math.max(keywordTop, hit.score);
     const literal = exactIntent(request.query) || [...keyword.values()].some((hit) => hit.phrase);
