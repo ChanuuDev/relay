@@ -835,7 +835,14 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 
 /* 사이드바: 유리 위에 검색·트리·개수 */
 .notes-sidebar { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-.notes-search { padding: 10px 10px 6px; flex-shrink: 0; }
+.notes-search { display: flex; align-items: center; gap: 2px; padding: 10px 8px 6px 10px; flex-shrink: 0; }
+.notes-search [data-slot="input-group"] { flex: 1; min-width: 0; margin-right: 2px; }
+/* 검색 칸 옆의 목록 도구(위치 보기·모두 접기): 원형 유령 단추. */
+.notes-side-tool[data-slot="button"] { width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%; color: var(--glass-text-muted); }
+.notes-side-tool[data-slot="button"] svg { width: 15px; height: 15px; }
+.notes-side-tool[data-slot="button"]:hover:not(:disabled) { background: var(--glass-control-hover); color: var(--foreground); }
+.notes-side-tool[data-slot="button"]:disabled { opacity: .35; }
+.tree-row { --pulse-tint: color-mix(in srgb, var(--notes-accent) 42%, transparent); }
 .notes-search [data-slot="input-group"] { border-color: var(--glass-control-border); }
 .notes-search [data-slot="input-group"]:hover { background: var(--glass-control-hover); }
 .notes-search [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); }
@@ -916,6 +923,39 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-copy-id svg { width: 12px; height: 12px; }
 .folder-view .notes-copy-id { margin-left: auto; }
 .note-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* 탭 줄: 열어 둔 메모. 내용 막대 위에 놓이고, 보는 탭은 내용과 같은 바탕의 알약으로 떠오른다(서식·Markdown 세그먼트와 같은 그림자).
+   탭 사이는 머리카락 선으로 나누되 보는 탭·올린 탭 옆에서는 걷는다. 많으면 줄어들다가(최소 104px) 가로로 굴린다. */
+.notes-tabbar { flex-shrink: 0; background: color-mix(in srgb, var(--muted) 55%, var(--background)); border-bottom: 1px solid var(--border); }
+.notes-tabs { display: flex; align-items: center; gap: 3px; height: 40px; padding: 0 10px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.notes-tabs::-webkit-scrollbar { display: none; }
+.notes-tabs[data-more-left] { mask-image: linear-gradient(to right, transparent, #000 28px); }
+.notes-tabs[data-more-right] { mask-image: linear-gradient(to left, transparent, #000 28px); }
+.notes-tabs[data-more-left][data-more-right] { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+.notes-tab { position: relative; display: flex; align-items: center; flex: 0 1 200px; min-width: 104px; max-width: 220px; height: 30px; border-radius: 8px;
+  color: var(--muted-foreground); transition: background-color .12s ease-out, color .12s ease-out, box-shadow .15s ease-out; animation: notes-tab-in .2s cubic-bezier(.2, .8, .2, 1); }
+@keyframes notes-tab-in { from { opacity: 0; transform: translateY(3px); } }
+.notes-tab + .notes-tab::before { content: ""; position: absolute; left: -2px; top: 8px; bottom: 8px; width: 1px; background: var(--border); transition: opacity .12s ease-out; }
+.notes-tab[data-active]::before, .notes-tab[data-active] + .notes-tab::before, .notes-tab:hover::before, .notes-tab:hover + .notes-tab::before { opacity: 0; }
+.notes-tab:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.notes-tab[data-active] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 0 0 .5px rgba(0, 0, 0, .06); }
+.dark .notes-tab[data-active] { box-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 0 0 .5px rgba(255, 255, 255, .09); }
+.notes-tab-open { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; padding: 0 4px 0 12px; border-radius: inherit; color: inherit;
+  font-size: var(--fs-12); font-weight: 500; text-align: left; cursor: default; }
+.notes-tab[data-active] .notes-tab-open { font-weight: 600; }
+.notes-tab-open:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.notes-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-tab-close { display: grid; place-items: center; width: 20px; height: 20px; margin-right: 5px; flex-shrink: 0; border-radius: 50%; color: var(--glass-text-muted);
+  opacity: 0; transition: opacity .12s ease-out, background-color .12s ease-out, color .12s ease-out; }
+.notes-tab:hover .notes-tab-close, .notes-tab[data-active] .notes-tab-close, .notes-tab:focus-within .notes-tab-close { opacity: 1; }
+.notes-tab-close:hover { background: var(--glass-control-hover); color: var(--foreground); }
+.notes-tab-close svg { width: 12px; height: 12px; }
+@media (hover: none) { .notes-tab-close { opacity: 1; } }
+.notes-tab[data-dragging] { opacity: .45; }
+.notes-tab[data-drop]::after { content: ""; position: absolute; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; background: var(--primary); }
+.notes-tab[data-drop="before"]::after { left: -3px; }
+.notes-tab[data-drop="after"]::after { right: -3px; }
+@media (prefers-reduced-motion: reduce) { .notes-tab { animation: none; } }
 
 /* 위쪽 서식 도구: 되돌리기 · 문단 스타일 · 글자 서식 · 목록 · 블록 · 링크·표 | 보기 전환 · 내려받기 */
 .note-toolbar { display: flex; align-items: center; gap: 2px; min-height: 44px; padding: 0 12px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none;
@@ -1272,6 +1312,7 @@ canvas.md-stl:active { cursor: grabbing; }
   .notes-layout[data-pane="tree"] #notes-main, .notes-layout[data-pane="content"] #notes-side, .notes-layout > .split-handle { display: none !important; }
   .notes-back { display: inline-flex; }
   .notes-content-bar { padding: 0 14px; }
+  .notes-tabs { padding: 0 8px; }
   .note-time { display: none; }
   .note-sheet { padding: 16px 20px 0; }
   .note-toolbar { padding: 0 8px; }

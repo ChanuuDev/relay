@@ -203,15 +203,29 @@ export function sanitize(raw: unknown): Saved {
   return { items, selected, expanded };
 }
 
-/** 이 브라우저에 남기는 보기 상태(고른 항목·펼친 폴더). 예전 저장본이 있으면 그 상태를 이어받는다. */
-function loadView(): Pick<Saved, "selected" | "expanded"> {
+/** 이 브라우저에 남기는 보기 상태(고른 항목·펼친 폴더·열어 둔 탭). 예전 저장본이 있으면 그 상태를 이어받는다. */
+function loadView(): Pick<Saved, "selected" | "expanded"> & { tabs: string[] } {
   try {
-    const view = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null") as { selected?: unknown; expanded?: unknown } | null;
+    const view = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null") as { selected?: unknown; expanded?: unknown; tabs?: unknown } | null;
     const source = view ?? JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "null") as { selected?: unknown; expanded?: unknown } | null;
     const expanded: Record<string, true> = {};
     if (Array.isArray(source?.expanded)) for (const id of source.expanded) if (typeof id === "string") expanded[id] = true;
-    return { selected: typeof source?.selected === "string" ? source.selected : null, expanded };
-  } catch { return { selected: null, expanded: {} }; }
+    const tabs = Array.isArray(view?.tabs) ? [...new Set(view.tabs.filter((id): id is string => typeof id === "string"))].slice(0, MAX_TABS) : [];
+    return { selected: typeof source?.selected === "string" ? source.selected : null, expanded, tabs };
+  } catch { return { selected: null, expanded: {}, tabs: [] }; }
+}
+
+/** 탭으로 열어 둘 수 있는 메모 수. 넘으면 가장 왼쪽(오래 연) 탭부터 닫는다. */
+const MAX_TABS = 30;
+/** 고른 메모(selected)가 탭에 없으면 지금 탭(from) 바로 오른쪽(없으면 끝)에 더하고, 사라진 메모의 탭은 뺀다. 바뀐 것이 없으면 같은 배열. */
+function withTab(tabs: string[], items: Items, selected: string | null, from: string | null): string[] {
+  let next = tabs.filter((id) => items[id]?.kind === "note");
+  if (selected && items[selected]?.kind === "note" && !next.includes(selected)) {
+    const at = from ? next.indexOf(from) : -1;
+    next = at === -1 ? [...next, selected] : [...next.slice(0, at + 1), selected, ...next.slice(at + 1)];
+    while (next.length > MAX_TABS) next.splice(next.findIndex((id) => id !== selected), 1);
+  }
+  return next.length === tabs.length && next.every((id, index) => id === tabs[index]) ? tabs : next;
 }
 
 /** 지운 항목을 되살릴 수 있게 한 번만 남겨 둔다. */
@@ -228,8 +242,19 @@ interface NotesState extends Saved {
   trash: Trash | null;
   status: NotesStatus;
   sync: NotesSync;
-  select: (id: string | null) => void;
+  /** 탭으로 열어 둔 메모(왼쪽부터). 메모를 열면 지금 탭 오른쪽에 더하고, 고른 메모가 곧 보이는 탭이다. */
+  tabs: string[];
+  /** 항목을 고른다. 기본은 목록에서 그 항목까지 폴더를 펼치고, reveal이 false면(탭 바꾸기) 목록을 그대로 둔다. */
+  select: (id: string | null, reveal?: boolean) => void;
   setExpanded: (id: string, open: boolean) => void;
+  /** 목록의 폴더를 모두 접는다. */
+  collapseAll: () => void;
+  /** 목록에서 그 항목까지 폴더를 펼친다. */
+  revealItem: (id: string) => void;
+  /** 탭을 닫는다. 보던 탭을 닫으면 그 오른쪽(없으면 왼쪽) 탭으로, 남은 탭이 없으면 모든 메모(홈)로 간다. */
+  closeTabs: (ids: string[]) => void;
+  /** 탭을 index 자리(자기를 뺀 목록 기준)로 옮긴다. */
+  moveTab: (id: string, index: number) => void;
   /** 새 메모를 parentId 폴더 맨 위에 만든다. init을 주면 그 제목·본문으로 시작한다(끌어 놓은 글 파일). */
   createNote: (parentId: string | null, init?: { title: string; body: string }) => string;
   createFolder: (parentId: string | null) => string;
@@ -269,17 +294,42 @@ function reveal(items: Items, expanded: Record<string, true>, parentId: string |
 
 export const useNotes = create<NotesState>((set, get) => ({
   items: {}, ...loadView(), renaming: null, trash: null, status: "loading", sync: "saved",
-  select: (id) => set((state) => {
+  select: (id, show = true) => set((state) => {
     if (state.selected === id) return state;
     const items = leave(state.items, state.selected, id);
     const target = id && items[id] ? id : null;
-    return { items, selected: target, renaming: null, expanded: target ? reveal(items, state.expanded, items[target]!.parentId) : state.expanded };
+    return { items, selected: target, renaming: null, tabs: withTab(state.tabs, items, target, state.selected),
+      expanded: target && show ? reveal(items, state.expanded, items[target]!.parentId) : state.expanded };
   }),
   setExpanded: (id, open) => set((state) => {
     if (Boolean(state.expanded[id]) === open) return state;
     const expanded = { ...state.expanded };
     if (open) expanded[id] = true; else delete expanded[id];
     return { expanded };
+  }),
+  collapseAll: () => set((state) => (Object.keys(state.expanded).length ? { expanded: {} } : state)),
+  revealItem: (id) => set((state) => {
+    const item = state.items[id];
+    if (!item) return state;
+    const expanded = reveal(state.items, state.expanded, item.parentId);
+    return expanded === state.expanded ? state : { expanded };
+  }),
+  closeTabs: (ids) => set((state) => {
+    const gone = new Set(ids);
+    const tabs = state.tabs.filter((id) => !gone.has(id));
+    if (tabs.length === state.tabs.length) return state;
+    if (!state.selected || !gone.has(state.selected)) return { tabs };
+    const at = state.tabs.indexOf(state.selected);
+    const next = state.tabs.slice(at + 1).find((id) => !gone.has(id)) ?? state.tabs.slice(0, at).reverse().find((id) => !gone.has(id)) ?? null;
+    const items = leave(state.items, state.selected, next);
+    return { items, selected: next, renaming: null, tabs: tabs.filter((id) => items[id]) };
+  }),
+  moveTab: (id, index) => set((state) => {
+    const rest = state.tabs.filter((tab) => tab !== id);
+    if (rest.length === state.tabs.length) return state;
+    const to = Math.max(0, Math.min(index, rest.length));
+    const tabs = [...rest.slice(0, to), id, ...rest.slice(to)];
+    return tabs.every((tab, position) => tab === state.tabs[position]) ? state : { tabs };
   }),
   createNote: (parentId, init) => {
     const id = newId();
@@ -289,7 +339,7 @@ export const useNotes = create<NotesState>((set, get) => ({
       const parent = parentId !== null && items[parentId]?.kind === "folder" ? parentId : null;
       // 새 메모는 그 폴더의 맨 위에 생긴다.
       const next = { ...items, [id]: { id, kind: "note", parentId: parent, title: init?.title.slice(0, MAX_TITLE) ?? "", body: init?.body.slice(0, MAX_BODY) ?? "", position: topPosition(items, parent), createdAt: now, updatedAt: now } satisfies Note };
-      return { items: next, selected: id, renaming: null, expanded: reveal(next, state.expanded, parent) };
+      return { items: next, selected: id, renaming: null, tabs: withTab(state.tabs, next, id, state.selected), expanded: reveal(next, state.expanded, parent) };
     });
     return id;
   },
@@ -302,7 +352,7 @@ export const useNotes = create<NotesState>((set, get) => ({
       let name = "새 폴더";
       for (let n = 2; names.has(name); n++) name = `새 폴더 ${n}`;
       const next = { ...items, [id]: { id, kind: "folder", parentId: parent, name, position: topPosition(items, parent), createdAt: Date.now() } satisfies Folder };
-      return { items: next, selected: id, renaming: id, expanded: reveal(next, state.expanded, parent) };
+      return { items: next, selected: id, renaming: id, tabs: withTab(state.tabs, next, id, state.selected), expanded: reveal(next, state.expanded, parent) };
     });
     return id;
   },
@@ -360,7 +410,7 @@ export const useNotes = create<NotesState>((set, get) => ({
     // 빈 메모는 되살릴 것이 없으므로 조용히 지운다.
     const trash: Trash | null = isEmptyNote(item) ? state.trash
       : { items: removed, label: labelOf(item), kind: item.kind, notes: removed.filter((entry) => entry.kind === "note").length, expanded: [...gone].filter((key) => state.expanded[key]), at: Date.now() };
-    return { items, selected, expanded, trash, renaming: null };
+    return { items, selected, expanded, trash, renaming: null, tabs: withTab(state.tabs, items, null, null) };
   }),
   undoRemove: () => set((state) => {
     if (!state.trash) return state;
@@ -373,7 +423,7 @@ export const useNotes = create<NotesState>((set, get) => ({
     // 지울 때 펼쳐 두었던 폴더는 다시 펼친다.
     const expanded = { ...state.expanded };
     for (const key of state.trash.expanded) expanded[key] = true;
-    return { items, selected, trash: null, expanded: root ? reveal(items, expanded, items[root.id]!.parentId) : expanded };
+    return { items, selected, trash: null, tabs: withTab(state.tabs, items, selected, state.selected), expanded: root ? reveal(items, expanded, items[root.id]!.parentId) : expanded };
   }),
   dismissTrash: () => set({ trash: null }),
 }));
@@ -508,7 +558,9 @@ function applyRemote(list: unknown[]) {
   for (const id of Object.keys(expanded)) if (items[id]?.kind !== "folder") delete expanded[id];
   remote = true;
   try {
-    useNotes.setState({ items, status: "ready", expanded, selected: state.selected && items[state.selected] ? state.selected : null,
+    const selected = state.selected && items[state.selected] ? state.selected : null;
+    // 다른 창에서 지운 메모의 탭은 닫고, 고른 메모가 탭에 없으면(예전 보기 상태) 탭으로 연다.
+    useNotes.setState({ items, status: "ready", expanded, selected, tabs: withTab(state.tabs, items, selected, null),
       renaming: state.renaming && items[state.renaming] ? state.renaming : null });
   } finally { remote = false; }
 }
@@ -615,8 +667,8 @@ async function start() {
 }
 
 function writeView() {
-  const { selected, expanded } = useNotes.getState();
-  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ selected, expanded: Object.keys(expanded) })); } catch { /* 보기 상태는 잃어도 된다. */ }
+  const { selected, expanded, tabs } = useNotes.getState();
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ selected, expanded: Object.keys(expanded), tabs })); } catch { /* 보기 상태는 잃어도 된다. */ }
 }
 useNotes.subscribe((state) => {
   if (state.items !== seen && !remote) {

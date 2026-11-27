@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, Copy, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload, Waypoints, X, Sparkles } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  ChevronLeft, ChevronRight, Copy, Crosshair, Ellipsis, FileText, Folder as FolderIcon, FolderOpen, FolderPlus, ListChevronsDownUp, Search, SquareArrowOutUpRight, SquarePen, Trash, TriangleAlert, Upload,
+  Waypoints, X, Sparkles,
+} from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "../ui/input-group";
 import { Window } from "../desktop/window";
@@ -17,7 +20,7 @@ import { useNoteAlert } from "../../lib/note-images";
 import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 import { popoutApp } from "../../lib/popout";
 import { popOut } from "../../lib/popout-open";
-import { reduced } from "../../lib/motion";
+import { pulse, reduced } from "../../lib/motion";
 import { useNoteGraph } from "../../lib/note-graph-prefs";
 import { NotesGraph, type GraphReturn } from "./notes-graph";
 import { useDesktop } from "../../lib/desktop-store";
@@ -32,13 +35,19 @@ const timeOnly = new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-
 const cardDate = (time: number) => (new Date(time).toDateString() === new Date().toDateString() ? timeOnly : shortDate).format(time);
 
 const rowId = (id: string) => `notes-row-${id}`;
+const tabId = (id: string) => `notes-tab-${id}`;
 const focusRow = (id: string | null) => {
   const row = id ? document.getElementById(rowId(id)) : null;
   (row ?? document.querySelector<HTMLElement>(".notes-tree [role=treeitem]"))?.focus({ preventScroll: false });
 };
 const focusField = (field: "title" | "body") => requestAnimationFrame(() => document.getElementById(`note-${field}`)?.focus());
+/** 탭에 초점을 둔다. 그 탭이 닫혔으면 보이는 탭(없으면 첫 탭)으로. */
+const focusTab = (id: string | null) => {
+  const selected = useNotes.getState().selected;
+  (document.getElementById(tabId(id ?? "")) ?? document.getElementById(tabId(selected ?? "")) ?? document.querySelector<HTMLElement>(".notes-tabs [role=tab]"))?.focus();
+};
 
-type Menu = { kind: "item" | "move" | "root" | "tools"; id: string | null; left: number; top: number };
+type Menu = { kind: "item" | "move" | "root" | "tools" | "tab"; id: string | null; left: number; top: number };
 /** 내보내기·가져오기 안내. progress는 끝날 때까지, done은 잠시 뒤 스스로, error는 닫을 때까지 보인다. */
 type Notice = { tone: "progress" | "done" | "error"; text: string };
 /** 메뉴가 화면 아래로 넘치지 않게 위로 올린다(항목 26px, 구분선 9px). */
@@ -55,7 +64,8 @@ export function NotesWindow() {
   const trash = useNotes((state) => state.trash);
   const status = useNotes((state) => state.status);
   const sync = useNotes((state) => state.sync);
-  const { select, createNote, createFolder, remove, startRename, move, place, undoRemove, dismissTrash, setExpanded } = useNotes.getState();
+  const tabs = useNotes((state) => state.tabs);
+  const { select, createNote, createFolder, remove, startRename, move, place, undoRemove, dismissTrash, setExpanded, collapseAll, revealItem, closeTabs, moveTab } = useNotes.getState();
   const [query, setQuery] = useState("");
   const [pane, setPane] = useState<"tree" | "content">("tree");
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -151,6 +161,33 @@ export function NotesWindow() {
     select(id);
     if (useNotes.getState().items[id]?.kind === "note") setPane("content");
   }
+  /** 탭을 누르면 그 메모로 간다. 목록은 그대로 둔다(모두 접어 둔 목록을 탭을 바꿀 때마다 펼치지 않는다. 위치는 「목록에서 위치 보기」로 본다). */
+  function openTab(id: string) {
+    select(id, false);
+    setPane("content");
+  }
+  /** 탭을 닫는다. 탭 줄에 초점이 있었으면 이어서 보이는 탭에 둔다. */
+  function closeTab(ids: string[]) {
+    const focused = Boolean(document.activeElement?.closest(".notes-tabs"));
+    closeTabs(ids);
+    if (focused) requestAnimationFrame(() => focusTab(null));
+  }
+  /** 목록에서 그 항목(기본은 고른 항목)까지 폴더를 펼치고, 그 행을 목록 가운데로 굴려 초점을 두고 한 번 깜박인다. 찾기 중이면 찾기를 지우고 목록으로 돌아간다. */
+  function locate(id = selected) {
+    if (!id || !useNotes.getState().items[id]) return;
+    setQuery("");
+    revealItem(id);
+    setPane("tree");
+    requestAnimationFrame(() => {
+      const row = document.getElementById(rowId(id));
+      const list = row?.closest<HTMLElement>(".notes-tree");
+      if (!row || !list) return;
+      const box = list.getBoundingClientRect(), rect = row.getBoundingClientRect();
+      if (rect.top < box.top || rect.bottom > box.bottom) list.scrollTop += rect.top - box.top - (box.height - rect.height) / 2;
+      row.focus({ preventScroll: true });
+      pulse(row.querySelector<HTMLElement>(".tree-row"));
+    });
+  }
   function removeItem(id: string | null) {
     if (!id) return;
     remove(id);
@@ -232,7 +269,11 @@ export function NotesWindow() {
     leavingRef.current = true;
     setMenuLeaving(true);
     const { focus } = menuNext.current;
-    if (returnFocus && focus !== false) { if (menu.kind === "tools") document.getElementById("notes-more")?.focus(); else focusRow(focus ?? null); }
+    if (returnFocus && focus !== false) {
+      if (menu.kind === "tools") document.getElementById("notes-more")?.focus();
+      else if (menu.kind === "tab") focusTab(focus ?? null);
+      else focusRow(focus ?? null);
+    }
   }
   function menuExited() {
     if (!leavingRef.current) return;
@@ -256,9 +297,24 @@ export function NotesWindow() {
     if (target.kind === "root") return [
       { kind: "item", id: "note", label: "새 메모", onSelect: keepFocus(() => newNote(null)) },
       { kind: "item", id: "folder", label: "새 폴더", onSelect: keepFocus(() => newFolder(null)) },
+      { kind: "separator", id: "sep-collapse" },
+      { kind: "item", id: "collapse", label: "모두 접기", disabled: !Object.keys(expanded).length, onSelect: collapseAll },
       { kind: "separator", id: "sep-transfer" },
       ...transfers,
     ];
+    if (target.kind === "tab") {
+      const id = target.id!;
+      const at = tabs.indexOf(id);
+      return [
+        { kind: "item", id: "close", label: "탭 닫기", onSelect: () => closeTabs([id]) },
+        { kind: "item", id: "close-others", label: "다른 탭 닫기", disabled: tabs.length < 2, onSelect: () => closeTabs(tabs.filter((tab) => tab !== id)) },
+        { kind: "item", id: "close-right", label: "오른쪽 탭 닫기", disabled: at === -1 || at === tabs.length - 1, onSelect: () => closeTabs(tabs.slice(at + 1)) },
+        { kind: "item", id: "close-all", label: "모든 탭 닫기", onSelect: () => closeTabs(tabs) },
+        { kind: "separator", id: "sep-locate" },
+        { kind: "item", id: "locate", label: "목록에서 위치 보기", onSelect: keepFocus(() => { select(id, false); locate(id); }) },
+        { kind: "item", id: "copy-id", label: "메모 ID 복사", onSelect: () => void copyReference(id) },
+      ];
+    }
     const item = target.id ? items[target.id] : undefined;
     if (!item) return [];
     if (target.kind === "move") {
@@ -324,6 +380,11 @@ export function NotesWindow() {
               <InputGroupButton size="icon-xs" aria-label="검색어 지우기" onClick={() => { setQuery(""); document.getElementById("notes-search")?.focus(); }}><X aria-hidden="true" /></InputGroupButton>
             </InputGroupAddon>}
           </InputGroup>
+          {/* 목록 도구: 열린 메모의 자리를 펼쳐 보이기, 폴더를 모두 접기. */}
+          <Button type="button" variant="ghost" size="icon-sm" className="notes-side-tool" aria-label="목록에서 위치 보기" disabled={!current}
+            title="목록에서 위치 보기: 열린 메모가 든 폴더를 펼치고 그 행으로 갑니다" onClick={() => locate()}><Crosshair aria-hidden="true" /></Button>
+          <Button type="button" variant="ghost" size="icon-sm" className="notes-side-tool" aria-label="모두 접기" disabled={!Object.keys(expanded).length}
+            title="모두 접기: 목록의 폴더를 모두 접습니다" onClick={collapseAll}><ListChevronsDownUp aria-hidden="true" /></Button>
         </div>
         {query.trim()
           ? <SearchResults items={items} query={query} selected={selected} onOpen={open} />
@@ -334,6 +395,8 @@ export function NotesWindow() {
           : sync === "saving" ? "저장 중…" : sync === "offline" ? "저장 대기 · 다시 시도 중" : sync === "rejected" ? "저장 실패" : "Relay DB에 저장됨"}</span></div>
       </aside>} main={
       <section className="notes-content" aria-label={graphOpen ? "메모 그래프" : current?.kind === "note" ? "메모 편집" : "폴더 내용"} data-arrive={arrive ? "" : undefined}>
+        {!graphOpen && tabs.length > 0 && <NoteTabs items={items} tabs={tabs} selected={selected} onOpen={openTab} onClose={closeTab} onMove={moveTab}
+          onMenu={(id, left, top) => openMenu("tab", id, left, top)} />}
         {graphOpen
           ? <NotesGraph items={items} selected={selected} leaving={graphLeaving} resume={graphReturn} onSelect={select} onBack={() => setPane("tree")}
               onOpen={(id, back) => { closeGraph(true); open(id); setGraphReturn(back ?? null); setArrive(true); }}
@@ -359,6 +422,98 @@ export function NotesWindow() {
     {menu && entries.length > 0 && <DesktopMenu items={entries} position={{ left: menu.left, top: menuTop(menu.top, entries) }} leaving={menuLeaving}
       onClose={closeMenu} onExited={menuExited} className={menu.kind === "move" ? "notes-move-menu" : undefined} />}
   </Window>;
+}
+
+const TAB_DRAG = "application/x-relay-note-tab";
+
+/** 내용 위의 탭 줄. 열어 둔 메모를 왼쪽부터 보이고, 누르면 그 메모로, ×·가운데 단추로 닫으며, 끌어서 순서를 바꾼다.
+ *  키보드는 ←→·Home·End로 탭 사이를 옮기고 Enter·Space로 열며 Delete로 닫는다. 우클릭은 탭 메뉴(다른 탭 닫기 등)다. */
+function NoteTabs({ items, tabs, selected, onOpen, onClose, onMove, onMenu }: {
+  items: Items; tabs: string[]; selected: string | null; onOpen: (id: string) => void; onClose: (ids: string[]) => void;
+  onMove: (id: string, index: number) => void; onMenu: (id: string, left: number, top: number) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  // 끌어 놓을 자리: 이 번호의 탭 앞(tabs.length면 맨 끝).
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  const shown = tabs.filter((id) => items[id]?.kind === "note");
+  const focusable = selected && shown.includes(selected) ? selected : shown[0];
+
+  /** 넘친 쪽 가장자리만 흐리게 해 더 굴릴 탭이 있음을 보인다. */
+  function edges() {
+    const list = listRef.current;
+    if (!list) return;
+    list.toggleAttribute("data-more-left", list.scrollLeft > 1);
+    list.toggleAttribute("data-more-right", list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
+  }
+  // 보는 탭이 줄 밖에 있으면 탭 줄만 굴려 보이게 한다.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const tab = selected ? document.getElementById(tabId(selected))?.parentElement : null;
+    if (list && tab && list.contains(tab)) {
+      const box = list.getBoundingClientRect(), rect = tab.getBoundingClientRect();
+      if (rect.left < box.left) list.scrollLeft -= box.left - rect.left + 12;
+      else if (rect.right > box.right) list.scrollLeft += rect.right - box.right + 12;
+    }
+    edges();
+  }, [selected, shown.length]);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const observer = new ResizeObserver(edges);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
+
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const buttons = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[role=tab]") ?? []);
+    const at = buttons.indexOf(document.activeElement as HTMLElement);
+    if (at === -1) return;
+    const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: buttons.length - 1 }[event.key];
+    if (next !== undefined) { event.preventDefault(); buttons[(next + buttons.length) % buttons.length]?.focus(); return; }
+    if (event.key === "Delete") { event.preventDefault(); onClose([shown[at]!]); }
+  }
+  /** 끌고 있는 탭을 놓을 자리: 탭의 왼쪽 반이면 그 앞, 오른쪽 반이면 그 뒤. */
+  function placeOver(event: DragEvent<HTMLElement>, index: number) {
+    if (!dragging || !event.dataTransfer.types.includes(TAB_DRAG)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const rect = event.currentTarget.getBoundingClientRect();
+    const at = event.clientX < rect.left + rect.width / 2 ? index : index + 1;
+    setDropAt((now) => (now === at ? now : at));
+  }
+  function drop(event: DragEvent<HTMLElement>) {
+    if (!dragging || dropAt === null) return;
+    event.preventDefault();
+    const from = shown.indexOf(dragging);
+    onMove(dragging, dropAt > from ? dropAt - 1 : dropAt);
+    setDragging(null); setDropAt(null);
+  }
+
+  return <div className="notes-tabbar"><div ref={listRef} className="notes-tabs" role="tablist" aria-label="열어 둔 메모" onKeyDown={onKeyDown} onScroll={edges}
+    onDragOver={(event) => placeOver(event, shown.length - 1)} onDrop={drop}
+    onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropAt(null); }}>
+    {shown.map((id, index) => {
+      const note = items[id] as Note;
+      const label = labelOf(note);
+      const active = id === selected;
+      const path = [...pathOf(items, note.parentId).map((folder) => folder.name), label].join(" › ");
+      return <div key={id} className="notes-tab" data-active={active ? "" : undefined} data-dragging={dragging === id ? "" : undefined}
+        data-drop={dropAt === index ? "before" : dropAt === index + 1 && index === shown.length - 1 ? "after" : undefined} title={path} draggable
+        onDragStart={(event) => { event.dataTransfer.setData(TAB_DRAG, id); event.dataTransfer.setData("text/plain", label); event.dataTransfer.effectAllowed = "move"; setDragging(id); }}
+        onDragEnd={() => { setDragging(null); setDropAt(null); }} onDragOver={(event) => placeOver(event, index)} onDrop={drop}
+        // 가운데 단추로 닫는다(누르는 순간의 자동 스크롤은 막는다).
+        onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
+        onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); onClose([id]); } }}
+        onContextMenu={(event) => { event.preventDefault(); onMenu(id, event.clientX, event.clientY); }}>
+        <button type="button" role="tab" id={tabId(id)} className="notes-tab-open" aria-selected={active} tabIndex={id === focusable ? 0 : -1}
+          onClick={() => onOpen(id)}><span className="notes-tab-label">{label}</span></button>
+        <button type="button" className="notes-tab-close" aria-label={`‘${label}’ 탭 닫기`} title="탭 닫기" tabIndex={-1}
+          onClick={() => onClose([id])}><X aria-hidden="true" /></button>
+      </div>;
+    })}
+  </div></div>;
 }
 
 /** 불러오기·저장이 막힌 상태. 내용 아래쪽 띠로 보여 쓰는 자리를 가리지 않고, 왼쪽 목록 아래 상태 줄과 같은 높이에 놓인다. */

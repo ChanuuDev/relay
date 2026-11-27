@@ -1508,3 +1508,113 @@ test("메모 창: Markdown 보기에서도 원문 칸 안에서 찾고, 칠한 �
   await expect(findCount(page)).toHaveText("1/3");
   expect(errors).toEqual([]);
 });
+
+/** 내용 위의 탭 줄과 그 안의 탭. */
+const tabBar = (page: Page) => page.getByRole("tablist", { name: "열어 둔 메모" });
+const tab = (page: Page, name: string) => tabBar(page).getByRole("tab", { name, exact: true });
+
+test("메모 창: 여러 메모를 탭으로 열어 오가고, 끌어서 순서를 바꾸며, 마지막 탭을 닫으면 모든 메모로 간다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  await seed(page, SAMPLE, { expanded: ["f-work", "f-meet", "f-idea"], selected: "n-weekly" });
+  const notes = page.locator(win("notes"));
+  const title = notes.getByRole("textbox", { name: "제목" });
+  const tabs = tabBar(page).getByRole("tab");
+  // 고른 메모가 첫 탭이고, 목록에서 연 메모는 지금 탭 바로 오른쪽에 더해진다. 이미 연 메모는 그 탭으로 간다.
+  await expect(tabs).toHaveText(["주간 회의"]);
+  await expect(tab(page, "주간 회의")).toHaveAttribute("aria-selected", "true");
+  await item(page, "분기 계획").click();
+  await item(page, "회고").click();
+  await expect(tabs).toHaveText(["주간 회의", "분기 계획", "회고"]);
+  await tab(page, "주간 회의").click();
+  await expect(title).toHaveValue("주간 회의");
+  await item(page, "장보기").click();
+  await expect(tabs).toHaveText(["주간 회의", "장보기", "분기 계획", "회고"]);
+  await item(page, "회고").click();
+  await expect(tabs).toHaveCount(4);
+  await expect(tab(page, "회고")).toHaveAttribute("aria-selected", "true");
+  await expect(title).toHaveValue("회고");
+  // 폴더를 고르면 보는 탭이 없고, 탭을 누르면 그 메모로 돌아간다.
+  await item(page, "업무").click();
+  await expect(notes.locator(".folder-head h3")).toHaveText("업무");
+  await expect(tabBar(page).locator('[aria-selected="true"]')).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("note-tabs.png") });
+
+  // 끌어서 순서를 바꾼다(탭의 왼쪽 반에 놓으면 그 앞).
+  await tab(page, "회고").dragTo(tab(page, "주간 회의"), { targetPosition: { x: 6, y: 12 } });
+  await expect(tabs).toHaveText(["회고", "주간 회의", "장보기", "분기 계획"]);
+  // 보는 탭을 닫으면 오른쪽 탭으로 간다. 가운데 단추로도 닫는다.
+  await tab(page, "장보기").click();
+  await notes.getByRole("button", { name: "‘장보기’ 탭 닫기" }).click();
+  await expect(tabs).toHaveText(["회고", "주간 회의", "분기 계획"]);
+  await expect(tab(page, "분기 계획")).toHaveAttribute("aria-selected", "true");
+  await expect(title).toHaveValue("분기 계획");
+  await tab(page, "주간 회의").click({ button: "middle" });
+  await expect(tabs).toHaveText(["회고", "분기 계획"]);
+  await expect(title).toHaveValue("분기 계획");
+  // 우클릭 메뉴의 「다른 탭 닫기」. 지운 메모의 탭은 함께 닫힌다.
+  await tab(page, "분기 계획").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "다른 탭 닫기" }).click();
+  await expect(tabs).toHaveText(["분기 계획"]);
+  await expect(tab(page, "분기 계획")).toBeFocused();
+  await item(page, "회고").click();
+  await expect(tabs).toHaveText(["분기 계획", "회고"]);
+  await notes.getByRole("button", { name: "삭제", exact: true }).click();
+  await expect(tabs).toHaveText(["분기 계획"]);
+
+  // 탭은 다시 열어도 남는다. 키보드로 마지막 탭을 닫으면 모든 메모(홈)로 간다.
+  await page.waitForTimeout(400);
+  await page.reload();
+  await expect(page.locator("#connection-state")).toContainText("연결됨");
+  await page.locator(dock("메모")).click();
+  await expect(notes).toHaveAttribute("data-focused", "");
+  await expect(tabs).toHaveText(["분기 계획"]);
+  await tab(page, "분기 계획").click();
+  await expect(title).toHaveValue("분기 계획");
+  await page.keyboard.press("Delete");
+  await expect(tabBar(page)).toHaveCount(0);
+  await expect(notes.locator(".folder-head h3")).toHaveText("모든 메모");
+  expect(errors).toEqual([]);
+});
+
+test("메모 창: 목록을 모두 접고, 탭을 바꿔도 목록은 접힌 채이며, 위치 보기로 열린 메모의 폴더를 펼쳐 그 행에 초점을 둔다", async ({ page }) => {
+  const archive: Seed[] = [{ id: "f-archive", kind: "folder", parentId: null, name: "보관" },
+    ...Array.from({ length: 60 }, (_, index): Seed => ({ id: `a${index + 1}`, kind: "note", parentId: "f-archive", title: `보관 ${String(index + 1).padStart(2, "0")}`, body: "지난 메모" }))];
+  await seed(page, [...SAMPLE, ...archive], { expanded: ["f-work", "f-meet", "f-idea", "f-archive"], selected: "a60" });
+  const notes = page.locator(win("notes"));
+  const rows = notes.getByRole("treeitem");
+  const collapse = notes.getByRole("button", { name: "모두 접기" });
+  const locate = notes.getByRole("button", { name: "목록에서 위치 보기" });
+  await item(page, "주간 회의").click();
+  await expect(tabBar(page).getByRole("tab")).toHaveText(["보관 60", "주간 회의"]);
+
+  // 모두 접으면 최상위 항목만 남는다.
+  await collapse.click();
+  await expect(rows).toHaveCount(4);
+  await expect(collapse).toBeDisabled();
+  // 탭을 바꿔도 목록은 접힌 채다.
+  await tab(page, "보관 60").click();
+  await expect(notes.getByRole("textbox", { name: "제목" })).toHaveValue("보관 60");
+  await expect(rows).toHaveCount(4);
+
+  // 위치 보기는 열린 메모가 든 폴더만 펼치고, 그 행을 목록 안에 보이게 굴려 초점을 둔다.
+  await locate.click();
+  await expect(item(page, "보관 60")).toBeFocused();
+  await expect(item(page, "보관 60")).toHaveAttribute("aria-selected", "true");
+  await expect(item(page, "보관 60")).toBeInViewport({ ratio: 1 });
+  await expect(item(page, "보관")).toHaveAttribute("aria-expanded", "true");
+  await expect(item(page, "업무")).toHaveAttribute("aria-expanded", "false");
+  await expect(rows).toHaveCount(64);
+  await page.screenshot({ path: test.info().outputPath("note-locate.png") });
+
+  // 찾기 중이면 찾기를 지우고 목록으로 돌아가 위치를 보인다. 탭 메뉴에서도 같다.
+  await collapse.click();
+  await notes.getByLabel("메모 검색").fill("장보기");
+  await expect(notes.getByRole("list", { name: "검색 결과" })).toBeVisible();
+  await tab(page, "주간 회의").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "목록에서 위치 보기" }).click();
+  await expect(notes.getByLabel("메모 검색")).toHaveValue("");
+  await expect(item(page, "주간 회의")).toBeFocused();
+  await expect(item(page, "주간 회의")).toHaveAttribute("aria-selected", "true");
+  await expect(item(page, "회의")).toHaveAttribute("aria-expanded", "true");
+  await expect(item(page, "보관")).toHaveAttribute("aria-expanded", "false");
+});
