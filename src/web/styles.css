@@ -953,11 +953,51 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
   font: inherit; font-size: var(--fs-24); font-weight: 700; letter-spacing: -.025em; line-height: 1.35; }
 .note-title::placeholder, .note-source::placeholder { color: color-mix(in srgb, var(--foreground) 30%, transparent); }
 .note-rich { flex: 1; display: flex; flex-direction: column; margin-top: 12px; }
-.note-source { flex: 1; width: 100%; min-height: 320px; margin-top: 14px; padding: 0 0 48px; border: 0; outline: none; resize: none; background: transparent;
-  color: var(--foreground); caret-color: var(--notes-accent); font-size: var(--fs-13); line-height: var(--note-leading, 1.75); letter-spacing: 0;
+.note-source-wrap { position: relative; flex: 1; display: flex; flex-direction: column; margin-top: 14px; }
+.note-source { position: relative; flex: 1; width: 100%; min-height: 320px; margin: 0; padding: 0 0 48px; border: 0; outline: none; resize: none; background: transparent;
+  color: var(--foreground); caret-color: var(--notes-accent); field-sizing: content; }
+/* 원문 칸과 그 뒤의 찾기 거울 층은 글자·줄바꿈이 한 글자도 어긋나지 않도록 같은 값을 쓴다. */
+.note-source, .note-source-mirror { font-size: var(--fs-13); font-weight: 400; font-style: normal; line-height: var(--note-leading, 1.75); letter-spacing: 0; word-spacing: normal;
   /* 고정폭 글꼴에는 한글이 없으므로 한글은 Pretendard로 받는다(generic monospace의 넓은 한글 대신). */
   font-family: "SF Mono", "Cascadia Code", "Cascadia Mono", Consolas, "Pretendard Variable", Pretendard, ui-monospace, monospace;
-  field-sizing: content; tab-size: 2; }
+  tab-size: 2; text-indent: 0; text-transform: none; white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; }
+.note-source-mirror { position: absolute; inset: 0; margin: 0; padding: 0 0 48px; overflow: hidden; color: transparent; pointer-events: none; user-select: none; }
+.note-source-mirror mark { color: transparent; background: var(--find-match); border-radius: 3px; }
+.note-source-mirror mark[data-current] { background: var(--find-current); box-shadow: 0 0 0 1px var(--find-edge); }
+
+/* 본문 안에서 찾기(Ctrl/⌘+F): 본문 영역 위 오른쪽에 뜨는 유리 알약. 찾은 곳은 옅은 노랑, 지금 결과는 주황(두 보기 같음). */
+.note-editor { --find-match: rgba(255, 204, 0, .32); --find-current: rgba(255, 149, 0, .46); --find-edge: rgba(232, 122, 0, .55); --find-ring: rgba(255, 149, 0, .38); }
+.dark .note-editor { --find-match: rgba(255, 214, 10, .2); --find-current: rgba(255, 159, 10, .46); --find-edge: rgba(255, 176, 56, .6); --find-ring: rgba(255, 159, 10, .36); }
+.note-frame { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.note-find { position: absolute; z-index: 6; top: 10px; right: 18px; display: flex; align-items: center; gap: 1px; width: min(400px, calc(100% - 36px)); height: 38px;
+  padding: 0 5px 0 13px; border-radius: var(--radius-control); cursor: text; color: var(--foreground);
+  background: var(--glass-menu-fill); backdrop-filter: blur(30px) saturate(180%); -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid var(--glass-control-border); box-shadow: var(--glass-highlight), 0 10px 30px -10px rgba(20, 24, 40, .28), 0 1px 3px rgba(20, 24, 40, .08);
+  transition: box-shadow .15s ease-out; }
+.dark .note-find { box-shadow: var(--glass-highlight), 0 12px 32px -10px rgba(0, 0, 0, .6), 0 1px 3px rgba(0, 0, 0, .3); }
+.note-find:focus-within { box-shadow: var(--glass-highlight), 0 10px 30px -10px rgba(20, 24, 40, .28), 0 0 0 3px color-mix(in srgb, var(--notes-accent) 22%, transparent); }
+.note-find-icon { width: 15px; height: 15px; flex-shrink: 0; margin-right: 7px; color: var(--glass-text-muted); transition: color .15s ease-out; }
+.note-find:focus-within .note-find-icon { color: var(--notes-accent); }
+.note-find input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--foreground); font: inherit; font-size: var(--fs-13); }
+.note-find input::placeholder { color: var(--glass-text-muted); }
+.note-find-count { flex-shrink: 0; padding: 0 6px 0 4px; font-size: var(--fs-11); font-weight: 500; font-variant-numeric: tabular-nums; color: var(--glass-text-muted); white-space: nowrap; }
+.note-find[data-none] .note-find-count { color: var(--destructive); }
+.note-find-sep { width: 1px; height: 16px; margin: 0 3px; flex-shrink: 0; background: var(--border); }
+.note-find-button { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%; color: color-mix(in srgb, var(--foreground) 72%, transparent);
+  transition: background-color .12s ease-out, color .12s ease-out, opacity .12s ease-out; }
+.note-find-button svg { width: 16px; height: 16px; }
+.note-find-button:hover:not(:disabled) { background: var(--glass-control-hover); color: var(--foreground); }
+.note-find-button:disabled { opacity: .3; }
+.note-find-button[aria-pressed="true"] { background: color-mix(in srgb, var(--notes-accent) 16%, transparent); color: var(--notes-accent); }
+.note-find-button:focus-visible { outline-offset: -2px; }
+@media (hover: none) { .note-find input { font-size: 16px; } }
+.note-find-match { background: var(--find-match); border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.note-find-current { background: var(--find-current); box-shadow: 0 0 0 1px var(--find-edge); }
+/* 지금 결과가 접힌 접기나 그림으로 보이는 블록의 원문 안이면, 찾는 동안만 그 블록을 펼쳐 보인다(문서의 열림 상태는 그대로). */
+/* Tailwind 기본 규칙(@layer base)이 [hidden]을 !important로 감춘다. !important는 층 밖보다 층 안이 이기므로 같은 층에서 더 좁은 선택자로 연다. */
+@layer base { .note-prose [data-type="details"].note-find-reveal > div > [data-type="detailsContent"][hidden] { display: block !important; } }
+.note-prose [data-type="details"].note-find-reveal > button::before { transform: rotate(90deg); }
+.note-prose .note-diagram.note-find-reveal .note-diagram-source { display: block; }
 
 /* ProseMirror 기본 규칙(@tiptap/core가 넣던 CSS. CSP가 인라인 <style>을 막아 여기에 둔다) */
 .ProseMirror { position: relative; word-wrap: break-word; white-space: pre-wrap; white-space: break-spaces; font-variant-ligatures: none; font-feature-settings: "liga" 0; }

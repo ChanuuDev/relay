@@ -81,6 +81,8 @@ const RENDERERS: Record<string, Renderer> = {
 /** ```math는 GitHub처럼 수식으로, $$…$$로 쓴 블록도 같은 수식 블록이다. */
 export const PREVIEW_LANGUAGES = ["mermaid", "math", "geojson", "topojson", "stl"] as const;
 const rendererOf = (node: ProseNode) => (node.type.name === "htmlBlock" ? RENDERERS.html! : RENDERERS[String(node.attrs.language ?? "")] ?? null);
+/** 원문 대신 그림을 보이는 블록(다이어그램·수식·지도·3D·HTML). 원문은 그 안에 커서가 있을 때만 보인다. */
+export const showsPreview = (node: ProseNode) => (node.type.name === "codeBlock" || node.type.name === "htmlBlock") && rendererOf(node) !== null;
 const SOURCE_LANGUAGE: Record<string, string> = { html: "xml", math: "latex", geojson: "json", topojson: "json" };
 
 const PENCIL = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';

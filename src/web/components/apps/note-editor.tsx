@@ -3,7 +3,7 @@ import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/r
 import { Popover } from "radix-ui";
 import {
   Asterisk, Bold, Box, Check, Code, CodeXml, Download, Heading1, Heading2, Heading3, Highlighter, ImagePlus, Info, Italic, Keyboard, Lightbulb, Link, List, ListChevronsUpDown, ListCollapse, ListOrdered,
-  ListTodo, Map as MapIcon, MessageSquareWarning, Minus, OctagonAlert, Pilcrow, Plus, Redo2, Sigma, SquareCode, SquareFunction, Strikethrough, Subscript, Superscript, Table,
+  ListTodo, Map as MapIcon, MessageSquareWarning, Minus, OctagonAlert, Pilcrow, Plus, Redo2, Search, Sigma, SquareCode, SquareFunction, Strikethrough, Subscript, Superscript, Table,
   TextQuote, TriangleAlert, Underline, Undo2, Unlink, Workflow, type LucideIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -14,6 +14,7 @@ import { DEFAULT_LEADING, NOTE_LEADINGS, fileNameOf, labelOf, markdownFile, useN
 import { IMAGE_ACCEPT, imageFilesOf, imageMarkdown, uploadFailure, uploadImage, useNoteAlert } from "../../lib/note-images";
 import { joinTexts, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 import { NoteImageUpload, appendTextToNote, appendToNote, insertImages } from "./note-extensions";
+import { NoteFind, NoteFindBar, SourceHighlights, useNoteFind } from "./note-find";
 import { markdownExtensions } from "./markdown";
 import { alignColumn, insertRich, sourceSnippet, type InsertKind } from "./markdown/insert";
 
@@ -69,9 +70,10 @@ export function NoteDocument({ note }: { note: Note }) {
   const emitted = useRef(note.body);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // 편집기마다 새 확장 묶음을 쓴다(Markdown 문법 규칙이 편집기를 만들 때마다 쌓이지 않게). 그림 붙여넣기·끌어 놓기도 받는다.
   const rich = mode === "rich";
-  const extensions = useMemo(() => [...markdownExtensions(), NoteImageUpload], [rich]);
+  const extensions = useMemo(() => [...markdownExtensions(), NoteImageUpload, NoteFind], [rich]);
   const editor = useEditor({
     extensions,
     content: note.body,
@@ -96,6 +98,9 @@ export function NoteDocument({ note }: { note: Note }) {
       update(note.id, { body });
     },
   }, [rich]);
+
+  // 본문 안에서 찾기(Ctrl/⌘+F). 서식 보기는 편집기 플러그인이, Markdown 보기는 원문 칸 뒤의 거울 층이 결과를 칠한다.
+  const find = useNoteFind({ mode, editor, sourceRef, scrollRef, body: note.body });
 
   // 그림을 올리는 사이 편집기가 닫히면 이 메모 끝에 붙인다.
   useEffect(() => { if (editor) editor.storage.noteImageUpload.noteId = note.id; }, [editor, note.id]);
@@ -183,10 +188,13 @@ export function NoteDocument({ note }: { note: Note }) {
 
   return <>
     <FormatToolbar editor={mode === "rich" ? editor : null} mode={mode} onMode={(next) => { emitted.current = note.body; setMode(next); }} onDownload={download}
-      onImage={() => fileRef.current?.click()} onInsert={addKind} />
+      onImage={() => fileRef.current?.click()} onInsert={addKind} finding={find.open && !find.leaving} onFind={find.toggle} />
     <input ref={fileRef} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={pickImages} data-testid="note-image-file" />
     {/* 줄간격은 본문·표·Markdown 원문이 함께 쓰는 값(styles.css의 --note-leading)이다. */}
-    <div className="note-scroll" style={{ "--note-leading": leading / 100 } as CSSProperties} onMouseDown={(event) => {
+    {/* 찾기 막대는 본문 영역 위 오른쪽에 떠 있다(본문을 굴려도 그 자리). */}
+    <div className="note-frame">
+    {find.open && <NoteFindBar find={find} />}
+    <div ref={scrollRef} className="note-scroll" style={{ "--note-leading": leading / 100 } as CSSProperties} onMouseDown={(event) => {
       // 본문 아래 빈 곳을 누르면 본문 끝에 커서를 둔다.
       if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains("note-sheet")) { event.preventDefault(); focusBody("end"); }
     }}>
@@ -196,17 +204,24 @@ export function NoteDocument({ note }: { note: Note }) {
           onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); focusBody("start"); } }} />
         {mode === "rich"
           ? <EditorContent editor={editor} className="note-rich" />
-          : <textarea id="note-body" ref={sourceRef} className="note-source" value={note.body} aria-label="본문" spellCheck={false}
-              placeholder={"# 제목\n\n**굵게**, *기울임*, `코드`\n- 목록\n- [ ] 할 일"}
-              onChange={(event) => setSource(event.target.value)} onPaste={pasteSource} onDrop={dropSource}
-              onDragOver={(event) => { if (Array.from(event.dataTransfer.items).some((item) => item.kind === "file")) event.preventDefault(); }} />}
+          : <div className="note-source-wrap">
+              {find.sourceMatches.length > 0 && <SourceHighlights find={find} text={note.body} />}
+              <textarea id="note-body" ref={sourceRef} className="note-source" value={note.body} aria-label="본문" spellCheck={false}
+                placeholder={"# 제목\n\n**굵게**, *기울임*, `코드`\n- 목록\n- [ ] 할 일"}
+                onChange={(event) => setSource(event.target.value)} onPaste={pasteSource} onDrop={dropSource}
+                // 원문 칸이 스스로 굴리는 브라우저(field-sizing 없음)에서도 거울 층이 같은 줄을 보이게 한다.
+                onScroll={(event) => { if (find.mirrorRef.current) find.mirrorRef.current.scrollTop = event.currentTarget.scrollTop; }}
+                onDragOver={(event) => { if (Array.from(event.dataTransfer.items).some((item) => item.kind === "file")) event.preventDefault(); }} />
+            </div>}
       </div>
+    </div>
     </div>
   </>;
 }
 
-function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onInsert }: {
+function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onInsert, finding, onFind }: {
   editor: Editor | null; mode: "rich" | "source"; onMode: (mode: "rich" | "source") => void; onDownload: () => void; onImage: () => void; onInsert: (kind: InsertKind) => void;
+  finding: boolean; onFind: () => void;
 }) {
   const state = useEditorState({
     editor,
@@ -264,6 +279,8 @@ function FormatToolbar({ editor, mode, onMode, onDownload, onImage, onInsert }: 
       <InsertMenu editor={editor} disabled={mode === "rich" && (off || state.codeBlock)} onInsert={onInsert} />
     </div>
     <div className="format-end">
+      {/* 찾기는 두 보기 모두에서 쓴다. */}
+      <Tool icon={Search} label="본문에서 찾기" keys={`${MOD}F`} active={finding} onClick={onFind} />
       <LeadingTool editor={editor} />
       <div className="format-mode" role="group" aria-label="보기">
         <button type="button" aria-pressed={mode === "rich"} onClick={() => onMode("rich")}>서식</button>

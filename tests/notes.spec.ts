@@ -1353,3 +1353,158 @@ test("메모 창: 표 열 너비는 내용에 맞춰 나뉘고, 줄간격(110~40
   await expect(menu.getByRole("menuitemradio", { name: "150%" })).toHaveAttribute("aria-checked", "true");
   expect(errors).toEqual([]);
 });
+
+/** 본문 위 오른쪽에 뜨는 찾기 막대와 그 안의 개수. */
+const findBar = (page: Page) => page.getByRole("search", { name: "본문에서 찾기" });
+const findCount = (page: Page) => findBar(page).locator(".note-find-count [aria-hidden]");
+/** 굴리는 본문 칸 안에서 찾기 막대에 가리지 않고 보이는지. */
+const shownInScroll = (target: Locator) => target.evaluate((element) => {
+  const scroll = element.closest(".note-scroll")!.getBoundingClientRect();
+  const bar = document.querySelector(".note-find")?.getBoundingClientRect();
+  const rect = element.getClientRects()[0] ?? element.getBoundingClientRect();
+  return rect.height > 0 && rect.top >= (bar ? bar.bottom : scroll.top) - 1 && rect.bottom <= scroll.bottom + 1;
+});
+const filler = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => `${from + index + 1}번째 문단: 본문을 길게 채우는 글`).join("\n\n");
+
+test("메모 창: Ctrl+F로 긴 본문 안에서 찾고, 결과 사이를 옮기며 Esc로 그 결과에 커서를 둔다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const body = ["# 긴 회의록", filler(0, 4), "여기에 **목표** 지점이 있다.", filler(4, 40), "두 번째 목표 지점은 중간에 있다.", filler(40, 70),
+    "<details>\n<summary>접어 둔 내용</summary>\n\n세 번째 목표 지점은 접기 안에 있다.\n\n</details>", filler(70, 90), "Relay와 relay, RELAY"].join("\n\n");
+  await seed(page, [{ id: "long", kind: "note", parentId: null, title: "회의록", body }], { selected: "long" });
+  const notes = page.locator(win("notes"));
+  const scroll = notes.locator(".note-scroll");
+  const input = findBar(page).getByRole("textbox", { name: "찾을 말" });
+  const current = notes.locator(".note-prose .note-find-current");
+  await expect(notes.locator(".note-prose h1")).toHaveText("긴 회의록");
+
+  // 제목 칸에서 Ctrl+F를 눌러도 본문 찾기가 열린다. 굵게 쓴 낱말에 걸친 말도 찾고, 보고 있던 곳(맨 위)부터 고른다.
+  await notes.getByRole("textbox", { name: "제목" }).click();
+  await page.keyboard.press("Control+f");
+  await expect(findBar(page)).toBeVisible();
+  await expect(input).toBeFocused();
+  await page.keyboard.type("목표 지점");
+  await expect(findCount(page)).toHaveText("1/3");
+  await expect(findBar(page).locator(".sr-only")).toHaveText("3개 중 1번째");
+  expect((await current.allTextContents()).join("")).toBe("목표 지점");
+  await expect(notes.locator(".note-prose .note-find-match")).toHaveCount(4);
+  expect(await shownInScroll(current.first())).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("note-find-rich.png") });
+
+  // Enter는 다음, Shift+Enter는 이전 결과로 가며, 결과가 보이도록 본문만 굴린다.
+  await page.keyboard.press("Enter");
+  await expect(findCount(page)).toHaveText("2/3");
+  await expect(current).toHaveText("목표 지점");
+  expect(await scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+  expect(await shownInScroll(current)).toBe(true);
+  // 접힌 접기 안의 결과는 찾는 동안만 펼쳐 보이고, 원문(접힘 상태)은 바꾸지 않는다.
+  await page.keyboard.press("Enter");
+  await expect(findCount(page)).toHaveText("3/3");
+  await expect(notes.locator("[data-type=details].note-find-reveal [data-type=detailsContent]")).toBeVisible();
+  expect(await shownInScroll(current)).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(findCount(page)).toHaveText("1/3");
+  await expect(notes.locator("[data-type=detailsContent]")).toBeHidden();
+  await page.keyboard.press("Shift+Enter");
+  await expect(findCount(page)).toHaveText("3/3");
+  await findBar(page).getByRole("button", { name: "이전 결과" }).click();
+  await expect(findCount(page)).toHaveText("2/3");
+  await expect(input).toBeFocused();
+  await page.waitForTimeout(600);
+  expect((await saved(page)).items[0].body).toBe(body);
+
+  // Esc는 막대를 닫고 지금 결과를 본문에서 골라 그 자리에서 이어 쓰게 한다.
+  await page.keyboard.press("Escape");
+  await expect(findBar(page)).toHaveCount(0);
+  await expect(notes.locator(".note-find-match")).toHaveCount(0);
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
+  expect(await page.evaluate(() => getSelection()?.toString())).toBe("목표 지점");
+  // 본문에서 고른 글이 있으면 그 말로 다시 찾고, 그 자리부터 센다.
+  await page.keyboard.press("Control+f");
+  await expect(input).toHaveValue("목표 지점");
+  await expect(findCount(page)).toHaveText("2/3");
+
+  // 찾는 동안 본문을 고치면 결과가 따라 바뀐다. 본문의 Esc는 커서를 그대로 둔 채 막대만 닫는다.
+  await notes.locator(".note-prose p").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" 목표 지점");
+  await expect(findCount(page)).toHaveText(/\/4$/);
+  await page.keyboard.press("Escape");
+  await expect(findBar(page)).toHaveCount(0);
+  await expect(page.getByLabel("본문", { exact: true })).toBeFocused();
+  await expect(notes.locator(".note-prose p").first()).toHaveText("1번째 문단: 본문을 길게 채우는 글 목표 지점");
+
+  // 대소문자는 기본으로 가리지 않고, 단추로 가린다. 없는 말은 「결과 없음」이다.
+  await page.keyboard.press("Control+f");
+  await expect(input).toHaveValue("목표 지점");
+  await page.keyboard.type("relay");
+  await expect(findCount(page)).toHaveText("1/3");
+  const matchCase = findBar(page).getByRole("button", { name: "대소문자 구분" });
+  await matchCase.click();
+  await expect(matchCase).toHaveAttribute("aria-pressed", "true");
+  await expect(findCount(page)).toHaveText("1/1");
+  await expect(current).toHaveText("relay");
+  await matchCase.click();
+  await expect(findCount(page)).toHaveText(/\/3$/);
+  await input.fill("없는 말");
+  await expect(findCount(page)).toHaveText("결과 없음");
+  await expect(findBar(page)).toHaveAttribute("data-none", "");
+  await expect(notes.locator(".note-find-match")).toHaveCount(0);
+  await findBar(page).getByRole("button", { name: "찾기 닫기" }).click();
+  await expect(findBar(page)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("메모 창: Markdown 보기에서도 원문 칸 안에서 찾고, 칠한 자리가 원문 글자와 맞는다", async ({ page }) => {
+  const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+  const long = "아주 긴 줄은 칸 너비에서 접힌다 wrap-test-0123456789 ".repeat(12);
+  const body = [filler(0, 30), `${long}찾을말 하나`, "\tTab으로 들여 쓴 줄", filler(30, 70), "**찾을말** 둘 — Markdown 기호 안", filler(70, 80), "끝 줄의 찾을말"].join("\n\n");
+  await seed(page, [{ id: "src", kind: "note", parentId: null, title: "원문", body }], { selected: "src" });
+  const notes = page.locator(win("notes"));
+  await notes.getByRole("button", { name: "Markdown", exact: true }).click();
+  const source = notes.locator("textarea#note-body");
+  const scroll = notes.locator(".note-scroll");
+  const current = notes.locator(".note-source-mirror mark[data-current]");
+  await expect(source).toHaveValue(body);
+
+  // 원문 칸에서 고른 글로 찾는다(서식 도구의 찾기 단추도 Ctrl+F와 같다).
+  const at = body.indexOf("찾을말");
+  await source.evaluate((element: HTMLTextAreaElement, from) => { element.focus(); element.setSelectionRange(from, from + 3); }, at);
+  await notes.getByRole("button", { name: "본문에서 찾기" }).click();
+  await expect(findBar(page).getByRole("textbox", { name: "찾을 말" })).toHaveValue("찾을말");
+  await expect(findCount(page)).toHaveText("1/3");
+  await expect(notes.locator(".note-source-mirror mark")).toHaveCount(3);
+  await expect(current).toHaveText("찾을말");
+  expect(await shownInScroll(current)).toBe(true);
+  // 거울 층은 원문 칸과 같은 자리에서 같은 줄로 접힌다(줄 수가 어긋나면 높이가 다르다).
+  const [mirrorBox, sourceBox] = await Promise.all([notes.locator(".note-source-mirror").boundingBox(), source.boundingBox()]);
+  expect(mirrorBox).toEqual(sourceBox);
+  const heights = await source.evaluate((element) => [element.scrollHeight, element.previousElementSibling!.scrollHeight]);
+  expect(Math.abs(heights[0]! - heights[1]!)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: test.info().outputPath("note-find-source.png") });
+
+  await page.keyboard.press("Enter");
+  await expect(findCount(page)).toHaveText("2/3");
+  expect(await scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+  expect(await shownInScroll(current)).toBe(true);
+  await page.keyboard.press("F3");
+  await expect(findCount(page)).toHaveText("3/3");
+  await page.keyboard.press("Shift+F3");
+  await expect(findCount(page)).toHaveText("2/3");
+
+  // Esc는 원문 칸으로 돌아가 지금 결과를 골라 둔다. 찾기만 해서는 원문이 바뀌지 않는다.
+  await page.keyboard.press("Escape");
+  await expect(findBar(page)).toHaveCount(0);
+  await expect(source).toBeFocused();
+  const second = body.indexOf("찾을말", at + 1);
+  expect(await source.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd])).toEqual([second, second + 3]);
+  await page.waitForTimeout(600);
+  expect((await saved(page)).items[0].body).toBe(body);
+
+  // 찾는 중에 서식 보기로 바꾸면 그 보기에서 처음부터 다시 찾는다.
+  await page.keyboard.press("Control+f");
+  await expect(findCount(page)).toHaveText("2/3");
+  await notes.getByRole("button", { name: "서식", exact: true }).click();
+  await expect(notes.locator(".note-prose .note-find-match")).toHaveCount(3);
+  await expect(findCount(page)).toHaveText("1/3");
+  expect(errors).toEqual([]);
+});
