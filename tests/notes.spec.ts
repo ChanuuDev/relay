@@ -1605,6 +1605,15 @@ test("메모 창: 목록을 모두 접고, 탭을 바꿔도 목록은 접힌 채
   await expect(item(page, "업무")).toHaveAttribute("aria-expanded", "false");
   await expect(rows).toHaveCount(64);
   await page.screenshot({ path: test.info().outputPath("note-locate.png") });
+  // 거듭 눌러도 행 바탕색은 그대로이고(위에 얹는 층만 깜박인다) 깜박임이 끝나면 층을 걷는다.
+  // 예전에는 바탕색을 트윈해 깜박이는 도중의 색에서 다시 시작하며 서로 다른 색 형식을 섞어 진한 초록이 남았다.
+  const located = notes.locator("#notes-row-a60 > .tree-row");
+  const base = await located.evaluate((element) => getComputedStyle(element).backgroundColor);
+  for (let index = 0; index < 4; index++) await locate.click();
+  await expect(located).toHaveAttribute("data-located", "");
+  expect(await located.evaluate((element) => [element.getAttribute("style"), getComputedStyle(element).backgroundColor])).toEqual([null, base]);
+  await expect(located).not.toHaveAttribute("data-located", { timeout: 3000 });
+  expect(await located.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(base);
 
   // 찾기 중이면 찾기를 지우고 목록으로 돌아가 위치를 보인다. 탭 메뉴에서도 같다.
   await collapse.click();

@@ -842,7 +842,11 @@ body[data-window-dragging] .browser-frame { pointer-events: none; }
 .notes-side-tool[data-slot="button"] svg { width: 15px; height: 15px; }
 .notes-side-tool[data-slot="button"]:hover:not(:disabled) { background: var(--glass-control-hover); color: var(--foreground); }
 .notes-side-tool[data-slot="button"]:disabled { opacity: .35; }
-.tree-row { --pulse-tint: color-mix(in srgb, var(--notes-accent) 42%, transparent); }
+/* 「목록에서 위치 보기」로 찾은 행을 한 번 청록으로 깜박인다. 색은 CSS가 섞고(행 바탕 위에 얹는 층), 다시 누르면 처음부터 다시 깜박인다. */
+.tree-row[data-located]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: color-mix(in srgb, var(--notes-accent) 34%, transparent); animation: tree-located .9s cubic-bezier(.2, .8, .2, 1) forwards; }
+@keyframes tree-located { 0% { opacity: 0; } 18% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tree-row[data-located]::after { animation: none; opacity: 0; } }
 .notes-search [data-slot="input-group"] { border-color: var(--glass-control-border); }
 .notes-search [data-slot="input-group"]:hover { background: var(--glass-control-hover); }
 .notes-search [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) { background: var(--background); }

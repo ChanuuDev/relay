@@ -20,7 +20,7 @@ import { useNoteAlert } from "../../lib/note-images";
 import { NOT_TEXT, isFileDrag, mayHoldText, noteOfText, readTextFiles, textFailure, textFilesOf } from "../../lib/note-files";
 import { popoutApp } from "../../lib/popout";
 import { popOut } from "../../lib/popout-open";
-import { pulse, reduced } from "../../lib/motion";
+import { reduced } from "../../lib/motion";
 import { useNoteGraph } from "../../lib/note-graph-prefs";
 import { NotesGraph, type GraphReturn } from "./notes-graph";
 import { useDesktop } from "../../lib/desktop-store";
@@ -41,6 +41,15 @@ const focusRow = (id: string | null) => {
   (row ?? document.querySelector<HTMLElement>(".notes-tree [role=treeitem]"))?.focus({ preventScroll: false });
 };
 const focusField = (field: "title" | "body") => requestAnimationFrame(() => document.getElementById(`note-${field}`)?.focus());
+/** 찾은 행을 한 번 깜박인다(styles.css의 tree-located). 깜박이는 중에 다시 부르면 겹치지 않고 처음부터 다시 깜박인다.
+ *  GSAP으로 바탕색을 트윈하던 pulse는 color-mix 색을 서로 다른 색 형식 사이에서 섞어, 거듭 누르면 진한 초록이 남았다. */
+const flashRow = (row: HTMLElement | null) => {
+  if (!row) return;
+  row.removeAttribute("data-located");
+  void row.offsetWidth;
+  row.setAttribute("data-located", "");
+  row.onanimationend = (event) => { if (event.animationName === "tree-located") row.removeAttribute("data-located"); };
+};
 /** 탭에 초점을 둔다. 그 탭이 닫혔으면 보이는 탭(없으면 첫 탭)으로. */
 const focusTab = (id: string | null) => {
   const selected = useNotes.getState().selected;
@@ -185,7 +194,7 @@ export function NotesWindow() {
       const box = list.getBoundingClientRect(), rect = row.getBoundingClientRect();
       if (rect.top < box.top || rect.bottom > box.bottom) list.scrollTop += rect.top - box.top - (box.height - rect.height) / 2;
       row.focus({ preventScroll: true });
-      pulse(row.querySelector<HTMLElement>(".tree-row"));
+      flashRow(row.querySelector<HTMLElement>(".tree-row"));
     });
   }
   function removeItem(id: string | null) {
